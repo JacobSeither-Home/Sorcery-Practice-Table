@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type CardDef, type CardType, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, makeCard } from '../engine';
 import type { Difficulty } from '../ai/ai';
-import { type Mode, allDecks, isPracticeDeck, useStore } from '../store';
+import { type Mode, allDecks, isBuiltIn, useStore } from '../store';
+import { resolveOfficial } from '../data/officialDecks';
 import { CARDS_URL, type SyncDiff, diffCards, fetchCards } from '../data/cardSync';
 import { type ArtReport, OFFICIAL_ART_FOLDER, orderVariants, variantBlob, variantLabel, fromFileList, importArt, importZips, pickFolder, pickZips, rememberedFolder, rememberedZips, supportsFilePicker, supportsFolderPicker } from '../data/artSync';
 import { artDb } from '../data/db';
@@ -21,7 +22,7 @@ const DIFF: { id: Difficulty; name: string; note: string }[] = [
 // ---------------------------------------------------------------- setup
 export function Setup() {
   const { pool, decks, newGame, host, join, online, leave, syncedAt, art, setView } = useStore();
-  const all = allDecks(decks).filter((d) => playable(d, pool));
+  const all = allDecks(decks, pool).filter((d) => playable(d, pool));
   const [mode, setMode] = useState<Mode>('ai');
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
   const [a, setA] = useState(all[0]?.name ?? ''); const [b, setB] = useState(all[1]?.name ?? all[0]?.name ?? '');
@@ -37,11 +38,18 @@ export function Setup() {
         <h1>Sorcery Practice Table</h1>
         <p className="lede">A table for learning Sorcery: Contested Realm. It enforces the core rules, shows which moves are legal, and says why a move is not.</p>
         <p className="status">
-          {apiCount ? <>Card pool: {apiCount} cards, synced {new Date(syncedAt!).toLocaleDateString()}.</> : <>No Sorcery cards synced yet. The built-in practice cards work without a sync.</>}{' '}
+          {apiCount ? <>Card pool: {apiCount} cards, synced {new Date(syncedAt!).toLocaleDateString()}.</> : <>No Sorcery cards synced yet.</>}{' '}
           {Object.keys(art).length ? `Art cached for ${Object.keys(art).length} cards.` : 'No art loaded.'}{' '}
           <button className="link" onClick={() => setView('settings')}>Card Sync and Art Sync are in Settings</button>
         </p>
       </section>
+      {!all.length ? (
+        <section className="panel newgame">
+          <h2>No decks to play with yet</h2>
+          <p>{apiCount ? 'Your cards are synced. A game needs a deck for each side: an Avatar, at least 10 spells and 6 sites.' : 'A game needs cards and a deck for each side. Card Sync brings in the cards; decks are built or imported after that.'}</p>
+          <div className="row">{!apiCount && <button className="primary big" onClick={() => setView('settings')}>Open Card Sync</button>}<button className={apiCount ? 'primary big' : 'big'} onClick={() => setView('decks')}>Open Decks</button></div>
+        </section>
+      ) : (
       <section className="panel newgame">
         <div className="seg" role="tablist">
           {([['ai', 'Against the AI'], ['hotseat', 'Two players, one screen'], ['online', 'Online with a friend']] as [Mode, string][]).map(([m, n]) => (
@@ -76,6 +84,7 @@ export function Setup() {
           <p className="note">The two browsers connect directly. Only deck lists, the shuffle seed and moves are sent; art never is. Both players need the same card pool synced.</p>
         </>)}
       </section>
+      )}
     </div>
   );
 }
@@ -114,11 +123,15 @@ export function Decks() {
     <div className="page">
       <h1>Decks</h1>
       <div className="decklist">
-        {allDecks(decks).map((d) => (
+        {!allDecks(decks, pool).length && <p className="banner">No decks yet. Build one from your card pool or import a list below.</p>}
+        {resolveOfficial(pool).filter((r) => r.missing.length).map((r) => (
+          <div key={r.deck.name} className="panel deckrow"><div><b>{r.deck.name}</b><small>{r.product}, official precon. Not playable yet: {r.missing.length} card name{r.missing.length > 1 ? 's are' : ' is'} not in your card pool ({r.missing.slice(0, 4).join(', ')}{r.missing.length > 4 ? '…' : ''}). A Card Sync usually fixes this.</small></div></div>
+        ))}
+        {allDecks(decks, pool).map((d) => (
           <div key={d.name} className="panel deckrow">
-            <div><b>{d.name}</b><small>{pool[d.avatar]?.name ?? 'No avatar'} · {d.spellbook.length} spells · {d.atlas.length} sites{isPracticeDeck(d.name) ? ' · built in' : ''}</small></div>
+            <div><b>{d.name}</b><small>{pool[d.avatar]?.name ?? 'No avatar'} · {d.spellbook.length} spells · {d.atlas.length} sites{isBuiltIn(d.name) ? ' · official precon' : ''}</small></div>
             <span className="row">
-              {isPracticeDeck(d.name) ? <button onClick={() => { setCur({ ...d, name: d.name.replace('Practice: ', '') + ' (copy)' }); setOrig(undefined); }}>Copy and edit</button>
+              {isBuiltIn(d.name) ? <button onClick={() => { setCur({ ...d, name: d.name + ' (copy)' }); setOrig(undefined); }}>Copy and edit</button>
                 : <><button onClick={() => { setCur(d); setOrig(d.name); }}>Edit</button><button onClick={() => confirm(`Delete "${d.name}"?`) && deleteDeck(d.name)}>Delete</button></>}
             </span>
           </div>
@@ -127,7 +140,7 @@ export function Decks() {
       <div className="row"><button className="primary" onClick={() => { setCur({ name: 'New deck', avatar: '', spellbook: [], atlas: [] }); setOrig(undefined); }}>New deck</button></div>
       <section className="panel">
         <h2>Import a list</h2>
-        <p><a className="btnlink" href="https://curiosa.io/precons" target="_blank" rel="noreferrer">Official precon deck lists</a><a className="btnlink quiet" href="https://curiosa.io" target="_blank" rel="noreferrer">Curiosa deck site</a> Both open Curiosa.io, Erik's Curiosa's deck site, in a new tab. Copy a deck's card list there and paste it below.</p>
+        <p><a className="btnlink" href="https://curiosa.io/precons" target="_blank" rel="noreferrer">Official precon deck lists</a><a className="btnlink quiet" href="https://curiosa.io/decks" target="_blank" rel="noreferrer">Browse decks on Curiosa</a> Both open Curiosa.io, Erik's Curiosa's deck site, in a new tab. Copy a deck's card list there and paste it below.</p>
         <p className="note">Paste one card per line, like "4 Card Name". Names must match cards in your pool. This app does not fetch from Curiosa itself.</p>
         <textarea rows={6} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'1 Avatar Name\n4 Card Name\n3 Another Card'} />
         <div className="row"><button disabled={!paste.trim()} onClick={() => { const r = parseDeckText(paste, pool, 'Imported deck'); setCur(r.deck); setOrig(undefined); if (r.unknown.length) toast(`Not in your card pool: ${r.unknown.slice(0, 8).join(', ')}${r.unknown.length > 8 ? '…' : ''}`, 'error'); }}>Import</button></div>
@@ -140,7 +153,7 @@ export function Decks() {
       <div className="builder-main">
         <div className="row head"><input className="title" value={cur.name} onChange={(e) => setCur({ ...cur, name: e.target.value })} aria-label="Deck name" />
           <button onClick={() => setCur(null)}>Cancel</button>
-          <button className="primary" disabled={!cur.name.trim() || isPracticeDeck(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
+          <button className="primary" disabled={!cur.name.trim() || isBuiltIn(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
         {bar}
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => (
           <button key={c.id} className="gridcard" onClick={() => add(c)} {...hoverProps(c)} data-tip="Add to deck"><CardFace card={c} size="sm" />{count(c.id) > 0 && <span className="n">{count(c.id)}</span>}{cur.avatar === c.id && <span className="n">✓</span>}</button>
@@ -153,7 +166,7 @@ export function Decks() {
           <h3>{w === 'spellbook' ? 'Spellbook' : 'Atlas'} ({cur[w].length})</h3>
           <ul className="decklines">{group(cur[w]).map((x) => <li key={x.id} {...hoverProps(x.c)}><span>{x.n}× {x.c?.name ?? x.id}</span><button onClick={() => drop(x.id, w)} aria-label="Remove one">−</button></li>)}</ul>
         </div>))}
-        {notes.length > 0 && <div className="notes"><h3>Constructed-format notes</h3><ul>{notes.map((n) => <li key={n}>{n}</li>)}</ul><p className="note">These don't block practice games. A deck needs an Avatar, 10 spells and 6 sites to be playable here.</p></div>}
+        {notes.length > 0 && <div className="notes"><h3>Constructed-format notes</h3><ul>{notes.map((n) => <li key={n}>{n}</li>)}</ul><p className="note">These don't block games here. A deck needs an Avatar, 10 spells and 6 sites to be playable here.</p></div>}
       </aside>
     </div>
   );
@@ -176,9 +189,9 @@ export function Library() {
   return (
     <div className="page builder">
       <div className="builder-main">
-        <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'practice').length} practice, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
+        <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
         {bar}
-        {!Object.values(pool).some((c) => c.source === 'api') && <p className="banner">Only the built-in practice cards are here. Sorcery cards appear after a Card Sync in Settings.</p>}
+        {!Object.values(pool).some((c) => c.source === 'api') && <p className="banner">No cards yet. Sorcery cards appear after a Card Sync in Settings.</p>}
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
       </div>
       <aside className="builder-side">
@@ -208,7 +221,7 @@ export function Library() {
           <ArtChooser card={card} />
           <h3>Automated effects</h3>
           <p className="note">Keywords run on their own. Effects cover simple card text so the table can resolve it for you. Anything else is resolved with Manual tools during play.</p>
-          {card.source === 'practice' ? <p className="note">Built-in practice cards can't be changed.</p> : (<>
+          {(<>
             {card.effects.map((fx, i) => {
               const up = (p: Partial<Effect>) => setFx(card.effects.map((x, j) => (j === i ? { ...x, ...p } : x)));
               return (

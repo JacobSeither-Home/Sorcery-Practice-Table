@@ -1,8 +1,9 @@
-// Built-in practice cards. These are ORIGINAL placeholder cards written for this app so that the
+// TEST FIXTURES ONLY. Not shipped in the app.
+// Placeholder cards. These are ORIGINAL placeholder cards written for this app so that the
 // table works before a Card Sync and so that tests have fixtures. They are not Sorcery cards and
 // carry no Erik's Curiosa names, text, or art.
-import { makeCard } from '../engine/cards';
-import type { CardDef, DeckList, Effect } from '../engine/types';
+import { makeCard } from '../../src/engine/cards';
+import type { CardDef, DeckList, Effect } from '../../src/engine/types';
 
 const c = (name: string, type: CardDef['type'], cost: number, th: Partial<CardDef['thresholds']>, atk: number, def: number, keywords: string[], rules: string, effects: Effect[] = [], extra: Partial<CardDef> = {}) =>
   makeCard({ id: 'practice:' + name.toLowerCase().replace(/[^a-z]+/g, '-'), name, type, cost, thresholds: th as CardDef['thresholds'], attack: atk, defense: def, keywords, rules, effects, source: 'practice', typeline: `Practice ${type}`, ...extra });

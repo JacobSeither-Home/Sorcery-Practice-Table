@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PRACTICE_CARDS, PRACTICE_DECKS } from '../src/data/practiceSet';
+import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
 import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, legalActions, makeCard, normalizeApiCards, reach, thresholdOf } from '../src/engine';
 import { chooseAction, determinize } from '../src/ai/ai';
 
@@ -358,5 +358,22 @@ describe('art matching', () => {
     expect(m2(fileKey('Beta/002-mix_aer-b-f.png'))).toMatchObject({ variant: '002_mix_aer_b_f', exact: true });
     expect(m2(fileKey('bet-mix_aer-b-f.png'))).toMatchObject({ variant: '002_mix_aer_b_f', exact: true });   // only one printing ends in b_f
     expect(m2(fileKey('bet-mix_aer-b-s.png'))).toMatchObject({ variant: 'bet_mix_aer_b_s', exact: false });  // two sets share b_s: kept under its own name
+  });
+});
+
+describe('official precon lists', () => {
+  it('every bundled deck has 36 spells and 16 sites and resolves against a pool that has its cards', async () => {
+    const { OFFICIAL_DECKS, resolveOfficial } = await import('../src/data/officialDecks');
+    expect(OFFICIAL_DECKS.length).toBe(4);
+    const pool: Record<string, CardDef> = {};
+    for (const d of OFFICIAL_DECKS) {
+      expect(d.spellbook.reduce((n, [k]) => n + k, 0)).toBe(36);
+      expect(d.atlas.reduce((n, [k]) => n + k, 0)).toBe(16);
+      const av = makeCard({ name: d.avatar, type: 'Avatar', life: 20, source: 'api' }); pool[av.id] = av;
+      for (const [, n] of d.spellbook) { const c = makeCard({ name: n, type: 'Minion', source: 'api' }); pool[c.id] = c; }
+      for (const [, n] of d.atlas) { const c = makeCard({ name: n, type: 'Site', source: 'api' }); pool[c.id] = c; }
+    }
+    for (const r of resolveOfficial(pool)) { expect(r.missing).toEqual([]); expect(r.deck.spellbook.length).toBe(36); expect(r.deck.atlas.length).toBe(16); expect(pool[r.deck.avatar].type).toBe('Avatar'); }
+    expect(resolveOfficial({})[0].missing.length).toBeGreaterThan(20); // nothing synced: listed, not playable
   });
 });

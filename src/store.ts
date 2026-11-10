@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { type Action, type CardDef, type DeckList, type Effect, type GameState, type PlayerId, actor, apply, check, createGame, normalizeApiCards } from './engine';
-import { PRACTICE_CARDS, PRACTICE_DECKS } from './data/practiceSet';
+import { isOfficialDeck, resolveOfficial } from './data/officialDecks';
 import { db } from './data/db';
 import { type ArtReport, loadArtUrls, variantBlob } from './data/artSync';
 import { type Difficulty, chooseAction } from './ai/ai';
@@ -56,7 +56,6 @@ let link: Link | null = null;
 let toastId = 1;
 export const buildPool = (apiRaw: unknown, overlays: Record<string, Effect[]>, custom: CardDef[]) => {
   const pool: Record<string, CardDef> = {};
-  for (const c of PRACTICE_CARDS) pool[c.id] = c;
   if (apiRaw) for (const c of normalizeApiCards(apiRaw, overlays).cards) pool[c.id] = c;
   for (const c of custom) pool[c.id] = { ...c, effects: overlays[c.id] ?? c.effects };
   return pool;
@@ -228,5 +227,6 @@ async function driveAi() {
   finally { aiBusy = false; useStore.setState({ aiThinking: false }); }
 }
 
-export const allDecks = (decks: DeckList[]) => [...PRACTICE_DECKS, ...decks];
-export const isPracticeDeck = (name: string) => PRACTICE_DECKS.some((d) => d.name === name);
+/** Official precons that resolve completely against the pool, then the user's own decks. */
+export const allDecks = (decks: DeckList[], pool: Record<string, CardDef>) => [...resolveOfficial(pool).filter((r) => !r.missing.length).map((r) => r.deck), ...decks];
+export const isBuiltIn = isOfficialDeck;

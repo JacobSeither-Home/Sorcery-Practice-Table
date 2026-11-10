@@ -372,7 +372,7 @@ export function Preview() {
       <CardFace card={card} size="lg" />
       {card.type !== 'Site' && card.type !== 'Avatar' && <p className="meta">Cost {card.cost}{card.type === 'Minion' ? `, power ${card.attack === card.defense ? card.attack : `${card.attack} attack / ${card.defense} defense`}` : ''}</p>}
       {card.rules && <p className="rules">{card.rules}</p>}
-      {card.source !== 'api' && <p className="meta">{card.source === 'practice' ? 'Practice card (original placeholder, not a Sorcery card)' : 'Custom card'}</p>}
+      {card.source === 'custom' && <p className="meta">Custom card</p>}
       {card.type !== 'Site' && card.type !== 'Avatar' && card.rules && !card.effects.length && card.keywords.length === 0 && <p className="meta warn">This card's text is not automated. Use Manual tools to resolve it.</p>}
       <ul className="kw">{kws.map((k) => KEYWORD_HELP[k] && (
         <li key={k}><a href={codexUrl(k)} target="_blank" rel="noreferrer" data-tip="Open the Codex on sorcerytcg.com">{k}</a> {KEYWORD_HELP[k].text}</li>
