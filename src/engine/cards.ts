@@ -61,7 +61,7 @@ export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[
       movement: keywords.includes('Movement') ? Math.max(1, keywordNumber(rules, 'Movement')) : 0,
       ranged: keywords.includes('Ranged') ? Math.max(1, keywordNumber(rules, 'Ranged')) : 0,
       typeline: str(first?.meta?.typeline),
-      printings: printingsRaw.map((p) => ({ slug: str(p?.slug), set: str((p?.set as Record<string, unknown> | undefined)?.name) })).filter((p) => p.slug),
+      printings: printingsRaw.map((p) => { const meta = (p?.meta ?? {}) as Record<string, unknown>; return { slug: str(p?.slug), set: str((p?.set as Record<string, unknown> | undefined)?.name), finish: str(meta.finish) || undefined, product: str(meta.product) || undefined }; }).filter((p) => p.slug),
       source: 'api',
       effects: overlays[id] ?? overlays[slug] ?? [],
     });

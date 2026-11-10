@@ -40,7 +40,7 @@ export interface CardDef {
   /** X in "Ranged X" (0 = not ranged) */
   ranged: number;
   typeline: string;
-  printings: { slug: string; set: string }[];
+  printings: { slug: string; set: string; finish?: string; product?: string }[];
   source: 'api' | 'practice' | 'custom';
   effects: Effect[];
 }

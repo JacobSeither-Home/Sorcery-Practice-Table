@@ -7,7 +7,7 @@ import { slugify } from '../engine/cards';
 import type { CardDef } from '../engine/types';
 import { artDb, db } from './db';
 
-export interface ArtReport { matched: number; missing: string[]; unmatched: string[]; files: number }
+export interface ArtReport { matched: number; missing: string[]; unmatched: string[]; files: number; images: number; alts: number }
 const IMG = /\.(png|jpe?g|webp|avif)$/i;
 type Entry = { name: string; blob: () => Promise<Blob> };
 
@@ -42,7 +42,8 @@ export const supportsFilePicker = () => 'showOpenFilePicker' in window;
 /** Opens the file dialog in the Downloads folder (where browsers put a Drive download) and remembers the choice. */
 export async function pickZips(): Promise<File[]> {
   const handles: any[] = await (window as any).showOpenFilePicker({ id: 'sorcery-art-zip', startIn: 'downloads', multiple: true, types: [{ description: 'Zip archives', accept: { 'application/zip': ['.zip'] } }] });
-  await db.set('art:zips', handles);
+  const old: any[] = (await db.get('art:zips')) ?? [];
+  await db.set('art:zips', [...old.filter((o) => !handles.some((h) => h.name === o.name)), ...handles]);
   return Promise.all(handles.map((h) => h.getFile()));
 }
 export async function rememberedZips(): Promise<{ names: string[]; read: () => Promise<File[]> } | null> {
@@ -75,55 +76,29 @@ async function* zipEntries(zip: File): AsyncGenerator<Entry> {
     if (done) break;
   }
 }
-/** Import one or more zips image by image: match, shrink, cache, move on. */
-export async function importZips(zips: File[], cards: CardDef[], onProgress: (text: string) => void): Promise<ArtReport> {
-  const m = matcher(cards); const best = new Map<string, number>(); const unmatched: string[] = []; let files = 0;
-  for (const zip of zips) {
-    for await (const e of zipEntries(zip)) {
-      files++;
-      const hit = m(fileKey(e.name));
-      if (!hit) { if (unmatched.length < 500) unmatched.push(e.name); continue; }
-      if ((best.get(hit.id) ?? 0) >= hit.rank) continue; // keep the first, unless a closer filename turns up
-      await artDb.set(hit.id, await shrink(await e.blob())); best.set(hit.id, hit.rank);
-      if (files % 5 === 0) onProgress(`${zip.name}: ${files} images read, ${best.size} cards matched…`);
-    }
-  }
-  const have = new Set(await artDb.keys());
-  return { matched: best.size, files, unmatched, missing: cards.filter((c) => c.source === 'api' && !have.has(c.id)).map((c) => c.name) };
-}
-function matcher(cards: CardDef[]): (key: string) => { id: string; rank: number } | null {
-  const exact = new Map<string, string>(); const names: [string, string][] = [];
-  for (const c of cards) {
-    for (const p of c.printings) exact.set(slugify(p.slug), c.id);
-    exact.set(slugify(c.slug), c.id); exact.set(slugify(c.name), c.id);
-    names.push([slugify(c.name), c.id]);
-  }
-  names.sort((x, y) => y[0].length - x[0].length);
-  return (k) => {
-    const e = exact.get(k); if (e) return { id: e, rank: 2 };
-    const hit = names.find(([n]) => n.length > 2 && (`_${k}_`).includes(`_${n}_`));
-    return hit ? { id: hit[1], rank: 1 } : null;
-  };
-}
 
+// ---- matching: every image is kept, filed under its card as one "variant" (printing / alternate art) ----
 export const fileKey = (path: string) => slugify(path.split('/').pop()!.replace(IMG, ''));
+const SEP = '|';
+export const artKey = (cardId: string, variant: string) => cardId + SEP + variant;
+export function splitKey(k: string): [string, string] { const i = k.lastIndexOf(SEP); return i < 0 ? [k, 'base'] : [k.slice(0, i), k.slice(i + 1)]; }
 
-/** Pure matching step, unit-testable: file keys -> card ids. */
-export function matchArt(fileKeys: string[], cards: CardDef[]): { byCard: Map<string, number>; unmatched: number[] } {
-  const exact = new Map<string, string>(); const names: [string, string][] = [];
+export interface Match { id: string; variant: string; exact: boolean }
+/** Pure, unit-testable. A filename equal to a printing slug becomes that printing; anything else that names a card becomes a variant named after the file. */
+export function matcher(cards: CardDef[]): (key: string) => Match | null {
+  const printing = new Map<string, string>(); const exact = new Map<string, string>(); const names: [string, string][] = [];
   for (const c of cards) {
-    for (const p of c.printings) exact.set(slugify(p.slug), c.id);
+    for (const p of c.printings) printing.set(slugify(p.slug), c.id);
     exact.set(slugify(c.slug), c.id); exact.set(slugify(c.name), c.id);
     names.push([slugify(c.name), c.id]);
   }
-  names.sort((a, b) => b[0].length - a[0].length);
-  const byCard = new Map<string, number>(); const unmatched: number[] = [];
-  fileKeys.forEach((k, i) => {
-    let id = exact.get(k);
-    if (!id) { const hit = names.find(([n]) => n.length > 2 && (`_${k}_`).includes(`_${n}_`)); id = hit?.[1]; }
-    if (!id) unmatched.push(i); else if (!byCard.has(id) || exact.get(k) === id && fileKeys[byCard.get(id)!].length > k.length) byCard.set(id, i);
-  });
-  return { byCard, unmatched };
+  names.sort((x, y) => y[0].length - x[0].length); // longest card name wins
+  return (k) => {
+    const p = printing.get(k); if (p) return { id: p, variant: k, exact: true };
+    const e = exact.get(k); if (e) return { id: e, variant: 'base', exact: true };
+    const hit = names.find(([n]) => n.length > 2 && (`_${k}_`).includes(`_${n}_`));
+    return hit ? { id: hit[1], variant: k, exact: false } : null;
+  };
 }
 
 async function shrink(blob: Blob): Promise<Blob> {
@@ -136,15 +111,60 @@ async function shrink(blob: Blob): Promise<Blob> {
   } catch { return blob; }
 }
 
-export async function importArt(entries: Entry[], cards: CardDef[], onProgress: (done: number, total: number) => void): Promise<ArtReport> {
-  const { byCard, unmatched } = matchArt(entries.map((e) => fileKey(e.name)), cards);
-  let done = 0;
-  for (const [id, i] of byCard) { await artDb.set(id, await shrink(await entries[i].blob())); onProgress(++done, byCard.size); }
-  const have = new Set(await artDb.keys());
-  return { matched: byCard.size, files: entries.length, unmatched: unmatched.map((i) => entries[i].name), missing: cards.filter((c) => c.source === 'api' && !have.has(c.id)).map((c) => c.name) };
+async function ingest(source: AsyncIterable<Entry>, cards: CardDef[], onProgress: (text: string) => void, label: () => string): Promise<ArtReport> {
+  const m = matcher(cards); const unmatched: string[] = []; const touched = new Set<string>(); let files = 0, stored = 0;
+  for await (const e of source) {
+    files++;
+    const hit = m(fileKey(e.name));
+    if (!hit) { if (unmatched.length < 500) unmatched.push(e.name); continue; }
+    await artDb.set(artKey(hit.id, hit.variant), await shrink(await e.blob())); stored++; touched.add(hit.id);
+    if (files % 5 === 0) onProgress(`${label()}${files} images read, ${touched.size} cards matched…`);
+  }
+  const v = await listVariants();
+  return { matched: touched.size, files, images: stored, alts: Object.values(v).filter((x) => x.length > 1).length, unmatched,
+    missing: cards.filter((c) => c.source === 'api' && !v[c.id]).map((c) => c.name) };
 }
-export async function loadArtUrls(): Promise<Record<string, string>> {
-  const out: Record<string, string> = {};
-  for (const k of await artDb.keys()) { const b = await artDb.get(k); if (b) out[k] = URL.createObjectURL(b); }
+/** Import one or more zips image by image: match, shrink, cache, move on. Each run adds to what is already cached. */
+export async function importZips(zips: File[], cards: CardDef[], onProgress: (text: string) => void): Promise<ArtReport> {
+  let cur = '';
+  async function* all() { for (const z of zips) { cur = z.name + ': '; yield* zipEntries(z); } }
+  return ingest(all(), cards, onProgress, () => cur);
+}
+export async function importArt(entries: Entry[], cards: CardDef[], onProgress: (text: string) => void): Promise<ArtReport> {
+  async function* all() { yield* entries; }
+  return ingest(all(), cards, onProgress, () => '');
+}
+
+// ---- reading the cache ----
+/** cardId -> variant names that have an image. */
+export async function listVariants(): Promise<Record<string, string[]>> {
+  const out: Record<string, string[]> = {};
+  for (const k of await artDb.keys()) { const [id, v] = splitKey(String(k)); (out[id] ??= []).push(v); }
   return out;
+}
+/** Default order: the card's printings in API order with non-foil first, then a plain-named file, then the rest by name. */
+export function orderVariants(card: CardDef | undefined, variants: string[]): string[] {
+  const rank = (v: string) => {
+    const i = card ? card.printings.findIndex((p) => slugify(p.slug) === v) : -1;
+    if (i >= 0) return (/foil/i.test(card!.printings[i].finish ?? '') ? 1000 : 0) + i;
+    return v === 'base' ? 2000 : 3000;
+  };
+  return [...variants].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
+export function variantLabel(card: CardDef | undefined, v: string): string {
+  const p = card?.printings.find((x) => slugify(x.slug) === v);
+  if (p) return [p.set, p.finish, p.product].filter(Boolean).join(', ') || p.slug;
+  return v === 'base' ? 'Unlabeled image' : v.replace(/_/g, ' ');
+}
+export async function variantBlob(cardId: string, variant: string): Promise<Blob | undefined> {
+  return (await artDb.get(artKey(cardId, variant))) ?? (variant === 'base' ? await artDb.get(cardId) : undefined); // older caches had no variant part
+}
+/** One object URL per card: the chosen variant if it exists on this device, otherwise the default. */
+export async function loadArtUrls(pool: Record<string, CardDef>, choice: Record<string, string>): Promise<{ urls: Record<string, string>; variants: Record<string, string[]> }> {
+  const variants = await listVariants(); const urls: Record<string, string> = {};
+  for (const [id, vs] of Object.entries(variants)) {
+    const v = vs.includes(choice[id]) ? choice[id] : orderVariants(pool[id], vs)[0];
+    const b = await variantBlob(id, v); if (b) urls[id] = URL.createObjectURL(b);
+  }
+  return { urls, variants };
 }

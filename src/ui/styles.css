@@ -214,3 +214,8 @@ details summary { cursor: pointer; margin: 6px 0; }
 .steps { margin: 10px 0; padding-left: 22px; } .steps li { margin-bottom: 12px; max-width: 78ch; line-height: 1.7; }
 .btnlink { display: inline-block; font: 600 13px var(--sans); color: #1d1608; background: var(--brass); border: 1px solid #e6c376; border-radius: var(--r); padding: 6px 12px; text-decoration: none; margin-right: 6px; }
 .btnlink:hover { background: #ddb65f; } .filebtn.primary { background: var(--brass); color: #1d1608; border-color: #e6c376; display: inline-block; }
+
+.artpick { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 8px; }
+.artpick button { padding: 0; width: 66px; aspect-ratio: 5 / 7; border: 2px solid var(--line); border-radius: 5px; overflow: visible; background: #0f1522; }
+.artpick button.on { border-color: var(--brass); box-shadow: 0 0 0 2px var(--brass); }
+.artpick img { width: 100%; height: 100%; object-fit: cover; border-radius: 3px; display: block; }

@@ -2,13 +2,13 @@ import { create } from 'zustand';
 import { type Action, type CardDef, type DeckList, type Effect, type GameState, type PlayerId, actor, apply, check, createGame, normalizeApiCards } from './engine';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './data/practiceSet';
 import { db } from './data/db';
-import { loadArtUrls } from './data/artSync';
+import { loadArtUrls, variantBlob } from './data/artSync';
 import { type Difficulty, chooseAction } from './ai/ai';
 import { type Link, type Msg, deckHash, newRoomCode, openLink, stateHash } from './net/online';
 import { push as logError } from './feedback/feedback';
 
 export type Mode = 'ai' | 'hotseat' | 'online';
-export interface Settings { name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean }
+export interface Settings { artChoice: Record<string, string>; name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean }
 export interface Toast { id: number; text: string; keyword?: string; tone: 'info' | 'error' }
 export interface Game { state: GameState; mode: Mode; difficulty: Difficulty; local: PlayerId; names: [string, string]; n: number }
 export interface Online { role: 'host' | 'guest'; code: string; status: 'waiting' | 'connected' | 'closed'; note: string }
@@ -23,6 +23,9 @@ interface Store {
   pool: Record<string, CardDef>;
   decks: DeckList[];
   art: Record<string, string>;
+  /** cardId -> names of the images cached for it on this device (printings / alternate art) */
+  artVariants: Record<string, string[]>;
+  chooseArt: (cardId: string, variant: string) => Promise<void>;
   settings: Settings;
   game: Game | null;
   online: Online | null;
@@ -55,10 +58,10 @@ export const buildPool = (apiRaw: unknown, overlays: Record<string, Effect[]>, c
   for (const c of custom) pool[c.id] = { ...c, effects: overlays[c.id] ?? c.effects };
   return pool;
 };
-const DEFAULTS: Settings = { name: 'Player', supabaseUrl: '', supabaseKey: '', reduceMotion: false, showLegal: true };
+const DEFAULTS: Settings = { artChoice: {}, name: 'Player', supabaseUrl: '', supabaseKey: '', reduceMotion: false, showLegal: true };
 
 export const useStore = create<Store>((set, get) => ({
-  ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {},
+  ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {}, artVariants: {},
   settings: DEFAULTS, game: null, online: null, aiThinking: false, toasts: [],
 
   init: async () => {
@@ -92,7 +95,14 @@ export const useStore = create<Store>((set, get) => ({
   saveDeck: (d, replace) => set((s) => { const decks = [...s.decks.filter((x) => x.name !== d.name && x.name !== replace), d]; db.set('decks', decks); return { decks }; }),
   deleteDeck: (name) => set((s) => { const decks = s.decks.filter((x) => x.name !== name); db.set('decks', decks); return { decks }; }),
   setSettings: (p) => set((s) => { const settings = { ...s.settings, ...p }; db.set('settings', settings); return { settings }; }),
-  reloadArt: async () => { const old = get().art; const art = await loadArtUrls(); set({ art }); Object.values(old).forEach((u) => URL.revokeObjectURL(u)); },
+  reloadArt: async () => { const old = get().art; const { urls, variants } = await loadArtUrls(get().pool, get().settings.artChoice ?? {}); set({ art: urls, artVariants: variants }); Object.values(old).forEach((u) => URL.revokeObjectURL(u)); },
+  chooseArt: async (cardId, variant) => {
+    const b = await variantBlob(cardId, variant); if (!b) return;
+    const old = get().art[cardId];
+    get().setSettings({ artChoice: { ...(get().settings.artChoice ?? {}), [cardId]: variant } });
+    set({ art: { ...get().art, [cardId]: URL.createObjectURL(b) } });
+    if (old) URL.revokeObjectURL(old);
+  },
 
   newGame: (mode, decks, difficulty) => {
     const state = createGame(get().pool, decks, (Math.random() * 2 ** 31) | 0);

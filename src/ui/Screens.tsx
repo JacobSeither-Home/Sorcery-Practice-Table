@@ -3,7 +3,7 @@ import { type CardDef, type CardType, type DeckList, type Effect, ELEMENTS, KEYW
 import type { Difficulty } from '../ai/ai';
 import { type Mode, allDecks, isPracticeDeck, useStore } from '../store';
 import { CARDS_URL, type SyncDiff, diffCards, fetchCards } from '../data/cardSync';
-import { type ArtReport, OFFICIAL_ART_FOLDER, fromFileList, importArt, importZips, pickFolder, pickZips, rememberedFolder, rememberedZips, supportsFilePicker, supportsFolderPicker } from '../data/artSync';
+import { type ArtReport, OFFICIAL_ART_FOLDER, orderVariants, variantBlob, variantLabel, fromFileList, importArt, importZips, pickFolder, pickZips, rememberedFolder, rememberedZips, supportsFilePicker, supportsFolderPicker } from '../data/artSync';
 import { artDb } from '../data/db';
 import { deckNotes, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
@@ -203,6 +203,7 @@ export function Library() {
         ) : card ? (<>
           <Preview />
           <div className="row"><b>{card.name}</b>{card.source === 'custom' && <><button onClick={() => setDraft(card)}>Edit</button><button onClick={() => { if (confirm(`Delete ${card.name}?`)) { deleteCustom(card.id); setId(null); } }}>Delete</button></>}</div>
+          <ArtChooser card={card} />
           <h3>Automated effects</h3>
           <p className="note">Keywords run on their own. Effects cover simple card text so the table can resolve it for you. Anything else is resolved with Manual tools during play.</p>
           {card.source === 'practice' ? <p className="note">Built-in practice cards can't be changed.</p> : (<>
@@ -226,6 +227,29 @@ export function Library() {
       </aside>
     </div>
   );
+}
+
+function ArtChooser({ card }: { card: CardDef }) {
+  const variants = useStore((s) => s.artVariants[card.id]); const choice = useStore((s) => s.settings.artChoice?.[card.id]); const chooseArt = useStore((s) => s.chooseArt);
+  const [urls, setUrls] = useState<Record<string, string>>({});
+  const ordered = useMemo(() => orderVariants(card, variants ?? []), [card, variants]);
+  useEffect(() => {
+    let live = true; const made: string[] = [];
+    (async () => { const out: Record<string, string> = {}; for (const v of ordered) { const b = await variantBlob(card.id, v); if (b) { out[v] = URL.createObjectURL(b); made.push(out[v]); } } if (live) setUrls(out); })();
+    return () => { live = false; made.forEach((u) => URL.revokeObjectURL(u)); };
+  }, [card.id, ordered]);
+  if (!variants?.length) return <p className="note">No art cached for this card on this device.</p>;
+  if (variants.length === 1) return null;
+  const current = ordered.includes(choice ?? '') ? choice : ordered[0];
+  return (<>
+    <h3>Art ({variants.length} images)</h3>
+    <div className="artpick">{ordered.map((v) => (
+      <button key={v} className={v === current ? 'on' : ''} onClick={() => chooseArt(card.id, v)} data-tip={variantLabel(card, v) + (v === ordered[0] ? ' (default)' : '')} aria-pressed={v === current}>
+        {urls[v] ? <img src={urls[v]} alt={variantLabel(card, v)} /> : <span>…</span>}
+      </button>
+    ))}</div>
+    <p className="note">The chosen image is used for this card everywhere on the table. The choice is saved to your account; the images themselves stay on each device.</p>
+  </>);
 }
 
 // ---------------------------------------------------------------- settings
@@ -256,7 +280,7 @@ export function Settings() {
   const dirInput = useRef<HTMLInputElement>(null);
   const runArt = async (get: () => Promise<Parameters<typeof importArt>[0]>) => {
     setBusy('art'); setRep(null); setErr('');
-    try { setProg('Reading files…'); const entries = await get(); const r = await importArt(entries, Object.values(pool), (d, t) => setProg(`Caching ${d} of ${t}…`)); await st.reloadArt(); setRep(r); }
+    try { setProg('Reading files…'); const entries = await get(); const r = await importArt(entries, Object.values(pool), setProg); await st.reloadArt(); setRep(r); }
     catch (e) { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }
     setBusy(''); setProg('');
   };
@@ -312,7 +336,7 @@ export function Settings() {
           <li>{supportsFilePicker()
             ? <button className="primary" disabled={!!busy} onClick={() => runZips(pickZips)}>Load the downloaded zip</button>
             : <label className="filebtn primary">Load the downloaded zip<input type="file" accept=".zip" multiple disabled={!!busy} onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ''; if (f.length) runZips(async () => f); }} /></label>}
-            {' '}{supportsFilePicker() ? 'The file window opens in your Downloads folder. Select the zip (or all of them) and the table matches every image to its card.' : 'Select the zip (or all of them) and the table matches every image to its card.'}
+            {' '}{supportsFilePicker() ? 'The file window opens in your Downloads folder. Select one zip or several at once; each load adds to what is already cached, so the zips can also be loaded one after another.' : 'Select one zip or several at once; each load adds to what is already cached.'}
             {zipNames.length > 0 && <> <button disabled={!!busy} onClick={() => runZips(async () => (await rememberedZips())!.read())}>Re-read {zipNames.length === 1 ? `"${zipNames[0]}"` : `${zipNames.length} zips`}</button></>}</li>
         </ol>
         <p className="note">A web page cannot see where a download was saved, so the zip has to be picked once. After that this browser remembers it. The zip is read on this device only.</p>
@@ -329,7 +353,7 @@ export function Settings() {
         {prog && <p className="note">{prog}</p>}
         {rep && (
           <div className="report">
-            <p><b>{rep.matched}</b> cards matched from {rep.files} image files. <b>{rep.missing.length}</b> synced cards have no art; <b>{rep.unmatched.length}</b> files matched no card.</p>
+            <p><b>{rep.matched}</b> cards matched from {rep.files} image files in this run. <b>{rep.alts}</b> cards now have more than one image to choose from (Card library, select a card, Art). <b>{rep.missing.length}</b> synced cards have no art; <b>{rep.unmatched.length}</b> files matched no card.</p>
             {rep.missing.length > 0 && <details><summary>Cards without art ({rep.missing.length})</summary><p className="names">{rep.missing.slice(0, 400).join(', ')}</p></details>}
             {rep.unmatched.length > 0 && <details><summary>Files that matched no card ({rep.unmatched.length})</summary><p className="names">{rep.unmatched.slice(0, 200).join(', ')}</p></details>}
             {!apiCards.length && <p className="note warn">No Sorcery cards are synced yet, so files could only match practice or custom cards. Run Card Sync first.</p>}

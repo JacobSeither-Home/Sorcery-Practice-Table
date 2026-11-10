@@ -335,3 +335,22 @@ describe('AI', () => {
     }
   });
 });
+
+describe('art matching', () => {
+  it('files every image under its card as a variant, printings by slug and other names by filename', async () => {
+    const { matcher, fileKey, orderVariants, variantLabel } = await import('../src/data/artSync');
+    const card = makeCard({ id: 'c1', name: 'Sample Knight', type: 'Minion', printings: [
+      { slug: 'alp-sample_knight-b-s', set: 'Alpha', finish: 'Standard', product: 'Booster' },
+      { slug: 'alp-sample_knight-b-f', set: 'Alpha', finish: 'Foil', product: 'Booster' },
+      { slug: 'pro-sample_knight-op-s', set: 'Promotional', finish: 'Standard', product: 'Organized Play' }] });
+    const other = makeCard({ id: 'c2', name: 'Knight', type: 'Minion' });
+    const m = matcher([card, other]);
+    expect(m(fileKey('zip2/alp-sample_knight-b-f.png'))).toEqual({ id: 'c1', variant: 'alp_sample_knight_b_f', exact: true });
+    expect(m(fileKey('Sample Knight.png'))).toEqual({ id: 'c1', variant: 'base', exact: true });
+    expect(m(fileKey('Sample Knight (alt art 2).jpg'))).toMatchObject({ id: 'c1', variant: 'sample_knight_alt_art_2', exact: false }); // longest name wins over "Knight"
+    expect(m(fileKey('unrelated.png'))).toBeNull();
+    const order = orderVariants(card, ['sample_knight_alt_art_2', 'alp_sample_knight_b_f', 'base', 'pro_sample_knight_op_s', 'alp_sample_knight_b_s']);
+    expect(order).toEqual(['alp_sample_knight_b_s', 'pro_sample_knight_op_s', 'alp_sample_knight_b_f', 'base', 'sample_knight_alt_art_2']);
+    expect(variantLabel(card, 'pro_sample_knight_op_s')).toBe('Promotional, Standard, Organized Play');
+  });
+});

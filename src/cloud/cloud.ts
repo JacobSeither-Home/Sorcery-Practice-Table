@@ -87,6 +87,7 @@ async function pull() {
     await Promise.all([db.set('settings', settings), db.set('decks', decks), db.set('custom', custom), db.set('overlays', overlays)]);
     useStore.setState({ settings, decks, custom, overlays, pool: buildPool(s.apiRaw, overlays, custom) });
     useAuth.setState({ sync: 'saved' });
+    useStore.getState().reloadArt(); // art choices come from the account, images from this device
   } finally { applying = false; }
 }
 
