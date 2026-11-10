@@ -352,5 +352,11 @@ describe('art matching', () => {
     const order = orderVariants(card, ['sample_knight_alt_art_2', 'alp_sample_knight_b_f', 'base', 'pro_sample_knight_op_s', 'alp_sample_knight_b_s']);
     expect(order).toEqual(['alp_sample_knight_b_s', 'pro_sample_knight_op_s', 'alp_sample_knight_b_f', 'base', 'sample_knight_alt_art_2']);
     expect(variantLabel(card, 'pro_sample_knight_op_s')).toBe('Promotional, Standard, Organized Play');
+    // real slug shape from the API (2026-11-10): numeric set code, then name, product and finish letters
+    const real = makeCard({ id: 'c3', name: 'Mix Aer', type: 'Magic', printings: [{ slug: '002-mix_aer-b-s', set: 'Beta' }, { slug: '002-mix_aer-b-f', set: 'Beta' }, { slug: '001-mix_aer-b-s', set: 'Alpha' }] });
+    const m2 = matcher([real]);
+    expect(m2(fileKey('Beta/002-mix_aer-b-f.png'))).toMatchObject({ variant: '002_mix_aer_b_f', exact: true });
+    expect(m2(fileKey('bet-mix_aer-b-f.png'))).toMatchObject({ variant: '002_mix_aer_b_f', exact: true });   // only one printing ends in b_f
+    expect(m2(fileKey('bet-mix_aer-b-s.png'))).toMatchObject({ variant: 'bet_mix_aer_b_s', exact: false });  // two sets share b_s: kept under its own name
   });
 });

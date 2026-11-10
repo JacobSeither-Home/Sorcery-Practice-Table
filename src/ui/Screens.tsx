@@ -174,8 +174,9 @@ export function Library() {
   return (
     <div className="page builder">
       <div className="builder-main">
-        <div className="row head"><h1>Card library</h1><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
+        <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'practice').length} practice, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
         {bar}
+        {!Object.values(pool).some((c) => c.source === 'api') && <p className="banner">Only the built-in practice cards are here. Sorcery cards appear after a Card Sync in Settings.</p>}
         <div className="grid">{list.slice(0, 150).map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
         {list.length > 150 && <p className="note">Showing the first 150. Narrow the search to see more.</p>}
       </div>
@@ -259,13 +260,23 @@ export function Settings() {
   const apiCards = useMemo(() => Object.values(pool).filter((c) => c.source === 'api'), [pool]);
   // card sync
   const [busy, setBusy] = useState(''); const [diff, setDiff] = useState<{ d: SyncDiff; raw: unknown } | null>(null); const [err, setErr] = useState('');
-  const stage = (raw: unknown) => { const d = diffCards(apiRaw, raw); if (!d.total) { setErr('That data has no cards this app can read. Nothing was changed.'); return; } setDiff({ d, raw }); };
+  // Sync shows what changed and saves in the same step, so nothing is lost by leaving the page.
+  const stage = async (raw: unknown) => {
+    const d = diffCards(apiRaw, raw);
+    if (!d.total) { setErr('That data has no cards this app can read. Nothing was changed.'); return; }
+    const kept = await st.saveApi(raw);
+    setDiff({ d, raw });
+    if (kept) toast(`Card pool saved: ${d.total.toLocaleString()} cards.`);
+    else setErr('The cards are loaded for now, but this browser did not keep them, so they will be gone after a reload. Private windows and blocked site storage cause this.');
+  };
   const sync = async () => {
     setBusy('cards'); setErr(''); setDiff(null);
-    try { stage(await fetchCards()); }
+    try { await stage(await fetchCards()); }
     catch (e) { setErr(`${(e as Error).message || 'The request did not complete.'} If the browser blocked the request, open ${CARDS_URL} in a tab, save the page as cards.json, and use "Import cards.json".`); }
     setBusy('');
   };
+  const printings = useMemo(() => apiCards.reduce((n, c) => n + c.printings.length, 0), [apiCards]);
+  const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
   // art sync
   const [rep, setRep] = useState<ArtReport | null>(null); const [prog, setProg] = useState(''); const [folder, setFolder] = useState<string | null>(null);
   useEffect(() => { rememberedFolder().then((f) => setFolder(f?.name ?? null)); }, [rep]);
@@ -312,18 +323,22 @@ export function Settings() {
 
       <section className="panel">
         <h2>Card Sync</h2>
-        <p>{apiCards.length ? `${apiCards.length} cards stored on this device, synced ${new Date(syncedAt!).toLocaleString()}.` : 'No cards synced yet.'} Sync makes one request to the official public API and shows what changed before saving. It never runs on its own.</p>
+        <div className="statrow" role="status">
+          <div><span className="big">{apiCards.length.toLocaleString()}</span><small>Sorcery cards on this device</small></div>
+          <div><span className="big">{printings.toLocaleString()}</span><small>printings</small></div>
+          <div><span className="big">{syncedAt ? ago(syncedAt) : 'never'}</span><small>{syncedAt ? `last sync, ${new Date(syncedAt).toLocaleString()}` : 'last sync'}</small></div>
+        </div>
+        <p>Sync makes one request to the official public API, saves the result on this device, and shows what changed. It never runs on its own.</p>
         <div className="row">
           <button className="primary" disabled={!!busy} onClick={sync}>{busy === 'cards' ? 'Requesting…' : 'Sync cards'}</button>
-          <label className="filebtn">Import cards.json<input type="file" accept=".json,application/json" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; setErr(''); try { stage(JSON.parse(await f.text())); } catch { setErr('That file is not valid JSON.'); } }} /></label>
+          <label className="filebtn">Import cards.json<input type="file" accept=".json,application/json" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; setErr(''); let raw: unknown; try { raw = JSON.parse(await f.text()); } catch { setErr('That file is not valid JSON.'); return; } await stage(raw); }} /></label>
         </div>
         {diff && (
           <div className="report">
-            <p><b>{diff.d.total}</b> cards in the new data: <b>{diff.d.added.length}</b> new, <b>{diff.d.changed.length}</b> changed, <b>{diff.d.removed.length}</b> removed.</p>
+            <p>Saved. <b>{diff.d.total.toLocaleString()}</b> cards; compared with the previous copy, <b>{diff.d.added.length}</b> new, <b>{diff.d.changed.length}</b> changed, <b>{diff.d.removed.length}</b> removed.</p>
             {(['added', 'changed', 'removed'] as const).map((k) => diff.d[k].length > 0 && <details key={k}><summary>{k === 'added' ? 'New' : k === 'changed' ? 'Changed' : 'Removed'} ({diff.d[k].length})</summary><p className="names">{diff.d[k].slice(0, 400).join(', ')}{diff.d[k].length > 400 ? '…' : ''}</p></details>)}
             {diff.d.unknownFields.length > 0 && <p className="note warn">The API returned fields this app does not know yet: {diff.d.unknownFields.join(', ')}. They are kept in the stored copy and ignored by the rules engine.</p>}
             {diff.d.skipped.length > 0 && <p className="note warn">{diff.d.skipped.length} entries could not be read and were skipped: {diff.d.skipped.slice(0, 12).join(', ')}{diff.d.skipped.length > 12 ? '…' : ''}</p>}
-            <div className="row"><button onClick={() => setDiff(null)}>Discard</button><button className="primary" onClick={async () => { await st.saveApi(diff.raw); setDiff(null); toast('Card pool saved.'); }}>Save this card pool</button></div>
           </div>
         )}
       </section>
@@ -331,6 +346,7 @@ export function Settings() {
       <section className="panel">
         <h2>Art Sync</h2>
         <p>{Object.keys(st.art).length ? `Art cached for ${Object.keys(st.art).length} cards.` : 'No art cached.'} Art is read from a zip or folder on your own disk and kept in this browser. It is never uploaded.</p>
+        {!apiCards.length && <p className="note warn">Card Sync comes first: images are matched to synced cards by name.</p>}
         <ol className="steps">
           <li><a className="btnlink" href={OFFICIAL_ART_FOLDER} target="_blank" rel="noreferrer">Download the art zip</a> This opens the official image folder in a new tab. In Google Drive, choose "Download all"; Drive builds a zip (sometimes several) and your browser saves it, normally to Downloads.</li>
           <li>{supportsFilePicker()
@@ -356,7 +372,8 @@ export function Settings() {
             <p><b>{rep.matched}</b> cards matched from {rep.files} image files in this run. <b>{rep.alts}</b> cards now have more than one image to choose from (Card library, select a card, Art). <b>{rep.missing.length}</b> synced cards have no art; <b>{rep.unmatched.length}</b> files matched no card.</p>
             {rep.missing.length > 0 && <details><summary>Cards without art ({rep.missing.length})</summary><p className="names">{rep.missing.slice(0, 400).join(', ')}</p></details>}
             {rep.unmatched.length > 0 && <details><summary>Files that matched no card ({rep.unmatched.length})</summary><p className="names">{rep.unmatched.slice(0, 200).join(', ')}</p></details>}
-            {!apiCards.length && <p className="note warn">No Sorcery cards are synced yet, so files could only match practice or custom cards. Run Card Sync first.</p>}
+            {rep.samples.length > 0 && <details><summary>Examples of file names read</summary><p className="names">{rep.samples.join(', ')}</p></details>}
+            {!apiCards.length && <p className="banner error">No Sorcery cards are on this device yet, so the images had nothing to match. After a Card Sync, load the zips again.</p>}
           </div>
         )}
       </section>

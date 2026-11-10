@@ -34,7 +34,7 @@ interface Store {
   init: () => Promise<void>;
   setView: (v: Store['view']) => void;
   toast: (text: string, tone?: Toast['tone'], keyword?: string) => void;
-  saveApi: (raw: unknown) => Promise<void>;
+  saveApi: (raw: unknown) => Promise<boolean>;
   setOverlay: (id: string, effects: Effect[]) => void;
   saveCustom: (c: CardDef) => void;
   deleteCustom: (id: string) => void;
@@ -84,6 +84,10 @@ export const useStore = create<Store>((set, get) => ({
     const syncedAt = new Date().toISOString();
     await db.set('cards:raw', raw); await db.set('cards:syncedAt', syncedAt);
     set((s) => ({ apiRaw: raw, syncedAt, pool: buildPool(raw, s.overlays, s.custom) }));
+    // db.set never throws, so read back to learn whether the browser really kept it
+    const kept = (await db.get<string>('cards:syncedAt')) === syncedAt && Array.isArray(await db.get('cards:raw'));
+    get().reloadArt();
+    return kept;
   },
   setOverlay: (id, effects) => set((s) => {
     const overlays = { ...s.overlays }; if (effects.length) overlays[id] = effects; else delete overlays[id];

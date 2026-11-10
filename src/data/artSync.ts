@@ -7,7 +7,7 @@ import { slugify } from '../engine/cards';
 import type { CardDef } from '../engine/types';
 import { artDb, db } from './db';
 
-export interface ArtReport { matched: number; missing: string[]; unmatched: string[]; files: number; images: number; alts: number }
+export interface ArtReport { matched: number; missing: string[]; unmatched: string[]; files: number; images: number; alts: number; samples: string[] }
 const IMG = /\.(png|jpe?g|webp|avif)$/i;
 type Entry = { name: string; blob: () => Promise<Blob> };
 
@@ -93,11 +93,17 @@ export function matcher(cards: CardDef[]): (key: string) => Match | null {
     names.push([slugify(c.name), c.id]);
   }
   names.sort((x, y) => y[0].length - x[0].length); // longest card name wins
+  // Printing slugs look like "004-card_name-b-s". A file that differs only in its set prefix
+  // ("bet-card_name-b-s") is that printing when exactly one printing of the card ends the same way.
+  const tail = (s: string) => s.slice(s.indexOf('_') + 1);
+  const byId = new Map(cards.map((c) => [c.id, c]));
   return (k) => {
     const p = printing.get(k); if (p) return { id: p, variant: k, exact: true };
     const e = exact.get(k); if (e) return { id: e, variant: 'base', exact: true };
     const hit = names.find(([n]) => n.length > 2 && (`_${k}_`).includes(`_${n}_`));
-    return hit ? { id: hit[1], variant: k, exact: false } : null;
+    if (!hit) return null;
+    const same = byId.get(hit[1])!.printings.map((x) => slugify(x.slug)).filter((s) => tail(s) === tail(k) || tail(s) === k);
+    return same.length === 1 ? { id: hit[1], variant: same[0], exact: true } : { id: hit[1], variant: k, exact: false };
   };
 }
 
@@ -112,16 +118,16 @@ async function shrink(blob: Blob): Promise<Blob> {
 }
 
 async function ingest(source: AsyncIterable<Entry>, cards: CardDef[], onProgress: (text: string) => void, label: () => string): Promise<ArtReport> {
-  const m = matcher(cards); const unmatched: string[] = []; const touched = new Set<string>(); let files = 0, stored = 0;
+  const m = matcher(cards); const unmatched: string[] = []; const samples: string[] = []; const touched = new Set<string>(); let files = 0, stored = 0;
   for await (const e of source) {
-    files++;
+    files++; if (samples.length < 6 && files % 37 === 1) samples.push(e.name);
     const hit = m(fileKey(e.name));
     if (!hit) { if (unmatched.length < 500) unmatched.push(e.name); continue; }
     await artDb.set(artKey(hit.id, hit.variant), await shrink(await e.blob())); stored++; touched.add(hit.id);
     if (files % 5 === 0) onProgress(`${label()}${files} images read, ${touched.size} cards matched…`);
   }
   const v = await listVariants();
-  return { matched: touched.size, files, images: stored, alts: Object.values(v).filter((x) => x.length > 1).length, unmatched,
+  return { matched: touched.size, files, images: stored, alts: Object.values(v).filter((x) => x.length > 1).length, unmatched, samples,
     missing: cards.filter((c) => c.source === 'api' && !v[c.id]).map((c) => c.name) };
 }
 /** Import one or more zips image by image: match, shrink, cache, move on. Each run adds to what is already cached. */

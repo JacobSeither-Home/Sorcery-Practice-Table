@@ -219,3 +219,6 @@ details summary { cursor: pointer; margin: 6px 0; }
 .artpick button { padding: 0; width: 66px; aspect-ratio: 5 / 7; border: 2px solid var(--line); border-radius: 5px; overflow: visible; background: #0f1522; }
 .artpick button.on { border-color: var(--brass); box-shadow: 0 0 0 2px var(--brass); }
 .artpick img { width: 100%; height: 100%; object-fit: cover; border-radius: 3px; display: block; }
+
+.statrow { display: flex; flex-wrap: wrap; gap: 10px 36px; margin: 4px 0 14px; } .statrow div { display: flex; flex-direction: column; }
+.statrow .big { font: 600 26px/1.15 var(--serif); color: var(--parch); } .head .count { margin-right: auto; padding-left: 12px; }
