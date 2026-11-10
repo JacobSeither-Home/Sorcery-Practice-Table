@@ -30,4 +30,4 @@ npm run build      # static site in dist/
 - `src/ui/` React table
 - `tests/` vitest
 - `docs/RULES_COVERAGE.md` what the engine enforces and what is simplified
-- `supabase/migrations/` table for shared feedback (optional)
+- `supabase/migrations/0001_wishlist.sql` table for shared feedback (optional, not applied anywhere)

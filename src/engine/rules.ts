@@ -208,7 +208,7 @@ function runEffects(s: GameState, d: CardDef, on: Effect['on'], p: PlayerId, loc
       case 'mana': s.players[p].mana += n; log(s, `${pname(p)} gains ${n} mana.`, p); break;
       case 'draw': {
         for (let i = 0; i < n; i++) if (!drawCard(s, p, e.deck ?? 'spellbook')) { log(s, `${pname(p)} must draw from an empty deck and loses.`, p); win(s, other(p)); break; }
-        if (s.phase !== 'over') log(s, `${pname(p)} draws ${n} from the ${e.deck ?? 'spellbook'} (${d.name}).`, p);
+        if ((s.phase as string) !== 'over') log(s, `${pname(p)} draws ${n} from the ${e.deck ?? 'spellbook'} (${d.name}).`, p);
         break;
       }
     }
