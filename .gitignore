@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Card art is never committed. Each user loads it locally through Art Sync.
+art/
+card-art/
+*.zip
+.env
+.env.local
