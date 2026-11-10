@@ -307,7 +307,7 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
       if (!s.units[x.to.id] && !x.to.avatar) continue;
       log(s, `${unitCard(s, x.from).name} strikes ${unitCard(s, x.to).name} for ${x.dmg}.`, x.from.owner);
       damageUnit(s, x.to, x.dmg, x.lethal && !x.to.avatar);
-      if (s.phase === 'over') return;
+      if ((s.phase as string) === 'over') return;
     }
   }
 }
