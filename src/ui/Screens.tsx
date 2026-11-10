@@ -142,10 +142,9 @@ export function Decks() {
           <button onClick={() => setCur(null)}>Cancel</button>
           <button className="primary" disabled={!cur.name.trim() || isPracticeDeck(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
         {bar}
-        <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.slice(0, 150).map((c) => (
+        <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => (
           <button key={c.id} className="gridcard" onClick={() => add(c)} {...hoverProps(c)} data-tip="Add to deck"><CardFace card={c} size="sm" />{count(c.id) > 0 && <span className="n">{count(c.id)}</span>}{cur.avatar === c.id && <span className="n">✓</span>}</button>
         ))}</div>
-        {list.length > 150 && <p className="note">Showing the first 150. Narrow the search to see more.</p>}
       </div>
       <aside className="builder-side">
         <Preview />
@@ -180,8 +179,7 @@ export function Library() {
         <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'practice').length} practice, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
         {bar}
         {!Object.values(pool).some((c) => c.source === 'api') && <p className="banner">Only the built-in practice cards are here. Sorcery cards appear after a Card Sync in Settings.</p>}
-        <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.slice(0, 150).map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
-        {list.length > 150 && <p className="note">Showing the first 150. Narrow the search to see more.</p>}
+        <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
       </div>
       <aside className="builder-side">
         {draft ? (

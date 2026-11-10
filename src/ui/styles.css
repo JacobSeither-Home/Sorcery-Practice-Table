@@ -244,3 +244,7 @@ details summary { cursor: pointer; margin: 6px 0; }
 @keyframes land { 0% { background: #fff9; box-shadow: 0 0 30px 8px var(--place); transform: scale(1.12); } 100% { background: #fff0; box-shadow: 0 0 0 0 #0000; transform: scale(1); } }
 
 .btnlink.quiet { background: var(--cloth-2); color: var(--text); border-color: var(--line); }
+
+/* the whole pool is in the grid; off-screen cards are skipped by the browser until scrolled to */
+.gridcard { content-visibility: auto; contain-intrinsic-size: calc(104px * var(--zoom, 1)) calc(146px * var(--zoom, 1)); }
+.gridcard .n { z-index: 1; }
