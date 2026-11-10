@@ -10,7 +10,7 @@ import { Decks, Library, Settings, Setup } from './Screens';
 const NAV = [['play', 'Table'], ['decks', 'Decks'], ['library', 'Card library'], ['settings', 'Settings']] as const;
 
 export function App() {
-  const { ready, view, setView, game, toasts, init } = useStore();
+  const { ready, view, setView, game, toasts, init, artJob } = useStore();
   const auth = useAuth();
   useEffect(() => { init().then(() => useAuth.getState().init()); }, [init]);
   if (!ready || auth.status === 'loading') return <div className="boot">Opening the table…</div>;
@@ -21,6 +21,7 @@ export function App() {
         <header className="topbar">
           <span className="brand">Sorcery Practice Table</span>
           <nav>{NAV.map(([v, n]) => <button key={v} className={view === v ? 'on' : ''} aria-current={view === v ? 'page' : undefined} onClick={() => setView(v)}>{n}{v === 'play' && game && game.state.phase !== 'over' ? <i className="live" /> : null}</button>)}</nav>
+          {artJob && <button className="jobchip" onClick={() => setView('settings')} data-tip="Open Settings">Loading art. {artJob}</button>}
           <span className="unofficial">Unofficial fan project, not affiliated with Erik's Curiosa</span>
         </header>
         {view === 'play' ? (game ? <Table /> : <Setup />) : view === 'decks' ? <Decks /> : view === 'library' ? <Library /> : <Settings />}

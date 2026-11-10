@@ -2,13 +2,13 @@ import { create } from 'zustand';
 import { type Action, type CardDef, type DeckList, type Effect, type GameState, type PlayerId, actor, apply, check, createGame, normalizeApiCards } from './engine';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './data/practiceSet';
 import { db } from './data/db';
-import { loadArtUrls, variantBlob } from './data/artSync';
+import { type ArtReport, loadArtUrls, variantBlob } from './data/artSync';
 import { type Difficulty, chooseAction } from './ai/ai';
 import { type Link, type Msg, deckHash, newRoomCode, openLink, stateHash } from './net/online';
 import { push as logError } from './feedback/feedback';
 
 export type Mode = 'ai' | 'hotseat' | 'online';
-export interface Settings { artChoice: Record<string, string>; name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean }
+export interface Settings { artChoice: Record<string, string>; zoom: number; name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean }
 export interface Toast { id: number; text: string; keyword?: string; tone: 'info' | 'error' }
 export interface Game { state: GameState; mode: Mode; difficulty: Difficulty; local: PlayerId; names: [string, string]; n: number }
 export interface Online { role: 'host' | 'guest'; code: string; status: 'waiting' | 'connected' | 'closed'; note: string }
@@ -26,6 +26,9 @@ interface Store {
   /** cardId -> names of the images cached for it on this device (printings / alternate art) */
   artVariants: Record<string, string[]>;
   chooseArt: (cardId: string, variant: string) => Promise<void>;
+  /** a running art load: visible from every screen, survives leaving Settings */
+  artJob: string | null; artReport: ArtReport | null; artSyncedAt: string | null;
+  runArtJob: (work: (progress: (text: string) => void) => Promise<ArtReport>) => Promise<void>;
   settings: Settings;
   game: Game | null;
   online: Online | null;
@@ -58,10 +61,10 @@ export const buildPool = (apiRaw: unknown, overlays: Record<string, Effect[]>, c
   for (const c of custom) pool[c.id] = { ...c, effects: overlays[c.id] ?? c.effects };
   return pool;
 };
-const DEFAULTS: Settings = { artChoice: {}, name: 'Player', supabaseUrl: '', supabaseKey: '', reduceMotion: false, showLegal: true };
+const DEFAULTS: Settings = { artChoice: {}, zoom: 1, name: 'Player', supabaseUrl: '', supabaseKey: '', reduceMotion: false, showLegal: true };
 
 export const useStore = create<Store>((set, get) => ({
-  ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {}, artVariants: {},
+  ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {}, artVariants: {}, artJob: null, artReport: null, artSyncedAt: null,
   settings: DEFAULTS, game: null, online: null, aiThinking: false, toasts: [],
 
   init: async () => {
@@ -73,6 +76,7 @@ export const useStore = create<Store>((set, get) => ({
       settings: { ...DEFAULTS, ...(settings ?? {}) }, pool: buildPool(apiRaw, overlays ?? {}, custom ?? []), ready: true,
     });
     get().reloadArt();
+    db.get<string>('art:syncedAt').then((v) => set({ artSyncedAt: v ?? null }));
   },
   setView: (view) => set({ view }),
   toast: (text, tone = 'info', keyword) => {
@@ -100,6 +104,24 @@ export const useStore = create<Store>((set, get) => ({
   deleteDeck: (name) => set((s) => { const decks = s.decks.filter((x) => x.name !== name); db.set('decks', decks); return { decks }; }),
   setSettings: (p) => set((s) => { const settings = { ...s.settings, ...p }; db.set('settings', settings); return { settings }; }),
   reloadArt: async () => { const old = get().art; const { urls, variants } = await loadArtUrls(get().pool, get().settings.artChoice ?? {}); set({ art: urls, artVariants: variants }); Object.values(old).forEach((u) => URL.revokeObjectURL(u)); },
+  runArtJob: async (work) => {
+    if (get().artJob) return;
+    set({ artJob: 'Reading files…', artReport: null });
+    let last = Date.now();
+    try {
+      const report = await work((text) => {
+        set({ artJob: text });
+        if (Date.now() - last > 8000) { last = Date.now(); get().reloadArt(); } // let art appear while the load is still running
+      });
+      const artSyncedAt = new Date().toISOString(); await db.set('art:syncedAt', artSyncedAt);
+      await get().reloadArt();
+      set({ artReport: report, artSyncedAt });
+      get().toast(`Art loaded: ${report.matched.toLocaleString()} cards matched.`);
+    } catch (e) {
+      await get().reloadArt();
+      if ((e as Error).name !== 'AbortError') get().toast(`Art load stopped: ${(e as Error).message}`, 'error');
+    } finally { set({ artJob: null }); }
+  },
   chooseArt: async (cardId, variant) => {
     const b = await variantBlob(cardId, variant); if (!b) return;
     const old = get().art[cardId];

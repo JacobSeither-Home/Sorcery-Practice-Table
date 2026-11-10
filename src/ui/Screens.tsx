@@ -83,6 +83,7 @@ export function Setup() {
 // ---------------------------------------------------------------- shared card search
 function useSearch(pool: Record<string, CardDef>, types?: CardType[]) {
   const [q, setQ] = useState(''); const [type, setType] = useState<string>('');
+  const zoom = useStore((s) => s.settings.zoom ?? 1); const setSettings = useStore((s) => s.setSettings);
   const list = useMemo(() => {
     const k = q.trim().toLowerCase();
     return Object.values(pool).filter((c) => (!types || types.includes(c.type)) && (!type || c.type === type) && (!k || c.name.toLowerCase().includes(k) || c.rules.toLowerCase().includes(k) || c.subtypes.join(' ').toLowerCase().includes(k)))
@@ -92,10 +93,11 @@ function useSearch(pool: Record<string, CardDef>, types?: CardType[]) {
     <div className="searchbar">
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, rules text or subtype" aria-label="Search cards" />
       <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Card type"><option value="">All types</option>{['Avatar', 'Site', 'Minion', 'Magic', 'Aura', 'Artifact'].map((t) => <option key={t}>{t}</option>)}</select>
-      <span className="count">{list.length} cards</span>
+      <label className="zoom" data-tip="Card size"><span aria-hidden>−</span><input type="range" min={0.6} max={3} step={0.1} value={zoom} onChange={(e) => setSettings({ zoom: Number(e.target.value) })} aria-label="Card size" /><span aria-hidden>+</span></label>
+      <span className="count">{list.length.toLocaleString()} cards</span>
     </div>
   );
-  return { list, bar };
+  return { list, bar, zoom };
 }
 
 // ---------------------------------------------------------------- decks
@@ -103,7 +105,7 @@ export function Decks() {
   const { pool, decks, saveDeck, deleteDeck, toast } = useStore();
   const [cur, setCur] = useState<DeckList | null>(null); const [orig, setOrig] = useState<string | undefined>();
   const [paste, setPaste] = useState('');
-  const { list, bar } = useSearch(pool);
+  const { list, bar, zoom } = useSearch(pool);
   const count = (id: string) => (cur ? [...cur.spellbook, ...cur.atlas].filter((x) => x === id).length : 0);
   const add = (c: CardDef) => cur && setCur(c.type === 'Avatar' ? { ...cur, avatar: c.id } : c.type === 'Site' ? { ...cur, atlas: [...cur.atlas, c.id] } : { ...cur, spellbook: [...cur.spellbook, c.id] });
   const drop = (id: string, where: 'spellbook' | 'atlas') => { if (!cur) return; const a = cur[where].slice(); a.splice(a.lastIndexOf(id), 1); setCur({ ...cur, [where]: a }); };
@@ -139,7 +141,7 @@ export function Decks() {
           <button onClick={() => setCur(null)}>Cancel</button>
           <button className="primary" disabled={!cur.name.trim() || isPracticeDeck(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
         {bar}
-        <div className="grid">{list.slice(0, 150).map((c) => (
+        <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.slice(0, 150).map((c) => (
           <button key={c.id} className="gridcard" onClick={() => add(c)} {...hoverProps(c)} data-tip="Add to deck"><CardFace card={c} size="sm" />{count(c.id) > 0 && <span className="n">{count(c.id)}</span>}{cur.avatar === c.id && <span className="n">✓</span>}</button>
         ))}</div>
         {list.length > 150 && <p className="note">Showing the first 150. Narrow the search to see more.</p>}
@@ -165,7 +167,7 @@ const blank = (): CardDef => makeCard({ name: '', type: 'Minion', cost: 1, attac
 
 export function Library() {
   const { pool, setOverlay, saveCustom, deleteCustom, toast } = useStore();
-  const { list, bar } = useSearch(pool);
+  const { list, bar, zoom } = useSearch(pool);
   const [id, setId] = useState<string | null>(null);
   const [draft, setDraft] = useState<CardDef | null>(null);
   const card = id ? pool[id] : null;
@@ -177,7 +179,7 @@ export function Library() {
         <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'practice').length} practice, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
         {bar}
         {!Object.values(pool).some((c) => c.source === 'api') && <p className="banner">Only the built-in practice cards are here. Sorcery cards appear after a Card Sync in Settings.</p>}
-        <div className="grid">{list.slice(0, 150).map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
+        <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.slice(0, 150).map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
         {list.length > 150 && <p className="note">Showing the first 150. Narrow the search to see more.</p>}
       </div>
       <aside className="builder-side">
@@ -278,23 +280,17 @@ export function Settings() {
   const printings = useMemo(() => apiCards.reduce((n, c) => n + c.printings.length, 0), [apiCards]);
   const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
   // art sync
-  const [rep, setRep] = useState<ArtReport | null>(null); const [prog, setProg] = useState(''); const [folder, setFolder] = useState<string | null>(null);
-  useEffect(() => { rememberedFolder().then((f) => setFolder(f?.name ?? null)); }, [rep]);
-  const [zipNames, setZipNames] = useState<string[]>([]);
-  useEffect(() => { rememberedZips().then((z) => setZipNames(z?.names ?? [])); }, [rep]);
-  const runZips = async (get: () => Promise<File[]>) => {
-    setBusy('art'); setRep(null); setErr('');
-    try { const zips = await get(); if (zips.length) { setProg('Reading the zip…'); const r = await importZips(zips, Object.values(pool), setProg); await st.reloadArt(); setRep(r); } }
-    catch (e) { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }
-    setBusy(''); setProg('');
-  };
+  const rep = st.artReport; const prog = st.artJob ?? ''; const artBusy = !!st.artJob;
+  const [folder, setFolder] = useState<string | null>(null); const [zipNames, setZipNames] = useState<string[]>([]);
+  useEffect(() => { rememberedFolder().then((f) => setFolder(f?.name ?? null)); rememberedZips().then((z) => setZipNames(z?.names ?? [])); }, [rep, artBusy]);
   const dirInput = useRef<HTMLInputElement>(null);
-  const runArt = async (get: () => Promise<Parameters<typeof importArt>[0]>) => {
-    setBusy('art'); setRep(null); setErr('');
-    try { setProg('Reading files…'); const entries = await get(); const r = await importArt(entries, Object.values(pool), setProg); await st.reloadArt(); setRep(r); }
-    catch (e) { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }
-    setBusy(''); setProg('');
-  };
+  const cardList = () => Object.values(useStore.getState().pool);
+  const runZips = (get: () => Promise<File[]>) => { setErr(''); get().then((zips) => { if (zips.length) st.runArtJob((p) => importZips(zips, cardList(), p)); }).catch((e) => { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }); };
+  const runArt = (get: () => Promise<Parameters<typeof importArt>[0]>) => { setErr(''); st.runArtJob(async (p) => importArt(await get(), cardList(), p)); };
+  const artStats = useMemo(() => {
+    const v = st.artVariants; const ids = Object.keys(v);
+    return { withArt: apiCards.filter((c) => v[c.id]).length, images: ids.reduce((n, id) => n + v[id].length, 0), alts: ids.filter((id) => v[id].length > 1).length };
+  }, [st.artVariants, apiCards]);
   // feedback
   const [items, setItems] = useState<FeedbackItem[]>([]); const [kind, setKind] = useState<'wish' | 'problem'>('wish');
   const [title, setTitle] = useState(''); const [details, setDetails] = useState(''); const [diag, setDiag] = useState(true); const [fbNote, setFbNote] = useState('');
@@ -345,28 +341,34 @@ export function Settings() {
 
       <section className="panel">
         <h2>Art Sync</h2>
-        <p>{Object.keys(st.art).length ? `Art cached for ${Object.keys(st.art).length} cards.` : 'No art cached.'} Art is read from a zip or folder on your own disk and kept in this browser. It is never uploaded.</p>
+        <div className="statrow" role="status">
+          <div><span className="big">{artStats.withArt.toLocaleString()} of {apiCards.length.toLocaleString()}</span><small>synced cards have art</small></div>
+          <div><span className="big">{artStats.images.toLocaleString()}</span><small>images on this device</small></div>
+          <div><span className="big">{artStats.alts.toLocaleString()}</span><small>cards with alternate art</small></div>
+          <div><span className="big">{st.artSyncedAt ? ago(st.artSyncedAt) : 'never'}</span><small>{st.artSyncedAt ? `last art load, ${new Date(st.artSyncedAt).toLocaleString()}` : 'last art load'}</small></div>
+        </div>
+        <p>Art is read from zips or a folder on your own disk and kept in this browser. It is never uploaded. Large zips take several minutes; the load keeps running if you go to another screen, and art appears as it is read.</p>
         {!apiCards.length && <p className="note warn">Card Sync comes first: images are matched to synced cards by name.</p>}
         <ol className="steps">
           <li><a className="btnlink" href={OFFICIAL_ART_FOLDER} target="_blank" rel="noreferrer">Download the art zip</a> This opens the official image folder in a new tab. In Google Drive, choose "Download all"; Drive builds a zip (sometimes several) and your browser saves it, normally to Downloads.</li>
           <li>{supportsFilePicker()
-            ? <button className="primary" disabled={!!busy} onClick={() => runZips(pickZips)}>Load the downloaded zip</button>
-            : <label className="filebtn primary">Load the downloaded zip<input type="file" accept=".zip" multiple disabled={!!busy} onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ''; if (f.length) runZips(async () => f); }} /></label>}
+            ? <button className="primary" disabled={artBusy} onClick={() => runZips(pickZips)}>Load the downloaded zip</button>
+            : <label className="filebtn primary">Load the downloaded zip<input type="file" accept=".zip" multiple disabled={artBusy} onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ''; if (f.length) runZips(async () => f); }} /></label>}
             {' '}{supportsFilePicker() ? 'The file window opens in your Downloads folder. Select one zip or several at once; each load adds to what is already cached, so the zips can also be loaded one after another.' : 'Select one zip or several at once; each load adds to what is already cached.'}
-            {zipNames.length > 0 && <> <button disabled={!!busy} onClick={() => runZips(async () => (await rememberedZips())!.read())}>Re-read {zipNames.length === 1 ? `"${zipNames[0]}"` : `${zipNames.length} zips`}</button></>}</li>
+            {zipNames.length > 0 && <> <button disabled={artBusy} onClick={() => runZips(async () => (await rememberedZips())!.read())}>Re-read {zipNames.length === 1 ? `"${zipNames[0]}"` : `${zipNames.length} zips`}</button></>}</li>
         </ol>
         <p className="note">A web page cannot see where a download was saved, so the zip has to be picked once. After that this browser remembers it. The zip is read on this device only.</p>
         <details><summary>Use an unzipped folder instead</summary><div className="row">
           {supportsFolderPicker() ? <>
-            <button disabled={!!busy} onClick={() => runArt(pickFolder)}>Choose art folder</button>
-            {folder && <button disabled={!!busy} onClick={() => runArt(async () => (await rememberedFolder())!.read())}>Re-read "{folder}"</button>}
-          </> : <><button disabled={!!busy} onClick={() => dirInput.current?.click()}>Choose art folder</button>
+            <button disabled={artBusy} onClick={() => runArt(pickFolder)}>Choose art folder</button>
+            {folder && <button disabled={artBusy} onClick={() => runArt(async () => (await rememberedFolder())!.read())}>Re-read "{folder}"</button>}
+          </> : <><button disabled={artBusy} onClick={() => dirInput.current?.click()}>Choose art folder</button>
             <input ref={dirInput} type="file" multiple hidden {...({ webkitdirectory: '' } as object)} onChange={(e) => { const f = e.target.files; if (f?.length) runArt(async () => fromFileList(f)); }} /></>}
         </div></details>
         <div className="row">
-          {Object.keys(st.art).length > 0 && <button disabled={!!busy} onClick={async () => { if (confirm('Remove all cached art from this browser?')) { await artDb.clear(); await st.reloadArt(); setRep(null); } }}>Clear cached art</button>}
+          {artStats.images > 0 && <button disabled={artBusy} onClick={async () => { if (confirm('Remove all cached art from this browser?')) { await artDb.clear(); await st.reloadArt(); useStore.setState({ artReport: null }); } }}>Clear cached art</button>}
         </div>
-        {prog && <p className="note">{prog}</p>}
+        {prog && <p className="banner" role="status">Loading art. {prog}</p>}
         {rep && (
           <div className="report">
             <p><b>{rep.matched}</b> cards matched from {rep.files} image files in this run. <b>{rep.alts}</b> cards now have more than one image to choose from (Card library, select a card, Art). <b>{rep.missing.length}</b> synced cards have no art; <b>{rep.unmatched.length}</b> files matched no card.</p>

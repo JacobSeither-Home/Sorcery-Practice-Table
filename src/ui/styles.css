@@ -187,7 +187,7 @@ fieldset { border: 1px solid var(--line-soft); border-radius: var(--r); margin: 
 .builder { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; padding-bottom: 0; overflow: hidden; }
 .builder-main, .builder-side { overflow: auto; min-height: 0; padding-bottom: 40px; } .builder-side { border-left: 1px solid var(--line-soft); padding-left: 20px; }
 .head { margin-bottom: 12px; } .head h1 { flex: 1; margin: 0; } input.title { flex: 1; font: 600 22px var(--serif); }
-.searchbar { display: grid; grid-template-columns: 1fr 150px auto; gap: 8px; align-items: center; margin-bottom: 14px; } .count { color: var(--muted); font-size: 12px; }
+.searchbar { display: grid; grid-template-columns: 1fr 150px auto auto; gap: 8px; align-items: center; margin-bottom: 14px; } .count { color: var(--muted); font-size: 12px; }
 .grid { display: flex; flex-wrap: wrap; gap: 10px; }
 .gridcard { background: none; border: 0; padding: 0; position: relative; border-radius: 7px; } .gridcard:hover:not(:disabled) { background: none; transform: translateY(-3px); } .gridcard.on .card { box-shadow: 0 0 0 3px var(--brass); }
 .gridcard .n { position: absolute; top: -6px; right: -6px; background: var(--brass); color: #1d1608; border-radius: 99px; min-width: 22px; height: 22px; display: grid; place-items: center; font-weight: 700; font-size: 12px; }
@@ -222,3 +222,7 @@ details summary { cursor: pointer; margin: 6px 0; }
 
 .statrow { display: flex; flex-wrap: wrap; gap: 10px 36px; margin: 4px 0 14px; } .statrow div { display: flex; flex-direction: column; }
 .statrow .big { font: 600 26px/1.15 var(--serif); color: var(--parch); } .head .count { margin-right: auto; padding-left: 12px; }
+
+.grid .card.sm { --w: calc(104px * var(--zoom, 1)); }
+.zoom { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); } .zoom input { width: 120px; padding: 0; accent-color: var(--brass); }
+.jobchip { margin-left: 12px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 12px; padding: 4px 10px; border-color: var(--brass-2); color: var(--brass); background: none; }
