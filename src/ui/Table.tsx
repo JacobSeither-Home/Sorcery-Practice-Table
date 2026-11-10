@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
@@ -123,10 +123,43 @@ export function Table() {
     clickCell(u.c);
   }
   function clickHand(inst: string) {
+    if (dragged.current) return; // the click that ends a drag
     if (!myInput || s.pending || s.phase !== 'main') { if (s.phase === 'draw' && myInput) toast('Draw a card first: choose your spellbook or atlas.'); return; }
     setMenu(null);
     setSel(sel?.k === 'hand' && sel.inst === inst ? null : { k: 'hand', inst });
   }
+
+  // ---- dragging a hand card onto the realm ----
+  const [drag, setDrag] = useState<{ inst: string; c: number | null; unit: string | null } | null>(null);
+  const dragged = useRef(false);
+  const under = (x: number, y: number) => {
+    let c: number | null = null, unit: string | null = null;
+    for (const el of document.elementsFromPoint(x, y) as HTMLElement[]) {
+      if (unit === null && el.dataset?.unit) unit = el.dataset.unit;
+      if (el.dataset?.cell !== undefined) { c = Number(el.dataset.cell); break; }
+    }
+    return { c, unit };
+  };
+  const canDrag = myInput && !s.pending && s.phase === 'main';
+  function startDrag(inst: string) { dragged.current = true; setMenu(null); setSel({ k: 'hand', inst }); setDrag({ inst, c: null, unit: null }); }
+  function moveDrag(inst: string, x: number, y: number) { const u = under(x, y); setDrag((d) => (d && d.c === u.c && d.unit === u.unit ? d : { inst, ...u })); }
+  function dropHand(inst: string, x: number, y: number) {
+    const { c, unit } = under(x, y);
+    setDrag(null); setTimeout(() => { dragged.current = false; }, 0);
+    if (c === null) { setSel(null); return; } // let go outside the realm: back to hand
+    const d = cardOf(s, inst);
+    if (d.type === 'Site') { const a: Action = { t: 'playSite', inst, c }; if (explain(a)) act(a); else setSel(null); return; }
+    if (d.type === 'Magic') {
+      const needs = d.effects.some((e) => e.who === 'target' && e.on === 'cast');
+      if (needs && !unit) { toast(`Drop ${d.name} on the unit it should target.`); return; } // stays selected, targets keep glowing
+      const a: Action = needs ? { t: 'cast', inst, target: unit! } : { t: 'cast', inst };
+      if (explain(a)) act(a); else setSel(null); return;
+    }
+    if (d.effects.some((e) => e.who === 'target' && e.on === 'genesis') && s.sites[c]?.owner === who) { setSel({ k: 'hand', inst, c }); toast(`Now choose a target for ${d.name}.`); return; }
+    const a: Action = { t: 'cast', inst, c };
+    if (explain(a)) act(a); else setSel(null);
+  }
+  const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen
 
   const order = [...Array(CELLS).keys()]; if (flip) order.reverse();
   const unitsByCell = useMemo(() => { const m = new Map<number, Unit[]>(); for (const u of Object.values(s.units)) { if (!m.has(u.c)) m.set(u.c, []); m.get(u.c)!.push(u); } return m; }, [s.units]);
@@ -152,8 +185,8 @@ export function Table() {
           <span className="hint">
             {s.phase === 'over' ? '' : !myInput ? (aiThinking ? `${PNAME(g, who)} is thinking…` : `Waiting for ${PNAME(g, who)}…`)
               : pend ? '' : s.phase === 'draw' ? 'Start of turn: draw one card from either deck.'
-              : selCard ? (selCard.type === 'Site' ? 'Choose a glowing square for this site.' : selCard.type === 'Magic' ? (castNow ? 'Cast it with the button below.' : 'Choose a glowing target.') : sel?.k === 'hand' && sel.c !== undefined ? 'Choose a glowing target.' : 'Choose one of your sites.')
-              : selUnit ? 'Green squares: move. Red squares: something to attack.' : 'Select a card in hand or one of your units.'}
+              : drag ? 'Drag onto a glowing square and let go.' : selCard ? (selCard.type === 'Site' ? 'Choose a glowing square for this site.' : selCard.type === 'Magic' ? (castNow ? 'Cast it with the button below.' : 'Choose a glowing target.') : sel?.k === 'hand' && sel.c !== undefined ? 'Choose a glowing target.' : 'Choose one of your sites.')
+              : selUnit ? 'Green squares: move. Red squares: something to attack.' : 'Drag a card from your hand onto the realm, or select one of your units.'}
           </span>
         </div>
 
@@ -162,19 +195,23 @@ export function Table() {
             const site = s.sites[c]; const d = site?.inst ? cardOf(s, site.inst) : undefined; const hi = hiCells.get(c);
             const [x, y] = xy(c);
             return (
-              <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''}`}
+              <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''}`}
                 onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d)} data-cell={c}>
                 {d && <SiteArt id={d.id} />}
+                {d && <span className="site-flash" key={site!.inst} />}
                 {d && <div className="site-label"><span>{d.name}</span><Pips t={d.thresholds} /></div>}
                 {site && !site.inst && <div className="site-label"><span>Rubble</span></div>}
                 {!site && <span className="void-label">void</span>}
                 <span className="coord">{'ABCDE'[x]}{4 - y}</span>
-                <div className="perms">{s.perms.filter((m) => m.c === c).map((m) => (
-                  <span key={m.id} className={`perm p${m.owner}`} {...hoverProps(cardOf(s, m.inst))} onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: destroy' : cardOf(s, m.inst).name}>{m.kind === 'aura' ? '◌' : '◆'}</span>
-                ))}</div>
-                <div className="units">
-                  {(unitsByCell.get(c) ?? []).map((u) => <UnitToken key={u.id} s={s} u={u} selected={selUnit?.id === u.id} target={hiUnits.has(u.id)} onClick={(e) => clickUnit(u, e)} />)}
-                </div>
+                {([other(bottomPlayer), bottomPlayer] as PlayerId[]).map((p) => (
+                  <div key={p} className={`side ${p === bottomPlayer ? 'near' : 'far'}`}>
+                    {s.perms.filter((m) => m.c === c && m.owner === p).map((m) => (
+                      <span key={m.id} className={`perm p${m.owner}`} {...hoverProps(cardOf(s, m.inst))} onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: destroy' : cardOf(s, m.inst).name}>{m.kind === 'aura' ? '◌' : '◆'}</span>
+                    ))}
+                    {(unitsByCell.get(c) ?? []).filter((u) => u.owner === p).map((u) => <UnitToken key={u.id} s={s} u={u} selected={selUnit?.id === u.id} target={hiUnits.has(u.id)} dropping={drag?.unit === u.id && hiUnits.has(u.id)} onClick={(e) => clickUnit(u, e)} />)}
+                  </div>
+                ))}
+                {drag?.c === c && hi === 'place' && <span className="drop-label">Release to play here</span>}
                 {menu?.c === c && (
                   <motion.div className="cellmenu" initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }} onClick={(e) => e.stopPropagation()}>
                     {menu.opts.map((o, i) => <button key={i} onClick={() => act(o.action)}>{o.label}{o.hint && <small>{o.hint}</small>}</button>)}
@@ -209,8 +246,11 @@ export function Table() {
               const d = cardOf(s, inst); const on = sel?.k === 'hand' && sel.inst === inst;
               const mid = (me.hand.length - 1) / 2;
               return (
-                <motion.button key={inst} layout className={`handcard ${on ? 'on' : ''}`} initial={{ y: 60, opacity: 0 }} animate={{ y: on ? -22 : Math.abs(i - mid) * 3, opacity: 1, rotate: on ? 0 : (i - mid) * 1.6 }} exit={{ y: -40, opacity: 0 }}
+                <motion.button key={inst} layout layoutId={inst} className={`handcard ${on ? 'on' : ''}`} initial={{ y: 60, opacity: 0 }} animate={{ y: on ? -22 : Math.abs(i - mid) * 3, opacity: 1, rotate: on ? 0 : (i - mid) * 1.6 }} exit={{ y: -40, opacity: 0 }}
                   whileHover={{ y: -18, rotate: 0, zIndex: 5 }} transition={{ type: 'spring', stiffness: 420, damping: 30 }} onClick={() => clickHand(inst)} {...hoverProps(d)}
+                  drag={canDrag} dragSnapToOrigin dragMomentum={false} dragElastic={0} whileDrag={{ scale: 0.86, rotate: 0, zIndex: 60, opacity: 0.92 }}
+                  style={drag?.inst === inst ? { pointerEvents: 'none', zIndex: 60 } : undefined}
+                  onDragStart={() => startDrag(inst)} onDrag={(_e, info) => moveDrag(inst, info.point.x - window.scrollX, info.point.y - window.scrollY)} onDragEnd={(_e, info) => dropHand(inst, info.point.x - window.scrollX, info.point.y - window.scrollY)}
                   onContextMenu={(e) => { if (manual) { e.preventDefault(); act({ t: 'manual', op: 'discard', p: viewer, inst }); } }}>
                   <CardFace card={d} size="sm" />
                 </motion.button>
@@ -281,14 +321,14 @@ function SiteArt({ id }: { id: string }) {
   return art ? <img className="site-art" src={art} alt="" draggable={false} /> : null;
 }
 
-function UnitToken({ s, u, selected, target, onClick }: { s: GameState; u: Unit; selected: boolean; target: boolean; onClick: (e: React.MouseEvent) => void }) {
+function UnitToken({ s, u, selected, target, dropping, onClick }: { s: GameState; u: Unit; selected: boolean; target: boolean; dropping?: boolean; onClick: (e: React.MouseEvent) => void }) {
   const d = unitCard(s, u);
   const art = useStore((st) => st.art[d.id]);
   const life = u.avatar ? s.players[u.owner].life : d.defense - u.damage;
   return (
-    <motion.button layout layoutId={u.id} className={`unit p${u.owner} ${u.avatar ? 'avatar' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${u.r === 'under' ? 'under' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
+    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${u.avatar ? 'avatar' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${u.r === 'under' ? 'under' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
       animate={{ rotate: u.tapped ? 90 : 0, scale: selected ? 1.12 : 1 }} transition={{ type: 'spring', stiffness: 380, damping: 28 }} onClick={onClick} {...hoverProps(d)}
-      aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
+      data-unit={u.id} aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
       {art ? <img src={art} alt="" draggable={false} /> : <span className="unit-name">{d.name}</span>}
       <motion.span key={u.damage + ':' + life} className={`badge ${u.damage ? 'hurt' : ''}`} initial={{ scale: 1.7 }} animate={{ scale: 1 }}>{u.avatar ? `♥${life}` : d.attack === d.defense && !u.damage ? d.attack : `${d.attack}/${life}`}</motion.span>
       {u.r === 'under' && <span className="under-tag">below</span>}

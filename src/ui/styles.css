@@ -226,3 +226,19 @@ details summary { cursor: pointer; margin: 6px 0; }
 .grid .card.sm { --w: calc(104px * var(--zoom, 1)); }
 .zoom { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); } .zoom input { width: 120px; padding: 0; accent-color: var(--brass); }
 .jobchip { margin-left: 12px; max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; font-size: 12px; padding: 4px 10px; border-color: var(--brass-2); color: var(--brass); background: none; }
+
+/* each player's units and permanents sit on that player's side of the square */
+.side { position: absolute; left: 4px; right: 4px; display: flex; flex-wrap: wrap; gap: 4px; justify-content: center; align-items: center; pointer-events: none; }
+.side > * { pointer-events: auto; }
+.side.far { top: 20px; align-content: flex-start; } .side.near { bottom: 8px; align-content: flex-end; flex-wrap: wrap-reverse; }
+.side .perm { position: static; }
+.unit { width: clamp(30px, 3.1vw, 44px); } .unit.avatar { width: clamp(34px, 3.5vw, 50px); }
+/* drag and drop */
+.handcard { touch-action: none; cursor: grab; } .handcard:active { cursor: grabbing; }
+.cell.drop-ok { border-color: #fff; box-shadow: inset 0 0 0 3px #fff, 0 0 26px 4px var(--place); background-image: linear-gradient(#ffffff22, #ffffff22); transform: scale(1.03); z-index: 4; animation: none; }
+.cell.drop-no { border-color: var(--hit); box-shadow: inset 0 0 0 2px var(--hit); opacity: .75; }
+.drop-label { position: absolute; left: 50%; top: 50%; translate: -50% -50%; background: #0b101bdd; color: var(--parch); border: 1px solid var(--brass); border-radius: 99px; padding: 2px 10px; font-size: 11.5px; white-space: nowrap; pointer-events: none; z-index: 5; }
+.unit.dropping { box-shadow: 0 0 0 4px #fff, 0 0 22px 4px var(--hit); transform: scale(1.15); }
+
+.site-flash { position: absolute; inset: 0; border-radius: 4px; pointer-events: none; animation: land .6s ease-out both; }
+@keyframes land { 0% { background: #fff9; box-shadow: 0 0 30px 8px var(--place); transform: scale(1.12); } 100% { background: #fff0; box-shadow: 0 0 0 0 #0000; transform: scale(1); } }
