@@ -127,7 +127,8 @@ export function Decks() {
       <div className="row"><button className="primary" onClick={() => { setCur({ name: 'New deck', avatar: '', spellbook: [], atlas: [] }); setOrig(undefined); }}>New deck</button></div>
       <section className="panel">
         <h2>Import a list</h2>
-        <p className="note">Paste one card per line, like "4 Card Name". Names must match cards in your pool.</p>
+        <p><a className="btnlink" href="https://curiosa.io/precons" target="_blank" rel="noreferrer">Official precon deck lists</a><a className="btnlink quiet" href="https://curiosa.io" target="_blank" rel="noreferrer">Curiosa deck site</a> Both open Curiosa.io, Erik's Curiosa's deck site, in a new tab. Copy a deck's card list there and paste it below.</p>
+        <p className="note">Paste one card per line, like "4 Card Name". Names must match cards in your pool. This app does not fetch from Curiosa itself.</p>
         <textarea rows={6} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'1 Avatar Name\n4 Card Name\n3 Another Card'} />
         <div className="row"><button disabled={!paste.trim()} onClick={() => { const r = parseDeckText(paste, pool, 'Imported deck'); setCur(r.deck); setOrig(undefined); if (r.unknown.length) toast(`Not in your card pool: ${r.unknown.slice(0, 8).join(', ')}${r.unknown.length > 8 ? '…' : ''}`, 'error'); }}>Import</button></div>
       </section>
