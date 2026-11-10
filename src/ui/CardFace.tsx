@@ -4,9 +4,33 @@ import { useStore } from '../store';
 
 /** Which card the pointer is over; the right rail shows it large. */
 export const useHover = create<{ card: CardDef | null; set: (c: CardDef | null) => void }>((set) => ({ card: null, set: (card) => set({ card }) }));
+/** The card opened large in the inspector sheet (long-press on touch, right-click with a mouse). */
+export const useInspect = create<{ card: CardDef | null; open: (c: CardDef | null) => void }>((set) => ({ card: null, open: (card) => set({ card }) }));
+
+// One long-press at a time. The innermost element under the finger claims it (a unit inside a site cell).
+let lp: { timer: number; x: number; y: number } | null = null;
+const cancelLp = () => { if (lp) { clearTimeout(lp.timer); lp = null; } };
+/** After a long-press opens the inspector, swallow the click that the same touch produces. */
+function swallowNextClick() {
+  const stop = (e: Event) => { e.stopPropagation(); e.preventDefault(); };
+  addEventListener('click', stop, { capture: true, once: true });
+  setTimeout(() => removeEventListener('click', stop, { capture: true }), 700);
+}
+type Claimed = Event & { __lp?: boolean };
+
 export const hoverProps = (card: CardDef | undefined) => ({
   onMouseEnter: () => card && useHover.getState().set(card),
   onFocus: () => card && useHover.getState().set(card),
+  onPointerDown: (e: React.PointerEvent) => {
+    if (!card || e.pointerType === 'mouse' || (e.nativeEvent as Claimed).__lp) return;
+    (e.nativeEvent as Claimed).__lp = true;
+    useHover.getState().set(card); // a tap also updates the side preview on tablets
+    cancelLp();
+    lp = { x: e.clientX, y: e.clientY, timer: window.setTimeout(() => { lp = null; swallowNextClick(); navigator.vibrate?.(12); useInspect.getState().open(card); }, 480) };
+  },
+  onPointerMove: (e: React.PointerEvent) => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) cancelLp(); },
+  onPointerUp: cancelLp, onPointerCancel: cancelLp,
+  onContextMenu: (e: React.MouseEvent) => { if (!card || e.defaultPrevented) return; e.preventDefault(); if ((e.nativeEvent as PointerEvent).pointerType !== 'touch') useInspect.getState().open(card); },
 });
 
 export function mainElement(c: CardDef): string {

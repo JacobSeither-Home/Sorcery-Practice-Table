@@ -10,7 +10,7 @@ import { deckNotes, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
 import { CardFace, hoverProps } from './CardFace';
 import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, useAuth } from '../cloud/cloud';
-import { Preview } from './Table';
+import { Preview, TableOptions } from './Table';
 
 declare const __APP_VERSION__: string;
 const DIFF: { id: Difficulty; name: string; note: string }[] = [
@@ -329,6 +329,10 @@ export function Settings() {
       <h1>Settings</h1>
       {err && <p className="banner error" role="alert">{err}</p>}
 
+      <section className="panel">
+        <h2>Table</h2>
+        <TableOptions />
+      </section>
       <section className="panel">
         <h2>Card Sync</h2>
         <div className="statrow" role="status">

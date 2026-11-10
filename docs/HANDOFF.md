@@ -14,13 +14,13 @@ For whoever picks this up next. Read with `docs/RULES_COVERAGE.md`.
 | Sign-in and saved data | `src/cloud/cloud.ts` | Supabase project `sorcery-practice-table` (org JacobSeither-ForFun). Gate in `src/ui/App.tsx`. `?local` skips sign-in under `npm run dev` only. |
 | Official decks | `src/data/officialDecks.ts` | Name lists resolved against the synced pool. Only the four Beta precons so far. |
 | Art | `src/data/artSync.ts` | Streaming zip reader, per-card variants keyed `cardId|variant`. |
-| UI | `src/ui/Table.tsx`, `Screens.tsx`, `CardFace.tsx`, `styles.css` | |
+| UI | `src/ui/Table.tsx`, `Screens.tsx`, `CardFace.tsx`, `styles.css` | Void backdrop canvas `VoidBackdrop.tsx`. Pace multiplier `pace.ts` (`settings.pace` scales springs, CSS `--pace`, AI delay, toasts). Opponent callout (`useHerald` in Table.tsx) is a diff of the previous and next state. Long-press / right-click opens `Inspector`. Layouts: >1100 three columns, 820–1100 no right rail, ≤820 strips above/below the board, short landscape puts hand and actions in a right column. |
 
 ## How to check work
 
 - `npm test` (34 tests: engine, AI legality, art matching, official lists, text reader).
 - `node tests/arena.mjs 8 50` plays the tiers against each other on the fixture decks. Last run: medium beat easy 8/8, hard beat easy 8/8, hard beat medium 7/8.
-- UI: `npm run dev`, open `http://localhost:5173/?local`, Settings → Import cards.json. Headless Chromium via Python Playwright works in the cloud workspace for screenshots and drag tests.
+- UI: `npm run dev`, open `http://localhost:5173/?local`, Settings → Import cards.json. Headless Chromium via Python Playwright works in the cloud workspace for screenshots and drag tests. Under `npm run dev` the store is on `window.__store`; a script can `import('/tests/fixtures/practiceSet.ts')`, set `pool`, and call `newGame` to get a board without a Card Sync.
 - The workspace shell cannot reach api.sorcerytcg.com or the Pages site. The built-in browser on Jacob's machine can (he has allowed api.sorcerytcg.com, sorcerytcg.com and the Pages origin).
 
 ## Facts verified against the live API on 2026-11-10

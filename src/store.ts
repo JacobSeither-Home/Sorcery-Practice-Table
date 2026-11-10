@@ -8,7 +8,10 @@ import { type Link, type Msg, deckHash, newRoomCode, openLink, stateHash } from 
 import { push as logError } from './feedback/feedback';
 
 export type Mode = 'ai' | 'hotseat' | 'online';
-export interface Settings { artChoice: Record<string, string>; zoom: number; name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean }
+export interface Settings { artChoice: Record<string, string>; zoom: number; name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean;
+  /** animation and opponent pacing: duration multiplier (bigger = slower) */ pace: number;
+  /** board cell size: fit the screen, or larger cells that scroll */ boardSize: 'fit' | 'roomy' | 'spacious';
+  /** pause after each opponent (AI) action until the player taps Continue */ stepOpponent: boolean }
 export interface Toast { id: number; text: string; keyword?: string; tone: 'info' | 'error' }
 export interface Game { state: GameState; mode: Mode; difficulty: Difficulty; local: PlayerId; names: [string, string]; n: number }
 export interface Online { role: 'host' | 'guest'; code: string; status: 'waiting' | 'connected' | 'closed'; note: string }
@@ -30,6 +33,9 @@ interface Store {
   artJob: string | null; artReport: ArtReport | null; artSyncedAt: string | null;
   runArtJob: (work: (progress: (text: string) => void) => Promise<ArtReport>) => Promise<void>;
   settings: Settings;
+  /** step-through: the AI has moved and waits for Continue */
+  aiWaiting: boolean;
+  aiNext: () => void;
   game: Game | null;
   online: Online | null;
   aiThinking: boolean;
@@ -60,11 +66,13 @@ export const buildPool = (apiRaw: unknown, overlays: Record<string, Effect[]>, c
   for (const c of custom) pool[c.id] = { ...c, effects: overlays[c.id] ?? c.effects };
   return pool;
 };
-const DEFAULTS: Settings = { artChoice: {}, zoom: 1, name: 'Player', supabaseUrl: '', supabaseKey: '', reduceMotion: false, showLegal: true };
+const DEFAULTS: Settings = { artChoice: {}, zoom: 1, name: 'Player', supabaseUrl: '', supabaseKey: '', reduceMotion: false, showLegal: true, pace: 1, boardSize: 'fit', stepOpponent: false };
+export const PACES = [{ v: 2.5, label: 'Very slow' }, { v: 1.6, label: 'Slow' }, { v: 1, label: 'Normal' }, { v: 0.6, label: 'Fast' }] as const;
 
 export const useStore = create<Store>((set, get) => ({
   ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {}, artVariants: {}, artJob: null, artReport: null, artSyncedAt: null,
-  settings: DEFAULTS, game: null, online: null, aiThinking: false, toasts: [],
+  settings: DEFAULTS, game: null, online: null, aiThinking: false, aiWaiting: false, toasts: [],
+  aiNext: () => { const r = aiGate; aiGate = null; useStore.setState({ aiWaiting: false }); r?.(); },
 
   init: async () => {
     const [apiRaw, syncedAt, overlays, custom, decks, settings] = await Promise.all([
@@ -81,7 +89,7 @@ export const useStore = create<Store>((set, get) => ({
   toast: (text, tone = 'info', keyword) => {
     const id = toastId++;
     set((s) => ({ toasts: [...s.toasts.slice(-2), { id, text, tone, keyword }] }));
-    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), tone === 'error' ? 7000 : 3500);
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), (tone === 'error' ? 7000 : 3500) * Math.max(1, get().settings.pace ?? 1));
   },
   saveApi: async (raw) => {
     const syncedAt = new Date().toISOString();
@@ -101,7 +109,7 @@ export const useStore = create<Store>((set, get) => ({
   deleteCustom: (id) => set((s) => { const custom = s.custom.filter((x) => x.id !== id); db.set('custom', custom); return { custom, pool: buildPool(s.apiRaw, s.overlays, custom) }; }),
   saveDeck: (d, replace) => set((s) => { const decks = [...s.decks.filter((x) => x.name !== d.name && x.name !== replace), d]; db.set('decks', decks); return { decks }; }),
   deleteDeck: (name) => set((s) => { const decks = s.decks.filter((x) => x.name !== name); db.set('decks', decks); return { decks }; }),
-  setSettings: (p) => set((s) => { const settings = { ...s.settings, ...p }; db.set('settings', settings); return { settings }; }),
+  setSettings: (p) => { set((s) => { const settings = { ...s.settings, ...p }; db.set('settings', settings); return { settings }; }); if (p.stepOpponent === false) get().aiNext(); },
   reloadArt: async () => { const old = get().art; const { urls, variants } = await loadArtUrls(get().pool, get().settings.artChoice ?? {}); set({ art: urls, artVariants: variants }); Object.values(old).forEach((u) => URL.revokeObjectURL(u)); },
   runArtJob: async (work) => {
     if (get().artJob) return;
@@ -130,6 +138,7 @@ export const useStore = create<Store>((set, get) => ({
   },
 
   newGame: (mode, decks, difficulty) => {
+    get().aiNext();
     const state = createGame(get().pool, decks, (Math.random() * 2 ** 31) | 0);
     set({ game: { state, mode, difficulty, local: 0, names: mode === 'ai' ? [get().settings.name, `AI (${difficulty})`] : ['Player 1', 'Player 2'], n: 0 }, view: 'play' });
     driveAi();
@@ -174,7 +183,7 @@ export const useStore = create<Store>((set, get) => ({
       },
     });
   },
-  leave: () => { link?.close(); link = null; set({ online: null }); },
+  leave: () => { link?.close(); link = null; set({ online: null }); get().aiNext(); },
 
   act: (a) => {
     const g = get().game; if (!g) return false;
@@ -208,6 +217,8 @@ function onWire(m: Msg) {
 }
 
 let aiBusy = false;
+let aiGate: (() => void) | null = null;
+const pace = () => useStore.getState().settings.pace ?? 1;
 async function driveAi() {
   if (aiBusy) return;
   aiBusy = true;
@@ -218,15 +229,25 @@ async function driveAi() {
       useStore.setState({ aiThinking: true });
       const t0 = performance.now();
       const a = await chooseAction(g.state, g.difficulty);
-      await new Promise((r) => setTimeout(r, Math.max(0, 650 - (performance.now() - t0))));
+      // pacing: leave time to watch the previous move land before the next one
+      await new Promise((r) => setTimeout(r, Math.max(0, 1100 * pace() - (performance.now() - t0))));
       const now = useStore.getState().game;
       if (!now || now.state !== g.state) continue; // game was replaced or changed while thinking
       commit(a);
+      // step-through: hold after each AI move while the AI still has the next decision
+      const after = useStore.getState().game;
+      if (useStore.getState().settings.stepOpponent && after && after.state.phase !== 'over' && actor(after.state) !== after.local) {
+        useStore.setState({ aiThinking: false, aiWaiting: true });
+        await new Promise<void>((r) => { aiGate = r; });
+      }
     }
   } catch (e) { logError(`ai: ${(e as Error).message}`); useStore.getState().toast('The AI hit an error and stopped. Details are attached if you report a problem in Settings.', 'error'); }
-  finally { aiBusy = false; useStore.setState({ aiThinking: false }); }
+  finally { aiBusy = false; aiGate = null; useStore.setState({ aiThinking: false, aiWaiting: false }); }
 }
 
 /** Official precons that resolve completely against the pool, then the user's own decks. */
 export const allDecks = (decks: DeckList[], pool: Record<string, CardDef>) => [...resolveOfficial(pool).filter((r) => !r.missing.length).map((r) => r.deck), ...decks];
 export const isBuiltIn = isOfficialDeck;
+
+// development only: lets the screenshot script start a game with the test fixtures
+if (import.meta.env.DEV) (window as unknown as { __store: typeof useStore }).__store = useStore;
