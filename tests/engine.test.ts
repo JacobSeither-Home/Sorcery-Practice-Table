@@ -377,3 +377,42 @@ describe('official precon lists', () => {
     expect(resolveOfficial({})[0].missing.length).toBeGreaterThan(20); // nothing synced: listed, not playable
   });
 });
+
+describe('rules text and damage split', () => {
+  it('reads only whole-text, unambiguous sentences into effects', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    expect(effectsFromText('Magic', 'Deal 4 damage to target nearby unit.')).toMatchObject([{ on: 'cast', op: 'damage', n: 4, who: 'target', range: 'nearby' }]);
+    expect(effectsFromText('Magic', 'Deal 7 damage to target minion nearby.')).toMatchObject([{ op: 'damage', n: 7, range: 'nearby', only: 'minion' }]);
+    expect(effectsFromText('Minion', 'Spellcaster\r\nGenesis → Draw a spell.')).toMatchObject([{ on: 'genesis', op: 'draw', n: 1, deck: 'spellbook' }]);
+    expect(effectsFromText('Minion', 'Airborne, Ward\nGenesis → Kill target adjacent minion.')).toMatchObject([{ on: 'genesis', op: 'destroy', range: 'adjacent', only: 'minion' }]);
+    // anything with more to it is left alone
+    expect(effectsFromText('Magic', 'Deal 2 damage to target unit nearby. Any number of times, you may spend ② to additionally target a new unit.')).toEqual([]);
+    expect(effectsFromText('Magic', 'Deal 1 damage to target nearby minion and untap it.')).toEqual([]);
+    expect(effectsFromText('Minion', 'Genesis → Kill target adjacent Unique or Elite minion.')).toEqual([]);
+    expect(effectsFromText('Artifact', 'Once on your turn, bearer may deal 1 damage to target adjacent minion.')).toEqual([]);
+    expect(effectsFromText('Minion', 'Airborne\nMovement +1')).toEqual([]);
+    const r = normalizeApiCards([{ id: 'a', name: 'Bolt', slug: 'bolt', engine: { type: 'Magic', rules: 'Deal 3 damage to target nearby unit.', cost: 2, air: 1, keywords: [] }, printings: [] }], {});
+    expect(r.cards[0].effects.length).toBe(1);
+    expect(normalizeApiCards([{ id: 'a', name: 'Bolt', engine: { type: 'Magic', rules: 'Deal 3 damage to target nearby unit.' }, printings: [] }], { a: [] }).cards[0].effects).toEqual([]); // switched off by hand
+  });
+  it('a "minion only" effect cannot target an avatar', () => {
+    let s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c);
+    s.players[0].mana = 9; s.units[s.players[0].avatar].c = cell(2, 1);
+    const zap = give(s, 0, T('Test Zap', 'Magic', { cost: 1, effects: [{ on: 'cast', op: 'damage', n: 2, who: 'target', range: 'nearby', only: 'minion' }] }));
+    expect(reason(s, { t: 'cast', inst: zap, target: s.players[1].avatar })).toMatch(/valid target/);
+  });
+  it('an attacker facing several enemies splits its damage to kill the most', () => {
+    let s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.units[s.players[1].avatar].tapped = true;
+    const giant = unit(s, 0, cell(2, 2), id('Hill Giant'));                       // 7 power
+    const a = unit(s, 1, cell(2, 1), id('Wind Sprite'), { tapped: true });        // 1 defense, airborne but it is the giant's... target below
+    const b = unit(s, 1, cell(3, 1), id('Ember Runner'));                         // 2/2 defender
+    const c2 = unit(s, 1, cell(1, 1), id('Kiln Brute'));                          // 4/4 defender
+    const tgt = unit(s, 1, cell(2, 1), id('Ash Archer'), { tapped: true });       // 2/2 original target
+    s = apply(s, { t: 'move', unit: giant, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: tgt } });
+    s = apply(s, { t: 'respond', units: [b, c2] });
+    expect(s.units[tgt]).toBeUndefined(); expect(s.units[b]).toBeUndefined();     // 2 + 2 spent on the weakest two
+    expect(s.units[c2].damage).toBe(3);                                           // the remaining 3 land on the brute
+    expect(s.units[a]).toBeDefined();                                             // bystander was never in the fight
+    expect(s.units[giant]).toBeUndefined();                                       // all three strike back for 2 + 4 + 2: dead at 7 defense
+  });
+});

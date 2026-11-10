@@ -23,18 +23,19 @@ The reader's page cut off before the Ward, Landbound and Voidwalk entries.
 
 ## Simplified or not automated
 
-- **Card text beyond keywords** is only automated where a card has effect entries (Card library → Automated effects). Everything else is resolved with Manual tools, and manual actions are marked in the log.
+- **Card text beyond keywords** is automated only for (a) effect entries added in Card library, and (b) a few sentences read straight from the text when that sentence is the card's whole text: "Deal N damage to target [nearby/adjacent] unit/minion", "Destroy/Kill target [nearby/adjacent] minion", "Draw a/N spell(s)/site(s)", "Gain N life", alone or after "Genesis →" / "Deathrite →". Checked against the API on 2026-11-10, nearly every one of the ~1,100 card texts is unique, so most cards (all 34 Avatars' extra abilities, most sites, artifacts and auras) are resolved with Manual tools. Manual actions are marked in the log.
 - **Ward** is displayed but not enforced (no definition was available from the source above).
 - **Flood** is not applied to sites.
 - **Auras** are placed on a square you control, not on an intersection, and have no area effect.
 - **Artifacts** sit on a site; units do not carry them.
-- **Damage allocation**: an attacker facing several enemies strikes the original target, or the first defender if the target was removed. The rulebook lets each side split damage.
+- **Damage allocation**: an attacker facing several enemies has its damage split automatically to kill the most (weakest minions first, remainder on the next in line). The rulebook lets the attacker choose the split; there is no prompt for it.
 - **Void**: a unit without Voidwalk may not step into the void (the rulebook lets it and banishes it). Avatars may not enter the void.
 - **Landbound** is implemented by analogy with Waterbound (disabled off land). Not verified.
 - **Empty deck**: the draw step only offers decks that still have cards; a player loses when both are empty at the draw step, or when an effect draws from an empty deck.
 - **Spellcaster element limits** ("only casts fire spells") are not enforced.
 - **Codex links** go to the Codex index. Per-keyword ids (`sorcerytcg.com/codex/<id>`) are not filled in: `src/engine/keywords.ts` has the table.
 - No undo.
+- The built-in decks are the four Beta precons. Many of their cards have text the engine does not automate.
 
 ## Not verified
 

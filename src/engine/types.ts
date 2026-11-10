@@ -18,6 +18,10 @@ export interface Effect {
   /** for who:'target' — how far from a spellcaster (or from the unit itself for genesis) */
   range?: 'adjacent' | 'nearby' | 'any';
   deck?: 'spellbook' | 'atlas';
+  /** restrict a targeted effect to minions */
+  only?: 'minion';
+  /** true when this entry was read from the card's rules text instead of entered by hand */
+  auto?: boolean;
 }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */

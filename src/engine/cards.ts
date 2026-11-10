@@ -23,6 +23,35 @@ export function keywordNumber(rules: string, word: 'Movement' | 'Ranged'): numbe
   return m ? parseInt(m[1], 10) : 0;
 }
 
+
+// ---- reading simple rules text ----
+// Card text is far too varied to interpret in general (checked against the API on 2026-11-10: of
+// about 1,100 cards, nearly every text is unique). This reads only the handful of sentences whose
+// meaning is unambiguous, and only when that sentence is the card's ENTIRE text apart from keyword
+// lines. Anything else is left for the manual tools. Hand-entered effects always take precedence.
+const KEYWORD_LINE = /^(Airborne|Burrowing|Charge|Deathrite|Disabled|Flood|Genesis|Immobile|Lance|Landbound|Lethal|Movement|Ranged|Spellcaster|Stealth|Submerge|Voidwalk|Ward|Waterbound)(\s*\+?\s*\d+)?$/i;
+const COUNT: Record<string, number> = { a: 1, one: 1, two: 2, three: 3, four: 4 };
+export function effectsFromText(type: CardType, rules: string): Effect[] {
+  const lines = rules.replace(/\r/g, '').split('\n').map((l) => l.trim()).filter(Boolean)
+    .filter((l) => !l.split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim())));
+  if (lines.length !== 1) return [];
+  const line = lines[0].replace(/\s+/g, ' ').replace(/->/g, '→');
+  let on: Effect['on'] = 'cast'; let body = line;
+  const trig = line.match(/^(Genesis|Deathrite) → (.+)$/i);
+  if (trig) { on = trig[1].toLowerCase() as Effect['on']; body = trig[2]; }
+  else if (type !== 'Magic') return []; // a plain sentence on a permanent is a static ability, not an event
+  const rangeOf = (a?: string, b?: string): Effect['range'] => (/adjacent/i.test(`${a} ${b}`) ? 'adjacent' : /nearby/i.test(`${a} ${b}`) ? 'nearby' : 'any');
+  let m: RegExpMatchArray | null;
+  if ((m = body.match(/^Deal (\d+) damage to target (nearby |adjacent )?(unit|minion)( nearby| adjacent)?\.$/i)) && on !== 'deathrite')
+    return [{ on, op: 'damage', n: +m[1], who: 'target', range: rangeOf(m[2], m[4]), ...(m[3].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}), auto: true }];
+  if ((m = body.match(/^(?:Destroy|Kill) target (nearby |adjacent )?minion( nearby| adjacent)?\.$/i)) && on !== 'deathrite')
+    return [{ on, op: 'destroy', who: 'target', range: rangeOf(m[1], m[2]), only: 'minion', auto: true }];
+  if ((m = body.match(/^Draw (a|one|two|three|four|\d+) (spell|site)s?\.$/i)))
+    return [{ on, op: 'draw', n: COUNT[m[1].toLowerCase()] ?? +m[1], who: 'controller', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook', auto: true }];
+  if ((m = body.match(/^(?:You )?gain (\d+) life\.$/i))) return [{ on, op: 'heal', n: +m[1], who: 'controller', auto: true }];
+  return [];
+}
+
 export interface NormalizeReport { cards: CardDef[]; unknownFields: string[]; skipped: string[] }
 
 export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[]> = {}): NormalizeReport {
@@ -63,7 +92,7 @@ export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[
       typeline: str(first?.meta?.typeline),
       printings: printingsRaw.map((p) => { const meta = (p?.meta ?? {}) as Record<string, unknown>; return { slug: str(p?.slug), set: str((p?.set as Record<string, unknown> | undefined)?.name), finish: str(meta.finish) || undefined, product: str(meta.product) || undefined }; }).filter((p) => p.slug),
       source: 'api',
-      effects: overlays[id] ?? overlays[slug] ?? [],
+      effects: overlays[id] ?? overlays[slug] ?? effectsFromText(type, rules),
     });
   }
   return { cards, unknownFields: [...unknown].sort(), skipped };

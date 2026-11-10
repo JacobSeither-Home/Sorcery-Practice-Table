@@ -93,7 +93,7 @@ export const useStore = create<Store>((set, get) => ({
     return kept;
   },
   setOverlay: (id, effects) => set((s) => {
-    const overlays = { ...s.overlays }; if (effects.length) overlays[id] = effects; else delete overlays[id];
+    const overlays = { ...s.overlays, [id]: effects }; // an empty list is kept: it switches off effects read from the card's text
     db.set('overlays', overlays);
     return { overlays, pool: buildPool(s.apiRaw, overlays, s.custom) };
   }),

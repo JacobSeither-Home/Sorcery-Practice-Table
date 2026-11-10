@@ -188,7 +188,7 @@ export function validTargets(s: GameState, p: PlayerId, d: CardDef, origin?: Loc
   const origins = origin ? [origin] : spellcasters(s, p).map((u) => ({ c: u.c, r: u.r }));
   return Object.values(s.units).filter((u) => {
     if (u.owner !== p && hasStealth(s, u)) return false;
-    if (e.op === 'destroy' && u.avatar) return false;
+    if ((e.op === 'destroy' || e.only === 'minion') && u.avatar) return false;
     return origins.some((o) => inRange(o, u, e.range));
   }).map((u) => u.id);
 }
@@ -299,7 +299,20 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
     const lance = from.lance; from.lance = false; from.stealthLost = true;
     strikes.push({ from, to, dmg: power(s, from) + (lance ? 1 : 0), lethal: has(s, from, 'Lethal'), first: lance });
   };
-  mk(a, s.units[enemyIds[0]]);
+  // The attacker divides its damage among the enemies in the fight. The engine picks the split
+  // that kills the most: weakest minions first, anything left over on the next enemy in line.
+  if (!isDisabled(s, a)) {
+    const lance = a.lance; a.lance = false;
+    const lethal = has(s, a, 'Lethal');
+    let left = power(s, a) + (lance ? 1 : 0);
+    const foes = enemyIds.map((id) => s.units[id]).filter(Boolean);
+    const need = (u: Unit) => (u.avatar ? Infinity : lethal ? 1 : Math.max(1, unitCard(s, u).defense - u.damage));
+    const order = [...foes].sort((x, y) => need(x) - need(y));
+    const give = new Map<string, number>();
+    for (const f of order) { const n = need(f); if (n <= left) { give.set(f.id, n); left -= n; } }
+    if (left > 0) { const rest = order.find((f) => !give.has(f.id)) ?? order[0]; if (rest) give.set(rest.id, (give.get(rest.id) ?? 0) + left); }
+    for (const f of foes) if (give.get(f.id)) strikes.push({ from: a, to: f, dmg: give.get(f.id)!, lethal, first: lance });
+  }
   for (const id of enemyIds) mk(s.units[id], a);
   for (const pass of [true, false]) {
     const batch = strikes.filter((x) => x.first === pass && s.units[x.from.id]);
