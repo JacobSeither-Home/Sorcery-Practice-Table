@@ -210,3 +210,7 @@ details summary { cursor: pointer; margin: 6px 0; }
 .gatebox { width: min(440px, 100%); background: var(--cloth); border: 1px solid var(--line); border-radius: 12px; padding: 30px 32px; }
 .gatebox h1 { color: var(--parch); font-size: 32px; } .gatebox .lede { font-size: 16px; margin-bottom: 20px; } .gatebox .row { margin: 6px 0 14px; }
 .banner { background: #0f1522; border: 1px solid var(--line); border-left: 4px solid var(--brass); padding: 10px 14px; border-radius: var(--r); }
+
+.steps { margin: 10px 0; padding-left: 22px; } .steps li { margin-bottom: 12px; max-width: 78ch; line-height: 1.7; }
+.btnlink { display: inline-block; font: 600 13px var(--sans); color: #1d1608; background: var(--brass); border: 1px solid #e6c376; border-radius: var(--r); padding: 6px 12px; text-decoration: none; margin-right: 6px; }
+.btnlink:hover { background: #ddb65f; } .filebtn.primary { background: var(--brass); color: #1d1608; border-color: #e6c376; display: inline-block; }

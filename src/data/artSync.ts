@@ -2,7 +2,7 @@
 // Nothing is uploaded and nothing is fetched from Erik's Curiosa's CDN.
 // The official image folder does not document its file naming, so matching is by normalized
 // filename against printing slugs, card slugs, and card names, in that order.
-import { unzip } from 'fflate';
+import { Unzip, UnzipInflate } from 'fflate';
 import { slugify } from '../engine/cards';
 import type { CardDef } from '../engine/types';
 import { artDb, db } from './db';
@@ -35,10 +35,75 @@ export async function rememberedFolder(): Promise<{ name: string; read: () => Pr
 export function fromFileList(files: FileList): Entry[] {
   return [...files].filter((f) => IMG.test(f.name)).map((f) => ({ name: (f as any).webkitRelativePath || f.name, blob: async () => f }));
 }
-export async function fromZip(file: File): Promise<Entry[]> {
-  const buf = new Uint8Array(await file.arrayBuffer());
-  const files = await new Promise<Record<string, Uint8Array>>((res, rej) => unzip(buf, { filter: (f) => IMG.test(f.name) && !f.name.includes('__MACOSX') }, (e, d) => (e ? rej(e) : res(d))));
-  return Object.entries(files).map(([name, data]) => ({ name, blob: async () => new Blob([data as BlobPart]) }));
+
+// ---- zips, read as a stream so a multi-gigabyte download never has to fit in memory ----
+export const OFFICIAL_ART_FOLDER = 'https://drive.google.com/drive/folders/17IrJkRGmIU9fDSTU2JQEU9JlFzb5liLJ'; // linked from api.sorcerytcg.com
+export const supportsFilePicker = () => 'showOpenFilePicker' in window;
+/** Opens the file dialog in the Downloads folder (where browsers put a Drive download) and remembers the choice. */
+export async function pickZips(): Promise<File[]> {
+  const handles: any[] = await (window as any).showOpenFilePicker({ id: 'sorcery-art-zip', startIn: 'downloads', multiple: true, types: [{ description: 'Zip archives', accept: { 'application/zip': ['.zip'] } }] });
+  await db.set('art:zips', handles);
+  return Promise.all(handles.map((h) => h.getFile()));
+}
+export async function rememberedZips(): Promise<{ names: string[]; read: () => Promise<File[]> } | null> {
+  const handles: any[] | undefined = await db.get('art:zips');
+  if (!handles?.length) return null;
+  return { names: handles.map((h) => h.name), read: async () => {
+    for (const h of handles) if ((await h.requestPermission({ mode: 'read' })) !== 'granted') throw new Error('Permission to read the zip was not granted.');
+    return Promise.all(handles.map((h) => h.getFile()));
+  } };
+}
+async function* zipEntries(zip: File): AsyncGenerator<Entry> {
+  const queue: Entry[] = []; let failed: Error | null = null;
+  const un = new Unzip((f) => {
+    if (!IMG.test(f.name) || f.name.includes('__MACOSX')) return; // not started = skipped
+    const chunks: Uint8Array[] = [];
+    f.ondata = (err, data, final) => {
+      if (err) { failed = new Error(`${zip.name}: ${err.message}`); return; }
+      chunks.push(data);
+      if (final) queue.push({ name: f.name, blob: async () => new Blob(chunks as BlobPart[]) });
+    };
+    f.start();
+  });
+  un.register(UnzipInflate);
+  const reader = zip.stream().getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    try { un.push(value ?? new Uint8Array(0), done); } catch (e) { throw new Error(`${zip.name} could not be read as a zip (${(e as Error).message}).`); }
+    if (failed) throw failed;
+    while (queue.length) yield queue.shift()!;
+    if (done) break;
+  }
+}
+/** Import one or more zips image by image: match, shrink, cache, move on. */
+export async function importZips(zips: File[], cards: CardDef[], onProgress: (text: string) => void): Promise<ArtReport> {
+  const m = matcher(cards); const best = new Map<string, number>(); const unmatched: string[] = []; let files = 0;
+  for (const zip of zips) {
+    for await (const e of zipEntries(zip)) {
+      files++;
+      const hit = m(fileKey(e.name));
+      if (!hit) { if (unmatched.length < 500) unmatched.push(e.name); continue; }
+      if ((best.get(hit.id) ?? 0) >= hit.rank) continue; // keep the first, unless a closer filename turns up
+      await artDb.set(hit.id, await shrink(await e.blob())); best.set(hit.id, hit.rank);
+      if (files % 5 === 0) onProgress(`${zip.name}: ${files} images read, ${best.size} cards matched…`);
+    }
+  }
+  const have = new Set(await artDb.keys());
+  return { matched: best.size, files, unmatched, missing: cards.filter((c) => c.source === 'api' && !have.has(c.id)).map((c) => c.name) };
+}
+function matcher(cards: CardDef[]): (key: string) => { id: string; rank: number } | null {
+  const exact = new Map<string, string>(); const names: [string, string][] = [];
+  for (const c of cards) {
+    for (const p of c.printings) exact.set(slugify(p.slug), c.id);
+    exact.set(slugify(c.slug), c.id); exact.set(slugify(c.name), c.id);
+    names.push([slugify(c.name), c.id]);
+  }
+  names.sort((x, y) => y[0].length - x[0].length);
+  return (k) => {
+    const e = exact.get(k); if (e) return { id: e, rank: 2 };
+    const hit = names.find(([n]) => n.length > 2 && (`_${k}_`).includes(`_${n}_`));
+    return hit ? { id: hit[1], rank: 1 } : null;
+  };
 }
 
 export const fileKey = (path: string) => slugify(path.split('/').pop()!.replace(IMG, ''));

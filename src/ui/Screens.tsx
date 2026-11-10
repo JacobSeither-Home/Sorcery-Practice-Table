@@ -3,7 +3,7 @@ import { type CardDef, type CardType, type DeckList, type Effect, ELEMENTS, KEYW
 import type { Difficulty } from '../ai/ai';
 import { type Mode, allDecks, isPracticeDeck, useStore } from '../store';
 import { CARDS_URL, type SyncDiff, diffCards, fetchCards } from '../data/cardSync';
-import { type ArtReport, fromFileList, fromZip, importArt, pickFolder, rememberedFolder, supportsFolderPicker } from '../data/artSync';
+import { type ArtReport, OFFICIAL_ART_FOLDER, fromFileList, importArt, importZips, pickFolder, pickZips, rememberedFolder, rememberedZips, supportsFilePicker, supportsFolderPicker } from '../data/artSync';
 import { artDb } from '../data/db';
 import { deckNotes, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
@@ -245,6 +245,14 @@ export function Settings() {
   // art sync
   const [rep, setRep] = useState<ArtReport | null>(null); const [prog, setProg] = useState(''); const [folder, setFolder] = useState<string | null>(null);
   useEffect(() => { rememberedFolder().then((f) => setFolder(f?.name ?? null)); }, [rep]);
+  const [zipNames, setZipNames] = useState<string[]>([]);
+  useEffect(() => { rememberedZips().then((z) => setZipNames(z?.names ?? [])); }, [rep]);
+  const runZips = async (get: () => Promise<File[]>) => {
+    setBusy('art'); setRep(null); setErr('');
+    try { const zips = await get(); if (zips.length) { setProg('Reading the zip…'); const r = await importZips(zips, Object.values(pool), setProg); await st.reloadArt(); setRep(r); } }
+    catch (e) { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }
+    setBusy(''); setProg('');
+  };
   const dirInput = useRef<HTMLInputElement>(null);
   const runArt = async (get: () => Promise<Parameters<typeof importArt>[0]>) => {
     setBusy('art'); setRep(null); setErr('');
@@ -298,14 +306,24 @@ export function Settings() {
 
       <section className="panel">
         <h2>Art Sync</h2>
-        <p>{Object.keys(st.art).length ? `Art cached for ${Object.keys(st.art).length} cards.` : 'No art cached.'} Art is read from a folder or zip on your own disk and kept in this browser. It is never uploaded. The official image folder is linked from <a href="https://api.sorcerytcg.com" target="_blank" rel="noreferrer">api.sorcerytcg.com</a>.</p>
-        <div className="row">
+        <p>{Object.keys(st.art).length ? `Art cached for ${Object.keys(st.art).length} cards.` : 'No art cached.'} Art is read from a zip or folder on your own disk and kept in this browser. It is never uploaded.</p>
+        <ol className="steps">
+          <li><a className="btnlink" href={OFFICIAL_ART_FOLDER} target="_blank" rel="noreferrer">Download the art zip</a> This opens the official image folder in a new tab. In Google Drive, choose "Download all"; Drive builds a zip (sometimes several) and your browser saves it, normally to Downloads.</li>
+          <li>{supportsFilePicker()
+            ? <button className="primary" disabled={!!busy} onClick={() => runZips(pickZips)}>Load the downloaded zip</button>
+            : <label className="filebtn primary">Load the downloaded zip<input type="file" accept=".zip" multiple disabled={!!busy} onChange={(e) => { const f = [...(e.target.files ?? [])]; e.target.value = ''; if (f.length) runZips(async () => f); }} /></label>}
+            {' '}{supportsFilePicker() ? 'The file window opens in your Downloads folder. Select the zip (or all of them) and the table matches every image to its card.' : 'Select the zip (or all of them) and the table matches every image to its card.'}
+            {zipNames.length > 0 && <> <button disabled={!!busy} onClick={() => runZips(async () => (await rememberedZips())!.read())}>Re-read {zipNames.length === 1 ? `"${zipNames[0]}"` : `${zipNames.length} zips`}</button></>}</li>
+        </ol>
+        <p className="note">A web page cannot see where a download was saved, so the zip has to be picked once. After that this browser remembers it. The zip is read on this device only.</p>
+        <details><summary>Use an unzipped folder instead</summary><div className="row">
           {supportsFolderPicker() ? <>
-            <button className="primary" disabled={!!busy} onClick={() => runArt(pickFolder)}>Choose art folder</button>
+            <button disabled={!!busy} onClick={() => runArt(pickFolder)}>Choose art folder</button>
             {folder && <button disabled={!!busy} onClick={() => runArt(async () => (await rememberedFolder())!.read())}>Re-read "{folder}"</button>}
-          </> : <><button className="primary" disabled={!!busy} onClick={() => dirInput.current?.click()}>Choose art folder</button>
+          </> : <><button disabled={!!busy} onClick={() => dirInput.current?.click()}>Choose art folder</button>
             <input ref={dirInput} type="file" multiple hidden {...({ webkitdirectory: '' } as object)} onChange={(e) => { const f = e.target.files; if (f?.length) runArt(async () => fromFileList(f)); }} /></>}
-          <label className="filebtn">Choose a zip<input type="file" accept=".zip" disabled={!!busy} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) runArt(() => fromZip(f)); }} /></label>
+        </div></details>
+        <div className="row">
           {Object.keys(st.art).length > 0 && <button disabled={!!busy} onClick={async () => { if (confirm('Remove all cached art from this browser?')) { await artDb.clear(); await st.reloadArt(); setRep(null); } }}>Clear cached art</button>}
         </div>
         {prog && <p className="note">{prog}</p>}
