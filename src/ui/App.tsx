@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import { KEYWORD_HELP, codexUrl } from '../engine';
 import { useStore } from '../store';
+import { useAuth } from '../cloud/cloud';
+import { SignIn } from './Auth';
 import { Table } from './Table';
 import { Decks, Library, Settings, Setup } from './Screens';
 
@@ -9,8 +11,10 @@ const NAV = [['play', 'Table'], ['decks', 'Decks'], ['library', 'Card library'],
 
 export function App() {
   const { ready, view, setView, game, toasts, init } = useStore();
-  useEffect(() => { init(); }, [init]);
-  if (!ready) return <div className="boot">Opening the table…</div>;
+  const auth = useAuth();
+  useEffect(() => { init().then(() => useAuth.getState().init()); }, [init]);
+  if (!ready || auth.status === 'loading') return <div className="boot">Opening the table…</div>;
+  if (!auth.member) return <SignIn />;
   return (
     <MotionConfig reducedMotion="user">
       <div className="app">

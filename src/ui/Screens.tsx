@@ -8,6 +8,7 @@ import { artDb } from '../data/db';
 import { deckNotes, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
 import { CardFace, hoverProps } from './CardFace';
+import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, useAuth } from '../cloud/cloud';
 import { Preview } from './Table';
 
 declare const __APP_VERSION__: string;
@@ -254,7 +255,10 @@ export function Settings() {
   // feedback
   const [items, setItems] = useState<FeedbackItem[]>([]); const [kind, setKind] = useState<'wish' | 'problem'>('wish');
   const [title, setTitle] = useState(''); const [details, setDetails] = useState(''); const [diag, setDiag] = useState(true); const [fbNote, setFbNote] = useState('');
-  const remote = settings.supabaseUrl && settings.supabaseKey ? { url: settings.supabaseUrl, key: settings.supabaseKey } : null;
+  const auth = useAuth();
+  const [access, setAccess] = useState<AccessRow[]>([]); const [newEmail, setNewEmail] = useState(''); const [newNote, setNewNote] = useState(''); const [accNote, setAccNote] = useState('');
+  useEffect(() => { if (auth.admin) listAccess().then(setAccess); }, [auth.admin]);
+  useEffect(() => { feedbackRemote().then((r) => r && pushPending(r).then(setItems).catch(() => undefined)); }, []);
   useEffect(() => { loadLocal().then(setItems); }, []);
   const context = () => {
     const g = st.game;
@@ -263,7 +267,8 @@ export function Settings() {
   };
   const send = async () => {
     setFbNote('');
-    try { setItems(await submit({ kind, title: title.trim(), details: details.trim(), submitted_by: settings.name || null, context: diag ? context() : null }, remote)); setTitle(''); setDetails(''); setFbNote(remote ? 'Saved and sent.' : 'Saved on this device.'); }
+    const remote = await feedbackRemote();
+    try { setItems(await submit({ kind, title: title.trim(), details: details.trim(), submitted_by: auth.email ?? (settings.name || null), context: diag ? context() : null }, remote)); setTitle(''); setDetails(''); setFbNote(remote ? 'Saved and sent.' : 'Saved on this device.'); }
     catch (e) { setItems(await loadLocal()); setFbNote(`Saved on this device. Sending failed: ${(e as Error).message}`); }
   };
   const download = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([exportJson(items)], { type: 'application/json' })); a.download = `sorcery-table-feedback-${new Date().toISOString().slice(0, 10)}.json`; a.click(); };
@@ -321,7 +326,6 @@ export function Settings() {
           <label className="field"><span>{kind === 'wish' ? 'What would you like the table to do?' : 'What went wrong?'}</span><input value={title} onChange={(e) => setTitle(e.target.value)} required /></label>
           <label className="field"><span>{kind === 'wish' ? 'Details' : 'What you did, what you expected, what happened'}</span><textarea rows={3} value={details} onChange={(e) => setDetails(e.target.value)} /></label>
           <div className="row">
-            <label className="field inline"><span>Your name</span><input value={settings.name} onChange={(e) => setSettings({ name: e.target.value })} /></label>
             <label className="switch" data-tip="App version, browser, card pool size, the last 25 log lines of the current game, and recent errors. No art and no card data."><input type="checkbox" checked={diag} onChange={(e) => setDiag(e.target.checked)} /> Attach diagnostics</label>
             <button className="primary" type="submit">Save {kind === 'wish' ? 'wish' : 'report'}</button>
           </div>
@@ -338,14 +342,29 @@ export function Settings() {
         <div className="row">
           <button disabled={!items.length} onClick={download}>Export as JSON</button>
           <button disabled={!items.length} onClick={() => navigator.clipboard.writeText(exportJson(items)).then(() => toast('Copied.'))}>Copy</button>
-          {remote && <button onClick={async () => { try { setItems(await pushPending(remote)); setFbNote('Up to date.'); } catch (e) { setFbNote((e as Error).message); } }}>Send and refresh</button>}
+          {!LOCAL_ONLY && <button onClick={async () => { try { const r = await feedbackRemote(); if (r) { setItems(await pushPending(r)); setFbNote('Up to date.'); } } catch (e) { setFbNote((e as Error).message); } }}>Send and refresh</button>}
         </div>
-        <details>
-          <summary>Shared feedback table (optional)</summary>
-          <p className="note">With a Supabase project URL and publishable key, entries are also stored in that project's <code>wishlist</code> table and statuses and responses are read back. The table definition is in <code>supabase/migrations/0001_wishlist.sql</code>. Without it, entries stay on this device and can be exported.</p>
-          <div className="cols"><label className="field"><span>Project URL</span><input value={settings.supabaseUrl} onChange={(e) => setSettings({ supabaseUrl: e.target.value.trim() })} placeholder="https://xxxx.supabase.co" /></label>
-            <label className="field"><span>Publishable key</span><input value={settings.supabaseKey} onChange={(e) => setSettings({ supabaseKey: e.target.value.trim() })} /></label></div>
-        </details>
+      </section>
+
+      <section className="panel">
+        <h2>Account</h2>
+        {LOCAL_ONLY ? <p>Local development mode: no sign-in, nothing is saved to an account.</p> : (<>
+          <p>Signed in as <b>{auth.email}</b>{auth.admin ? ' (administrator)' : ''}. Your name, decks, custom cards and automated effects are saved to this account and load on any device you sign in on. {auth.sync === 'saving' ? 'Saving…' : auth.sync === 'saved' ? 'Saved.' : auth.sync === 'error' ? 'The last save did not go through; it will be retried on the next change.' : ''}</p>
+          <p className="note">Synced cards and cached art stay on each device. If the table is open on two devices at once, the most recent change wins.</p>
+          <div className="row"><label className="field inline"><span>Display name</span><input value={settings.name} onChange={(e) => setSettings({ name: e.target.value })} /></label><button onClick={auth.signOut}>Sign out</button></div>
+        </>)}
+        {auth.admin && (<>
+          <h3>Who can use this table</h3>
+          <p className="note">People on this list can create an account with that email address and get in. Removing an address locks that account out; their saved data is kept.</p>
+          <ul className="decklines">{access.map((r) => <li key={r.email}><span>{r.email}{r.note ? ` (${r.note})` : ''}</span><button onClick={async () => { await removeAccess(r.email); setAccess(await listAccess()); }} aria-label={`Remove ${r.email}`}>Remove</button></li>)}</ul>
+          {!access.length && <p className="note">Only you so far.</p>}
+          <form className="row" onSubmit={async (e) => { e.preventDefault(); const err = await addAccess(newEmail, newNote); setAccNote(err ?? ''); if (!err) { setNewEmail(''); setNewNote(''); setAccess(await listAccess()); } }}>
+            <label className="field inline"><span>Email</span><input type="email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required /></label>
+            <label className="field inline"><span>Note</span><input value={newNote} onChange={(e) => setNewNote(e.target.value)} placeholder="optional" /></label>
+            <button className="primary" type="submit">Add</button>
+          </form>
+          {accNote && <p className="note warn">{accNote}</p>}
+        </>)}
       </section>
 
       <section className="panel about">

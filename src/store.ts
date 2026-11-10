@@ -48,7 +48,7 @@ interface Store {
 
 let link: Link | null = null;
 let toastId = 1;
-const buildPool = (apiRaw: unknown, overlays: Record<string, Effect[]>, custom: CardDef[]) => {
+export const buildPool = (apiRaw: unknown, overlays: Record<string, Effect[]>, custom: CardDef[]) => {
   const pool: Record<string, CardDef> = {};
   for (const c of PRACTICE_CARDS) pool[c.id] = c;
   if (apiRaw) for (const c of normalizeApiCards(apiRaw, overlays).cards) pool[c.id] = c;

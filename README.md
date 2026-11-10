@@ -7,7 +7,8 @@ Sorcery: Contested Realm is a trademark of Erik's Curiosa Limited. See their Com
 
 ```
 npm install
-npm run dev        # local table at http://localhost:5173
+npm run dev        # local table at http://localhost:5173 (sign-in required)
+                   # http://localhost:5173/?local skips sign-in for development; nothing is saved to an account
 npm test           # rules engine + AI tests
 npm run build      # static site in dist/
 ```
@@ -30,4 +31,6 @@ npm run build      # static site in dist/
 - `src/ui/` React table
 - `tests/` vitest
 - `docs/RULES_COVERAGE.md` what the engine enforces and what is simplified
-- `supabase/migrations/0001_wishlist.sql` table for shared feedback (optional, not applied anywhere)
+- `src/cloud/` sign-in, access list, saved data across devices (Supabase project `sorcery-practice-table`)
+- `supabase/migrations/` the database tables and access rules, as applied
+- `.github/workflows/pages.yml` builds and publishes to GitHub Pages on every push to `main`

@@ -1,7 +1,7 @@
 // Wishlist + problem reports. Same shape as the archMGMT `wishlist` table (kind, title, details,
 // status, response, submitted_by, priority) plus a `context` blob with diagnostics.
-// Entries are always kept locally. If a Supabase project URL and publishable key are entered in
-// Settings, entries are also sent there and statuses/responses are read back.
+// Entries are always kept locally. For a signed-in member they are also stored in the app's
+// Supabase `wishlist` table, and statuses/responses are read back from it.
 import { db } from '../data/db';
 
 export const STATUSES = ['new', 'under_review', 'approved', 'planned', 'in_progress', 'complete', 'infeasible', 'duplicate'] as const;
@@ -10,7 +10,7 @@ export interface FeedbackItem {
   response: string | null; submitted_by: string | null; priority: number | null; created_at: string;
   context: Record<string, unknown> | null; synced?: boolean;
 }
-export interface Remote { url: string; key: string }
+export interface Remote { url: string; key: string; token?: string }
 
 const errors: string[] = [];
 export function captureErrors() {
@@ -20,7 +20,7 @@ export function captureErrors() {
 export function push(msg: string) { errors.push(`${new Date().toISOString()} ${msg}`); if (errors.length > 30) errors.shift(); }
 export const recentErrors = () => errors.slice();
 
-const headers = (r: Remote) => ({ apikey: r.key, authorization: `Bearer ${r.key}`, 'content-type': 'application/json' });
+const headers = (r: Remote) => ({ apikey: r.key, authorization: `Bearer ${r.token ?? r.key}`, 'content-type': 'application/json' });
 const table = (r: Remote) => `${r.url.replace(/\/+$/, '')}/rest/v1/wishlist`;
 
 export async function loadLocal(): Promise<FeedbackItem[]> { return (await db.get<FeedbackItem[]>('feedback')) ?? []; }

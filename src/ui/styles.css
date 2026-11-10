@@ -204,3 +204,9 @@ details summary { cursor: pointer; margin: 6px 0; }
 @media (max-width: 1100px) { .table { grid-template-columns: 210px minmax(0, 1fr); } .rail.right { display: none; } .setup { grid-template-columns: 1fr; } .unofficial { display: none; } }
 @media (max-width: 760px) { .table { grid-template-columns: 1fr; } .rail.left { display: none; } .builder { grid-template-columns: 1fr; overflow: auto; } .builder-side { border: 0; padding: 0; } .cols, .diffs { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* sign-in gate */
+.gate { height: 100%; display: grid; place-items: center; padding: 24px; background: radial-gradient(90% 70% at 50% 35%, #223052 0%, var(--night) 75%); }
+.gatebox { width: min(440px, 100%); background: var(--cloth); border: 1px solid var(--line); border-radius: 12px; padding: 30px 32px; }
+.gatebox h1 { color: var(--parch); font-size: 32px; } .gatebox .lede { font-size: 16px; margin-bottom: 20px; } .gatebox .row { margin: 6px 0 14px; }
+.banner { background: #0f1522; border: 1px solid var(--line); border-left: 4px solid var(--brass); padding: 10px 14px; border-radius: var(--r); }
