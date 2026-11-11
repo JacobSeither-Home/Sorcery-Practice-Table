@@ -259,7 +259,7 @@ function ArtChooser({ card }: { card: CardDef }) {
   return (<>
     <h3>Art ({variants.length} images)</h3>
     <div className="artpick">{ordered.map((v) => (
-      <button key={v} className={v === current ? 'on' : ''} onClick={() => chooseArt(card.id, v)} data-tip={variantLabel(card, v) + (v === ordered[0] ? ' (default)' : '')} aria-pressed={v === current}>
+      <button key={v} className={`${v === current ? 'on' : ''} ${card.type === 'Site' ? 'wide' : ''}`} onClick={() => chooseArt(card.id, v)} data-tip={variantLabel(card, v) + (v === ordered[0] ? ' (default)' : '')} aria-pressed={v === current}>
         {urls[v] ? <img src={urls[v]} alt={variantLabel(card, v)} /> : <span>…</span>}
       </button>
     ))}</div>

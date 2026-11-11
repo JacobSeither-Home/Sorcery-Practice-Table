@@ -400,3 +400,15 @@ details summary { cursor: pointer; margin: 6px 0; }
 /* the whole pool is in the grid; off-screen cards are skipped by the browser until scrolled to */
 .gridcard { content-visibility: auto; contain-intrinsic-size: calc(104px * var(--zoom, 1)) calc(146px * var(--zoom, 1)); }
 .gridcard .n { z-index: 1; }
+
+/* Site art files are drawn sideways on an upright card: turn them a quarter turn back so they read level. */
+.card.art.wide, .site-art-box { container-type: size; }
+.card.art.wide img, .site-art-box img { position: absolute; left: 50%; top: 50%; width: 100cqh; height: 100cqw; max-width: none; object-fit: cover; transform: translate(-50%, -50%) rotate(-90deg); }
+.site-art-box { position: absolute; inset: 0; overflow: hidden; border-radius: 8px; opacity: .9; pointer-events: none; }
+.artpick button.wide img { transform: rotate(-90deg) scale(1.4); }
+/* enlarged card on hover */
+.card.xl { --w: var(--zw, 330px); }
+.zoomcard { position: fixed; z-index: 90; pointer-events: none; filter: drop-shadow(0 18px 40px #000c); animation: zoomin .12s ease-out; }
+.zoomcard .card { box-shadow: 0 0 0 1px #fff3; }
+@keyframes zoomin { from { opacity: 0; transform: scale(.94); } }
+@media (hover: none) { .zoomcard { display: none; } }

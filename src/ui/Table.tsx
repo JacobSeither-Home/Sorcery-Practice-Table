@@ -390,7 +390,7 @@ export function Table() {
 
 function SiteArt({ id }: { id: string }) {
   const art = useStore((st) => st.art[id]);
-  return art ? <img className="site-art" src={art} alt="" draggable={false} /> : null;
+  return art ? <div className="site-art-box"><img src={art} alt="" draggable={false} /></div> : null;
 }
 
 /** Moving light on a hand card under the mouse, so it reads as a glossy physical card. */
