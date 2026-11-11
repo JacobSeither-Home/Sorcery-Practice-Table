@@ -107,13 +107,15 @@ export function matcher(cards: CardDef[]): (key: string) => Match | null {
   };
 }
 
+export const ART_LONG_SIDE = 1100;
 async function shrink(blob: Blob): Promise<Blob> {
   try {
     const bmp = await createImageBitmap(blob);
-    const scale = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
+    // 1100 px on the long side keeps the enlarged hover card sharp on high-density screens (it is shown about 460 CSS px tall)
+    const scale = Math.min(1, ART_LONG_SIDE / Math.max(bmp.width, bmp.height));
     const cv = new OffscreenCanvas(Math.round(bmp.width * scale), Math.round(bmp.height * scale));
     cv.getContext('2d')!.drawImage(bmp, 0, 0, cv.width, cv.height);
-    return await cv.convertToBlob({ type: 'image/webp', quality: 0.82 });
+    return await cv.convertToBlob({ type: 'image/webp', quality: 0.88 });
   } catch { return blob; }
 }
 
