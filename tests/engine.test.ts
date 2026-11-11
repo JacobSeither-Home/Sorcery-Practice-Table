@@ -416,3 +416,47 @@ describe('rules text and damage split', () => {
     expect(s.units[giant]).toBeUndefined();                                       // all three strike back for 2 + 4 + 2: dead at 7 defense
   });
 });
+
+describe('site text read from the API', () => {
+  it('"only copy" towers give 1 extra mana on the turn they are played, once', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const fx = effectsFromText('Site', 'Genesis → If this is the only Lone Tower you control, gain ① this turn.');
+    expect(fx).toMatchObject([{ on: 'genesis', op: 'mana', n: 1, cond: 'onlyCopy' }]);
+    const tower = T('Lone Tower', 'Site', { thresholds: { air: 1, earth: 0, fire: 0, water: 0 }, effects: fx });
+    let s = start(0);
+    const a = give(s, 0, tower), b = give(s, 0, tower);
+    s = apply(s, { t: 'playSite', inst: a, c: AVATAR_START[0] });
+    expect(s.players[0].mana).toBe(2);                       // 1 for the site + 1 from its Genesis
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' });
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' });
+    expect(s.players[0].mana).toBe(1);                       // the bonus was for that turn only
+    s = apply(s, { t: 'playSite', inst: b, c: cell(2, 2) });
+    expect(s.players[0].mana).toBe(2);                       // second Lone Tower: site mana only, no bonus
+  });
+  it('Holy Ground heals each nearby Avatar', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const fx = effectsFromText('Site', 'Genesis → Each nearby Avatar heals 3 life.');
+    const holy = T('Holy Ground', 'Site', { effects: fx });
+    let s = start(0); s.players[0].life = 10; s.players[1].life = 10;
+    s = apply(s, { t: 'playSite', inst: give(s, 0, holy), c: AVATAR_START[0] });
+    expect(s.players[0].life).toBe(13); expect(s.players[1].life).toBe(10); // the far Avatar is not nearby
+  });
+});
+
+describe('carried artifacts', () => {
+  it('an artifact handed to a unit travels with it and stays where the bearer dies', () => {
+    let s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.units[s.players[1].avatar].tapped = true;
+    s.players[0].mana = 5;
+    const runner = unit(s, 0, cell(2, 2), id('Ember Runner'));
+    const foe = unit(s, 1, cell(2, 1), id('Hill Giant'), { tapped: true });
+    const lantern = give(s, 0, id('Old Lantern'));
+    expect(reason(s, { t: 'cast', inst: lantern, c: cell(2, 2), target: foe })).toMatch(/your own units/);
+    s = apply(s, { t: 'cast', inst: lantern, c: cell(2, 2), target: runner });
+    expect(s.perms[0].carrier).toBe(runner);
+    s = apply(s, { t: 'move', unit: runner, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: foe } });
+    expect(s.units[runner]).toBeUndefined();                 // the giant strikes back
+    expect(s.perms[0].carrier).toBeUndefined(); expect(s.perms[0].c).toBe(cell(2, 1)); // dropped where it fell
+    s = apply(s, { t: 'manual', op: 'carry', perm: s.perms[0].id, unit: foe });
+    expect(s.perms[0].carrier).toBe(foe); expect(s.perms[0].owner).toBe(1);
+  });
+});

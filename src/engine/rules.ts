@@ -153,6 +153,7 @@ function gainLife(s: GameState, p: PlayerId, n: number) {
 function killUnit(s: GameState, u: Unit) {
   if (!s.units[u.id] || u.avatar) return;
   const d = unitCard(s, u);
+  for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; } // what it carried stays where it fell
   delete s.units[u.id];
   log(s, `${d.name} dies.`, null);
   runEffects(s, d, 'deathrite', u.owner, { c: u.c, r: u.r });
@@ -195,6 +196,7 @@ export function validTargets(s: GameState, p: PlayerId, d: CardDef, origin?: Loc
 function runEffects(s: GameState, d: CardDef, on: Effect['on'], p: PlayerId, loc: Loc | null, target?: string) {
   for (const e of d.effects) {
     if (e.on !== on || s.phase === 'over') continue;
+    if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((c) => s.sites[c]!.inst && cardOf(s, s.sites[c]!.inst!).name === d.name).length !== 1) continue;
     const n = e.n ?? 1;
     const victims: Unit[] = [];
     if (e.who === 'target') { const t = target ? s.units[target] : undefined; if (t) victims.push(t); }
@@ -204,7 +206,10 @@ function runEffects(s: GameState, d: CardDef, on: Effect['on'], p: PlayerId, loc
     switch (e.op) {
       case 'damage': for (const v of victims) { log(s, `${d.name} deals ${n} damage to ${unitCard(s, v).name}.`, p); damageUnit(s, v, n); } break;
       case 'destroy': for (const v of victims) if (!v.avatar) killUnit(s, v); break;
-      case 'heal': gainLife(s, e.who === 'enemyAvatar' ? other(p) : p, n); break;
+      case 'heal':
+        if (e.who === 'nearbyAvatars') { if (loc) for (const q of [0, 1] as PlayerId[]) if (nearby(loc.c).includes(s.units[s.players[q].avatar].c)) gainLife(s, q, n); }
+        else gainLife(s, e.who === 'enemyAvatar' ? other(p) : p, n);
+        break;
       case 'mana': s.players[p].mana += n; log(s, `${pname(p)} gains ${n} mana.`, p); break;
       case 'draw': {
         for (let i = 0; i < n; i++) if (!drawCard(s, p, e.deck ?? 'spellbook')) { log(s, `${pname(p)} must draw from an empty deck and loses.`, p); win(s, other(p)); break; }
@@ -396,6 +401,11 @@ export function check(s: GameState, a: Action): Check {
         if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose a square for the aura.');
       }
       const needsTarget = d.effects.some((e) => e.who === 'target' && (d.type === 'Magic' ? e.on === 'cast' : e.on === 'genesis'));
+      if (d.type === 'Artifact' && !needsTarget && a.target) { // conjured straight into a unit's hands
+        const b = s.units[a.target];
+        if (!b || b.owner !== p || b.c !== a.c) return no('An artifact can be handed to one of your own units on the site where it is conjured.');
+        return { ok: true };
+      }
       if (needsTarget) {
         const ok = validTargets(s, p, d, d.type === 'Magic' ? undefined : { c: a.c!, r: 'surface' });
         if (!ok.length) return no(`${d.name} has no valid target in range.`);
@@ -495,7 +505,9 @@ export function apply(state: GameState, a: Action): GameState {
         log(s, `${pname(p)} summons ${d.name}.`);
         runEffects(s, d, 'genesis', p, { c: a.c!, r: 'surface' }, a.target);
       } else if (d.type === 'Artifact' || d.type === 'Aura') {
-        s.perms.push({ id: `m${s.nextId++}`, inst: a.inst, owner: p, c: a.c!, kind: d.type === 'Aura' ? 'aura' : 'artifact' });
+        const bearer = d.type === 'Artifact' && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis') ? a.target : undefined;
+        s.perms.push({ id: `m${s.nextId++}`, inst: a.inst, owner: p, c: a.c!, kind: d.type === 'Aura' ? 'aura' : 'artifact', ...(bearer ? { carrier: bearer } : {}) });
+        if (bearer) log(s, `${unitCard(s, s.units[bearer]).name} takes up ${d.name}.`);
         log(s, `${pname(p)} conjures ${d.name}.${d.effects.length ? '' : d.rules ? ' Its text is not automated; use the manual tools.' : ''}`);
         runEffects(s, d, 'genesis', p, { c: a.c!, r: 'surface' }, a.target);
       } else {
@@ -539,6 +551,8 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'manual': manual(s, a); break;
   }
+  // carried artifacts go where their bearer goes; if the bearer is gone they stay where it fell
+  for (const m of s.perms) if (m.carrier) { const b = s.units[m.carrier]; if (b) m.c = b.c; else delete m.carrier; }
   return s;
 }
 function resolvePending(s: GameState, ids: string[], removeOriginal: boolean) {
@@ -564,6 +578,9 @@ function manual(s: GameState, a: ManualOp) {
     case 'tap': { const u = s.units[a.unit]; if (u) { u.tapped = !u.tapped; say(`${u.tapped ? 'tap' : 'untap'} ${unitCard(s, u).name}.`); } break; }
     case 'draw': if (drawCard(s, a.p, a.deck)) say(`${pname(a.p)} draws from the ${a.deck}.`); break;
     case 'discard': { const pl = s.players[a.p]; const i = pl.hand.indexOf(a.inst); if (i >= 0) { pl.hand.splice(i, 1); pl.cemetery.push(a.inst); say(`${pname(a.p)} discards ${cardOf(s, a.inst).name}.`); } break; }
+    case 'carry': { const m = s.perms.find((x) => x.id === a.perm); const u = a.unit ? s.units[a.unit] : undefined;
+      if (m && m.kind === 'artifact') { if (u && u.c === m.c) { m.carrier = u.id; m.owner = u.owner; say(`${unitCard(s, u).name} picks up ${cardOf(s, m.inst).name}.`); } else if (!a.unit) { delete m.carrier; say(`${cardOf(s, m.inst).name} is put down.`); } }
+      break; }
     case 'teleport': { const u = s.units[a.unit]; if (u && a.c >= 0 && a.c < CELLS) { u.c = a.c; u.r = 'surface'; say(`move ${unitCard(s, u).name}.`); } break; }
   }
 }

@@ -146,15 +146,15 @@ fieldset { border: 1px solid var(--line-soft); border-radius: var(--r); margin: 
 
 /* ---- the realm ---- */
 .board-scroll { flex: 1; min-height: 0; width: 100%; position: relative; container-type: size; display: grid; place-items: center; overflow: hidden; }
-.mat { --gap: 8px; --umax: 62px;
+.mat { --gap: 8px; --umax: 71px;
   --cellw: calc(min(100cqw, 100cqh * 1.75, 1180px) / 5); --cellh: calc(min(100cqh, 100cqw * 1.4, 680px) / 4);
   width: calc(var(--cellw) * 5); height: calc(var(--cellh) * 4);
   display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(4, 1fr); gap: var(--gap); padding: var(--gap);
   position: relative; isolation: isolate; border-radius: 16px;
   background: radial-gradient(70% 70% at 50% 50%, #0d0a1f88, #0000 75%);
   box-shadow: inset 0 0 0 1px #cfa64e22, 0 0 80px -30px #7a4fd066; }
-.board-roomy .mat { --cellw: clamp(150px, 21vw, 230px); --cellh: calc(var(--cellw) * .8); --umax: 78px; --gap: 12px; }
-.board-spacious .mat { --cellw: clamp(200px, 29vw, 320px); --cellh: calc(var(--cellw) * .8); --umax: 96px; --gap: 14px; }
+.board-roomy .mat { --cellw: clamp(150px, 21vw, 230px); --cellh: calc(var(--cellw) * .8); --umax: 90px; --gap: 12px; }
+.board-spacious .mat { --cellw: clamp(200px, 29vw, 320px); --cellh: calc(var(--cellw) * .8); --umax: 110px; --gap: 14px; }
 .board-roomy .board-scroll, .board-spacious .board-scroll { display: block; overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 4px 0 10px; }
 .board-roomy .mat, .board-spacious .mat { margin: 0 auto; }
 .rune-ring { position: absolute; inset: 0; width: 100%; height: 100%; color: #cfa64e; opacity: .16; z-index: -1; pointer-events: none; animation: spin 300s linear infinite; }
@@ -192,11 +192,11 @@ fieldset { border: 1px solid var(--line-soft); border-radius: var(--r); margin: 
 .side > * { pointer-events: auto; }
 .side.far { top: clamp(12px, calc(var(--cellh) * .14), 22px); align-content: flex-start; } .side.near { bottom: 6px; align-content: flex-start; flex-wrap: wrap-reverse; } /* wrap-reverse: flex-start is the bottom edge */
 .board-roomy .side, .board-spacious .side { gap: 10px 8px; }
-.unit { --pc: var(--p0); --uw: clamp(22px, min(calc(var(--cellw) * .25), calc(var(--cellh) * .27)), var(--umax));
+.unit { --pc: var(--p0); --uw: clamp(25px, min(calc(var(--cellw) * .29), calc(var(--cellh) * .31)), var(--umax)); /* 15% larger than the first pass */
   width: var(--uw); aspect-ratio: 5 / 7; padding: 0; border: 0; border-radius: 5px; background: var(--parch); color: var(--ink); position: relative; overflow: visible; cursor: pointer;
   box-shadow: 0 0 0 2px var(--pc), 0 7px 10px -3px #000d, 0 2px 3px #0009; transition: translate .15s, box-shadow .15s; -webkit-touch-callout: none; user-select: none; }
 .unit.p1 { --pc: var(--p1); }
-.unit.avatar { --uw: clamp(24px, min(calc(var(--cellw) * .27), calc(var(--cellh) * .29)), calc(var(--umax) * 1.1)); box-shadow: 0 0 0 3px var(--pc), 0 0 16px -2px var(--pc), 0 8px 12px -3px #000d; background: color-mix(in srgb, var(--pc) 35%, var(--parch)); }
+.unit.avatar { --uw: clamp(28px, min(calc(var(--cellw) * .31), calc(var(--cellh) * .335)), calc(var(--umax) * 1.1)); box-shadow: 0 0 0 3px var(--pc), 0 0 16px -2px var(--pc), 0 8px 12px -3px #000d; background: color-mix(in srgb, var(--pc) 35%, var(--parch)); }
 .unit-face { position: absolute; inset: 0; border-radius: inherit; overflow: hidden; }
 .unit-face::after { content: ''; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(135deg, #ffffff40, #fff0 38%); box-shadow: inset 0 1px 0 #ffffff70; pointer-events: none; }
 .unit img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -412,3 +412,20 @@ details summary { cursor: pointer; margin: 6px 0; }
 .zoomcard .card { box-shadow: 0 0 0 1px #fff3; }
 @keyframes zoomin { from { opacity: 0; transform: scale(.94); } }
 @media (hover: none) { .zoomcard { display: none; } }
+
+/* Avatars: no life badge (the scoreboard has it); a slow ring of light in the player's colour marks them instead */
+@property --ring { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+.unit.avatar { box-shadow: 0 8px 12px -3px #000d; }
+.aura-ring { position: absolute; inset: -5px; border-radius: 8px; padding: 3px; pointer-events: none; z-index: -1;
+  background: conic-gradient(from var(--ring), var(--pc) 0deg, #fff 40deg, var(--pc) 90deg, transparent 150deg, transparent 210deg, var(--pc) 270deg, #fff 310deg, var(--pc) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude;
+  filter: drop-shadow(0 0 6px var(--pc)); animation: ring 3.6s linear infinite; }
+@keyframes ring { to { --ring: 360deg; } }
+.unit.avatar.sel .aura-ring { animation-duration: 1.4s; }
+@media (prefers-reduced-motion: reduce) { .aura-ring { animation: none; } }
+
+/* carried artifacts: the card's top edge and its name stick out above the bearer */
+.attached { position: absolute; left: -2px; right: -2px; bottom: calc(100% - 1px); display: flex; flex-direction: column-reverse; pointer-events: auto; }
+.attach-tab { display: block; height: 13px; margin-bottom: -2px; border: 1.5px solid var(--pc); border-bottom: 0; border-radius: 4px 4px 0 0; background: var(--parch) top center / cover no-repeat; overflow: hidden; box-shadow: 0 -2px 6px #0008; }
+.attach-tab b { display: block; font: 700 7.5px/11px var(--sans, sans-serif); color: #1a140a; background: #efe6d0e6; padding: 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.unit.tapped-any .attached { }

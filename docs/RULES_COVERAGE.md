@@ -27,7 +27,7 @@ The reader's page cut off before the Ward, Landbound and Voidwalk entries.
 - **Ward** is displayed but not enforced (no definition was available from the source above).
 - **Flood** is not applied to sites.
 - **Auras** are placed on a square you control, not on an intersection, and have no area effect.
-- **Artifacts** sit on a site; units do not carry them.
+- **Artifacts** can be conjured onto a site or handed to one of your units there (drop the card on the unit); a carried artifact moves with its bearer and is left where the bearer dies. Picking up and putting down afterwards is a Manual tools action. The rulebook's own rules for carrying and for who may pick up were not read; this is a table convenience, and artifact text is not applied to the bearer.
 - **Damage allocation**: an attacker facing several enemies has its damage split automatically to kill the most (weakest minions first, remainder on the next in line). The rulebook lets the attacker choose the split; there is no prompt for it.
 - **Void**: a unit without Voidwalk may not step into the void (the rulebook lets it and banishes it). Avatars may not enter the void.
 - **Landbound** is implemented by analogy with Waterbound (disabled off land). Not verified.

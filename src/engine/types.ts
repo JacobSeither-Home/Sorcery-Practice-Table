@@ -14,7 +14,9 @@ export interface Effect {
   op: 'damage' | 'heal' | 'draw' | 'mana' | 'destroy';
   n?: number;
   /** who/what the effect applies to */
-  who: 'target' | 'enemyAvatar' | 'ownAvatar' | 'enemiesHere' | 'controller';
+  who: 'target' | 'enemyAvatar' | 'ownAvatar' | 'enemiesHere' | 'controller' | 'nearbyAvatars';
+  /** only applies when this is the single copy of the card (by name) among the sites its controller has */
+  cond?: 'onlyCopy';
   /** for who:'target' — how far from a spellcaster (or from the unit itself for genesis) */
   range?: 'adjacent' | 'nearby' | 'any';
   deck?: 'spellbook' | 'atlas';
@@ -64,7 +66,7 @@ export interface Unit {
 }
 
 export interface Site { inst: string | null; owner: PlayerId | null } // inst null = rubble
-export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura' }
+export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura'; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string }
 
 export interface PlayerState {
   life: number;
@@ -119,7 +121,9 @@ export type ManualOp =
   | { op: 'tap'; unit: string }
   | { op: 'draw'; p: PlayerId; deck: 'spellbook' | 'atlas' }
   | { op: 'discard'; p: PlayerId; inst: string }
-  | { op: 'teleport'; unit: string; c: number };
+  | { op: 'teleport'; unit: string; c: number }
+  /** give an artifact to a unit at its location, or (unit omitted) put it down on the site */
+  | { op: 'carry'; perm: string; unit?: string };
 
 export type Action =
   | { t: 'mulligan'; cards: string[] }

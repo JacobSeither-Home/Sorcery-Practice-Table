@@ -35,6 +35,8 @@ interface Store {
   settings: Settings;
   /** step-through: the AI has moved and waits for Continue */
   aiWaiting: boolean;
+  /** against the AI: the last move can be taken back while nothing new has been revealed */
+  canUndo: boolean; undo: () => void;
   aiNext: () => void;
   game: Game | null;
   online: Online | null;
@@ -71,7 +73,7 @@ export const PACES = [{ v: 2.5, label: 'Very slow' }, { v: 1.6, label: 'Slow' },
 
 export const useStore = create<Store>((set, get) => ({
   ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {}, artVariants: {}, artJob: null, artReport: null, artSyncedAt: null,
-  settings: DEFAULTS, game: null, online: null, aiThinking: false, aiWaiting: false, toasts: [],
+  settings: DEFAULTS, game: null, online: null, aiThinking: false, aiWaiting: false, canUndo: false, toasts: [],
   aiNext: () => { const r = aiGate; aiGate = null; useStore.setState({ aiWaiting: false }); r?.(); },
 
   init: async () => {
@@ -191,12 +193,35 @@ export const useStore = create<Store>((set, get) => ({
     const c = check(g.state, a);
     if (!c.ok) { get().toast(c.reason, 'error', c.keyword); return false; }
     commit(a);
+    if (g.mode === 'ai') {
+      if (revealsInfo(g.state, get().game!.state, a, g.local)) undoStack = []; else undoStack.push(g.state);
+      set({ canUndo: undoStack.length > 0 });
+    }
     if (g.mode === 'online') { const ng = get().game!; link?.send({ t: 'act', n: ng.n, a, hash: stateHash(ng.state) }); }
     driveAi();
     return true;
   },
+  undo: () => {
+    const g = get().game; const prev = undoStack.pop();
+    if (!g || g.mode !== 'ai' || !prev || aiBusy) { set({ canUndo: false }); return; }
+    set({ game: { ...g, state: prev, n: g.n - 1 }, canUndo: undoStack.length > 0 });
+  },
 }));
 
+// ---- undo (one-player games only) ----
+// A move can be taken back only while it has revealed nothing: no card drawn, no shuffle or other
+// randomness, no decision by the opponent, and the turn has not been passed. Anything that does
+// reveal something empties the stack, so undo can never reach back past it.
+let undoStack: GameState[] = [];
+function revealsInfo(prev: GameState, next: GameState, a: Action, me: PlayerId): boolean {
+  if (a.t === 'draw' || a.t === 'drawSite' || a.t === 'mulligan' || a.t === 'endTurn' || a.t === 'respond') return true;
+  if (a.t === 'manual' && a.op === 'draw') return true;
+  if (next.phase === 'over' || next.rng !== prev.rng || next.pending) return true; // a pending prompt means the opponent is about to decide
+  const before = new Set(prev.players[me].hand);
+  if (next.players[me].hand.some((i) => !before.has(i))) return true;              // an effect drew a card
+  const o = me === 0 ? 1 : 0; const p0 = prev.players[o], p1 = next.players[o];
+  return p0.hand.length !== p1.hand.length || p0.spellbook.length !== p1.spellbook.length || p0.atlas.length !== p1.atlas.length;
+}
 function commit(a: Action) {
   const g = useStore.getState().game!;
   try { useStore.setState({ game: { ...g, state: apply(g.state, a), n: g.n + 1 } }); }
@@ -234,6 +259,7 @@ async function driveAi() {
       const now = useStore.getState().game;
       if (!now || now.state !== g.state) continue; // game was replaced or changed while thinking
       commit(a);
+      undoStack = []; useStore.setState({ canUndo: false }); // the opponent acted: nothing before this can be taken back
       // step-through: hold after each AI move while the AI still has the next decision
       const after = useStore.getState().game;
       if (useStore.getState().settings.stepOpponent && after && after.state.phase !== 'over' && actor(after.state) !== after.local) {
@@ -251,3 +277,6 @@ export const isBuiltIn = isOfficialDeck;
 
 // development only: lets the screenshot script start a game with the test fixtures
 if (import.meta.env.DEV) (window as unknown as { __store: typeof useStore }).__store = useStore;
+
+// a new or closed game starts with nothing to take back
+useStore.subscribe((s, p) => { if (s.game !== p.game && (!s.game || !p.game || s.game.n === 0)) { undoStack = []; if (s.canUndo) useStore.setState({ canUndo: false }); } });

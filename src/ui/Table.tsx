@@ -21,6 +21,7 @@ export function Table() {
   const act = useStore((s) => s.act);
   const toast = useStore((s) => s.toast);
   const aiThinking = useStore((s) => s.aiThinking);
+  const canUndo = useStore((s) => s.canUndo); const undo = useStore((s) => s.undo);
   const s = g.state;
   const who = actor(s);
   const hot = g.mode === 'hotseat';
@@ -128,6 +129,10 @@ export function Table() {
       const a: Action = { t: 'cast', inst: sel.inst, c: sel.c, target: u.id };
       if (explain(a)) act(a); return;
     }
+    if (sel?.k === 'hand' && selCard?.type === 'Artifact' && u.owner === who && sel.c === undefined && !selCard.effects.some((e) => e.who === 'target' && e.on === 'genesis')) {
+      const a: Action = { t: 'cast', inst: sel.inst, c: u.c, target: u.id }; // hand the artifact to this unit
+      if (explain(a)) act(a); return;
+    }
     if (sel?.k === 'hand') { clickCell(u.c); return; }
     if (u.owner === who && !(selUnit && selUnit.id !== u.id && hiCells.get(u.c) === 'hit')) {
       if (selUnit?.id === u.id) { clickCell(u.c); return; }
@@ -169,6 +174,10 @@ export function Table() {
       const needs = d.effects.some((e) => e.who === 'target' && e.on === 'cast');
       if (needs && !unit) { toast(`Drop ${d.name} on the unit it should target.`); return; } // stays selected, targets keep glowing
       const a: Action = needs ? { t: 'cast', inst, target: unit! } : { t: 'cast', inst };
+      if (explain(a)) act(a); else setSel(null); return;
+    }
+    if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) {
+      const a: Action = { t: 'cast', inst, c, target: unit }; // dropped on one of your units: it carries the artifact
       if (explain(a)) act(a); else setSel(null); return;
     }
     if (d.effects.some((e) => e.who === 'target' && e.on === 'genesis') && s.sites[c]?.owner === who) { setSel({ k: 'hand', inst, c }); toast(`Now choose a target for ${d.name}.`); return; }
@@ -232,7 +241,7 @@ export function Table() {
                   <span className="coord">{'ABCDE'[x]}{4 - y}</span>
                   {([other(bottomPlayer), bottomPlayer] as PlayerId[]).map((p) => (
                     <div key={p} className={`side ${p === bottomPlayer ? 'near' : 'far'}`}>
-                      {s.perms.filter((m) => m.c === c && m.owner === p).map((m) => {
+                      {s.perms.filter((m) => m.c === c && m.owner === p && !m.carrier).map((m) => {
                         const pc = cardOf(s, m.inst); const hp = hoverProps(pc);
                         return <span key={m.id} className={`perm p${m.owner}`} {...hp} onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: destroy' : pc.name}>{m.kind === 'aura' ? '◌' : '◆'}</span>;
                       })}
@@ -267,6 +276,7 @@ export function Table() {
           {myInput && !pend && s.phase === 'main' && (<>
             {castNow && sel?.k === 'hand' && <button className="primary" onClick={() => { const a: Action = { t: 'cast', inst: sel.inst }; if (explain(a)) act(a); }}>Cast {selCard!.name}</button>}
             <button disabled={s.units[me.avatar].tapped || !me.atlas.length} onClick={() => act({ t: 'drawSite' })} data-tip="Avatar ability: tap to draw a site instead of playing one">Tap Avatar: draw a site</button>
+            {g.mode === 'ai' && <button disabled={!canUndo} onClick={undo} data-tip={canUndo ? 'Take back your last move' : 'Nothing to take back. Moves that draw a card, pass the turn, or that the opponent has answered cannot be undone.'}>Undo</button>}
             <button className="end" onClick={() => act({ t: 'endTurn' })} data-tip="Damage on your minions clears and unspent mana is lost">End turn</button>
           </>)}
           {manual && selUnit && (<span className="manualbar">
@@ -274,6 +284,8 @@ export function Table() {
             <button onClick={() => act({ t: 'manual', op: 'damage', unit: selUnit.id, n: 1 })}>1 damage</button>
             <button onClick={() => act({ t: 'manual', op: 'tap', unit: selUnit.id })}>Tap / untap</button>
             {!selUnit.avatar && <button onClick={() => act({ t: 'manual', op: 'destroy', unit: selUnit.id })}>Destroy</button>}
+            {s.perms.filter((m) => m.kind === 'artifact' && m.c === selUnit.c && !m.carrier).map((m) => <button key={m.id} onClick={() => act({ t: 'manual', op: 'carry', perm: m.id, unit: selUnit.id })}>Pick up {cardOf(s, m.inst).name}</button>)}
+            {s.perms.filter((m) => m.carrier === selUnit.id).map((m) => <button key={m.id} onClick={() => act({ t: 'manual', op: 'carry', perm: m.id })}>Put down {cardOf(s, m.inst).name}</button>)}
           </span>)}
         </div>
 
@@ -388,6 +400,11 @@ export function Table() {
   );
 }
 
+/** The top edge of a carried artifact, peeking out above its bearer, with its name. */
+function AttachTab({ card }: { card: CardDef }) {
+  const art = useStore((st) => st.art[card.id]);
+  return <span className="attach-tab" style={art ? { backgroundImage: `url(${art})` } : undefined} {...hoverProps(card)}><b>{card.name}</b></span>;
+}
 function SiteArt({ id }: { id: string }) {
   const art = useStore((st) => st.art[id]);
   return art ? <div className="site-art-box"><img src={art} alt="" draggable={false} /></div> : null;
@@ -402,6 +419,7 @@ function sheen(e: React.PointerEvent<HTMLElement>) {
 
 function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: GameState; u: Unit; pace: number; selected: boolean; target: boolean; dropping?: boolean; onClick: (e: React.MouseEvent) => void }) {
   const d = unitCard(s, u);
+  const carried = s.perms.filter((m) => m.carrier === u.id);
   const art = useStore((st) => st.art[d.id]);
   const life = u.avatar ? s.players[u.owner].life : d.defense - u.damage;
   return (
@@ -409,7 +427,9 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
       animate={{ rotate: u.tapped ? 90 : 0, scale: selected ? 1.12 : 1 }} transition={spring(pace)} onClick={onClick} {...hoverProps(d)}
       data-unit={u.id} aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
       <span className="unit-face">{art ? <img src={art} alt="" draggable={false} /> : <span className="unit-name">{d.name}</span>}</span>
-      <motion.span key={u.damage + ':' + life} className={`badge ${u.damage ? 'hurt' : ''}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{u.avatar ? `♥${life}` : d.attack === d.defense && !u.damage ? d.attack : `${d.attack}/${life}`}</motion.span>
+      {u.avatar ? <span className="aura-ring" aria-hidden /> : null}
+      {!u.avatar && <motion.span key={u.damage + ':' + life} className={`badge ${u.damage ? 'hurt' : ''}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{d.attack === d.defense && !u.damage ? d.attack : `${d.attack}/${life}`}</motion.span>}
+      {carried.length > 0 && <span className="attached">{carried.map((m) => { const ac = cardOf(s, m.inst); return <AttachTab key={m.id} card={ac} />; })}</span>}
       {u.r === 'under' && <span className="under-tag">below</span>}
       {summoningSick(s, u) && <span className="sick" data-tip="Entered this turn">z</span>}
       {art && <span className="plate">{d.name}</span>}

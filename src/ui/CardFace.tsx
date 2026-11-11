@@ -67,9 +67,9 @@ export function CardFace({ card, size = 'md' }: { card: CardDef; size?: 'xs' | '
         <Pips t={card.thresholds} />
       </div>
       <div className="card-well"><span>{card.type}</span></div>
-      {size !== 'xs' && <div className="card-type">{card.typeline || card.type}{card.subtypes.length ? ` — ${card.subtypes.join(' ')}` : ''}</div>}
+      {size !== 'xs' && <div className="card-type">{card.typeline || card.type}{card.subtypes.length ? ` — ${card.subtypes.join(' ')}` : ''}{size === 'xl' && card.type === 'Avatar' ? `, power ${card.attack}, life ${card.life}` : ''}</div>}
       {(size === 'md' || size === 'lg' || size === 'xl') && <div className="card-rules">{card.rules}</div>}
-      {unit && <span className="stat">{card.type === 'Avatar' ? `${card.attack} · ♥${card.life}` : card.attack === card.defense ? card.attack : `${card.attack}/${card.defense}`}</span>}
+      {unit && !(size === 'xl' && card.type === 'Avatar') && <span className="stat">{card.type === 'Avatar' ? `${card.attack} · ♥${card.life}` : card.attack === card.defense ? card.attack : `${card.attack}/${card.defense}`}</span>}
     </div>
   );
 }

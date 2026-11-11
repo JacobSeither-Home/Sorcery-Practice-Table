@@ -48,6 +48,11 @@ export function effectsFromText(type: CardType, rules: string): Effect[] {
     return [{ on, op: 'destroy', who: 'target', range: rangeOf(m[1], m[2]), only: 'minion', auto: true }];
   if ((m = body.match(/^Draw (a|one|two|three|four|\d+) (spell|site)s?\.$/i)))
     return [{ on, op: 'draw', n: COUNT[m[1].toLowerCase()] ?? +m[1], who: 'controller', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook', auto: true }];
+  // "①" style mana symbols are the circled digits U+2460..
+  const mana = (x: string) => (/^\d+$/.test(x) ? +x : x.charCodeAt(0) - 0x245f);
+  if (on === 'genesis' && (m = body.match(/^If this is the only .+ you control, gain ([\u2460-\u2473]|\(?\d+\)?) this turn\.$/i)))
+    return [{ on, op: 'mana', n: mana(m[1].replace(/[()]/g, '')), who: 'controller', cond: 'onlyCopy', auto: true }];
+  if (on === 'genesis' && (m = body.match(/^Each nearby Avatar heals (\d+) life\.$/i))) return [{ on, op: 'heal', n: +m[1], who: 'nearbyAvatars', auto: true }];
   if ((m = body.match(/^(?:You )?gain (\d+) life\.$/i))) return [{ on, op: 'heal', n: +m[1], who: 'controller', auto: true }];
   return [];
 }
