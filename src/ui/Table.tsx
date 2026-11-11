@@ -373,12 +373,20 @@ export function Table() {
       </AnimatePresence>
 
       {s.phase === 'mulligan' && curtainFor === null && (hot || who === g.local) && (
-        <div className="veil"><div className="dialog wide">
+        <div className="veil"><div className="dialog wide opening">
           <h2>{PNAME(g, who)}: opening hand</h2>
           <p>You may take one mulligan. Select up to three cards to put on the bottom of their decks and draw the same number back.</p>
-          <div className="mullrow">{s.players[who].hand.map((inst) => (
-            <button key={inst} className={`handcard ${mull.includes(inst) ? 'out' : ''}`} {...hoverProps(cardOf(s, inst))} onClick={() => setMull(mull.includes(inst) ? mull.filter((x) => x !== inst) : mull.length < 3 ? [...mull, inst] : mull)}><CardFace card={cardOf(s, inst)} size="sm" /></button>
-          ))}</div>
+          {(['Site', 'Spell'] as const).map((kind) => {
+            const row = s.players[who].hand.filter((inst) => (cardOf(s, inst).type === 'Site') === (kind === 'Site'));
+            return row.length > 0 && (
+              <div key={kind} className="mullgroup">
+                <h3>{kind === 'Site' ? 'From your atlas' : 'From your spellbook'}</h3>
+                <div className="mullrow">{row.map((inst) => (
+                  <button key={inst} className={`handcard ${mull.includes(inst) ? 'out' : ''}`} aria-pressed={mull.includes(inst)} onClick={() => setMull(mull.includes(inst) ? mull.filter((x) => x !== inst) : mull.length < 3 ? [...mull, inst] : mull)}><CardFace card={cardOf(s, inst)} size="xl" /></button>
+                ))}</div>
+              </div>
+            );
+          })}
           <div className="row"><button className="primary" onClick={() => act({ t: 'mulligan', cards: mull })}>{mull.length ? `Mulligan ${mull.length} card${mull.length > 1 ? 's' : ''}` : 'Keep this hand'}</button></div>
         </div></div>
       )}

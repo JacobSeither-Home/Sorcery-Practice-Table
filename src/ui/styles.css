@@ -429,3 +429,11 @@ details summary { cursor: pointer; margin: 6px 0; }
 .attach-tab { display: block; height: 13px; margin-bottom: -2px; border: 1.5px solid var(--pc); border-bottom: 0; border-radius: 4px 4px 0 0; background: var(--parch) top center / cover no-repeat; overflow: hidden; box-shadow: 0 -2px 6px #0008; }
 .attach-tab b { display: block; font: 700 7.5px/11px var(--sans, sans-serif); color: #1a140a; background: #efe6d0e6; padding: 0 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
 .unit.tapped-any .attached { }
+
+/* opening hand: a row of sites and a row of spells at the enlarged-card size, shrunk only as far as the window needs */
+.dialog.opening { max-width: min(1500px, 98vw); padding: 18px 22px; --zw: min(330px, calc((100vh - 330px) / 2.4), calc((100vw - 110px) / 4.4)); }
+.dialog.opening p { margin-bottom: 4px; }
+.mullgroup h3 { margin: 8px 0 0; font-size: 13px; color: var(--muted); font-weight: 600; }
+.dialog.opening .mullrow { margin: 6px 0 4px; gap: 16px; flex-wrap: nowrap; }
+.dialog.opening .mullrow .handcard { --hw: auto; }
+.dialog.opening .handcard.out .card { opacity: .35; outline: 3px dashed var(--hit); outline-offset: 2px; }
