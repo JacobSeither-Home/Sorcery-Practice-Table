@@ -7,8 +7,9 @@ export function deckNotes(d: DeckList, cards: Record<string, CardDef>): string[]
   if (!cards[d.avatar]) out.push('Choose an Avatar.');
   if (d.spellbook.length < 60) out.push(`Spellbook has ${d.spellbook.length} cards; constructed decks have at least 60.`);
   if (d.atlas.length < 30) out.push(`Atlas has ${d.atlas.length} sites; constructed decks have at least 30.`);
+  if ((d.collection?.length ?? 0) > 10) out.push(`The collection has ${d.collection!.length} cards; constructed play allows up to 10.`);
   const n = new Map<string, number>();
-  for (const id of [...d.spellbook, ...d.atlas]) n.set(id, (n.get(id) ?? 0) + 1);
+  for (const id of [...d.spellbook, ...d.atlas, ...(d.collection ?? [])]) n.set(id, (n.get(id) ?? 0) + 1);
   for (const [id, k] of n) {
     const c = cards[id];
     if (!c) { out.push(`Unknown card "${id}" (not in the current card pool).`); continue; }

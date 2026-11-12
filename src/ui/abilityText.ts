@@ -14,7 +14,7 @@ export const OP_LABEL: Record<Op, string> = {
   damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
-  unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
+  pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
 };
 export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
@@ -66,6 +66,12 @@ export function describe(e: Effect): string {
     case 'shoot': return e.pierce ? `Shoot a piercing projectile: ${n} damage to each unit it passes` : `Shoot ${e.shots && e.shots !== 1 ? (e.shots === -1 ? 'X projectiles' : `${e.shots} projectiles`) : 'a projectile'} for ${n} damage${e.shots && e.shots !== 1 ? ' each, in one direction' : ''}${e.splash ? ` (and ${e.splash} to each other unit where it hits)` : ''}`;
     case 'strike': return `Strike ${who}`;
     case 'prevent': return `${who[0].toUpperCase() + who.slice(1)} take${e.who === 'self' ? 's' : ''} ${e.less === undefined ? 'no' : `${e.less} less`} damage${e.fromMinPower !== undefined ? ` from units with ${e.fromMinPower} or more power` : ''}${e.fromElement ? ` from ${e.fromElement} spells` : e.fromMagic ? ' from magic' : ''}${e.fromSub ? ` from ${e.fromSub.join(', ')}` : ''}${e.fromSite ? ` from ${e.fromSite.join(', ')} sites` : ''}`;
+    case 'pick': { const pk = e.pick!; const f = pk.filter ?? {};
+      const what = [f.rarity?.join('/'), f.kw ? `with ${f.kw}` : '', f.sub?.join('/'), f.name ?? (f.same ? 'another copy of this card' : f.minion ? 'minion' : f.type ? f.type.join('/').toLowerCase() : 'card'), f.maxCost !== undefined ? `costing ${f.maxCost} or less` : '', f.diedThisTurn ? 'that died this turn' : ''].filter(Boolean).join(' ');
+      const from = pk.top ? `the ${pk.fromBottom ? 'bottom' : 'top'} ${pk.top} of your ${pk.zones[0]}` : pk.zones.map((z) => ({ oppHand: "the opponent's hand", anyCemetery: 'any cemetery' } as Record<string, string>)[z] ?? `your ${z}`).join(' or ');
+      const n = pk.take === 'all' ? 'every' : pk.take === 0 ? '' : pk.take === 1 ? 'a' : `up to ${pk.take}`;
+      const to = { hand: 'put into your hand', summon: 'summon', cast: 'cast (paying its cost)', bottom: 'put on the bottom', top: 'put on top', banish: 'banish', discard: 'discard', none: 'look' }[pk.to];
+      return pk.take === 0 ? `Look at ${from}` : `From ${from}: ${to} ${n} ${what}${pk.where === 'choose' ? ' at a location you choose' : pk.where === 'avatar' ? " at your Avatar's location" : pk.to === 'summon' || pk.to === 'cast' ? ' here' : ''}${pk.rest && pk.rest !== 'stay' ? `; the rest go ${pk.rest === 'shuffle' ? 'back (shuffled)' : `to the ${pk.rest}`}` : ''}${pk.shuffle ? '; then shuffle' : ''}`; }
     case 'unward': return `Break the Wards of ${who}`;
     case 'raise': return 'Summon a random dead minion (from any cemetery) at a location you choose';
     case 'choose': return `Choose a location${RANGE[e.range ?? 'any']}`;

@@ -2,7 +2,7 @@
 // Rules source: the Sorcery: Contested Realm rulebook as read on 2026-11-10 through a community
 // rulebook reader (not fetched from sorcerytcg.com). Known simplifications are listed in docs/RULES_COVERAGE.md.
 import {
-  type Action, type CardDef, type Check, type Choice, type DeckList, type Effect, type GameState, type Loc, type ManualOp,
+  type Action, type CardDef, type CardFilter, type Check, type Choice, type Zone, type DeckList, type Effect, type GameState, type Loc, type ManualOp,
   type Element, type PlayerId, type PlayerState, type Queued, type Source, type Thresholds, type Trigger, type Unit, CELLS, COLS, ELEMENTS, ROWS,
 } from './types';
 
@@ -179,7 +179,7 @@ export function clone(s: GameState): GameState {
   for (const k in s.units) { const u = s.units[k]; units[k] = u.mods ? { ...u, mods: u.mods.slice() } : { ...u }; }
   return {
     ...s,
-    players: s.players.map((p) => ({ ...p, spellbook: p.spellbook.slice(), atlas: p.atlas.slice(), hand: p.hand.slice(), cemetery: p.cemetery.slice() })) as [PlayerState, PlayerState],
+    players: s.players.map((p) => ({ ...p, spellbook: p.spellbook.slice(), atlas: p.atlas.slice(), hand: p.hand.slice(), cemetery: p.cemetery.slice(), ...(p.collection ? { collection: p.collection.slice() } : {}) })) as [PlayerState, PlayerState],
     sites: s.sites.map((x) => (x ? { ...x } : null)),
     units,
     perms: s.perms.map((p) => ({ ...p })),
@@ -205,6 +205,7 @@ export function createGame(cards: Record<string, CardDef>, decks: [DeckList, Dec
     const pl: PlayerState = {
       life: cards[d.avatar]?.life || 20, deathsDoor: false, ddTurn: -1, mana: 0,
       spellbook: shuffle(s, mk(d.spellbook, 's')), atlas: shuffle(s, mk(d.atlas, 'a')), hand: [], cemetery: [], avatar: unitId, mulliganDone: false,
+      ...(d.collection?.length ? { collection: mk(d.collection, 'k') } : {}),
     };
     pl.hand.push(...pl.atlas.splice(0, 3), ...pl.spellbook.splice(0, 3));
     s.players[p] = pl;
@@ -277,7 +278,7 @@ function killUnit(s: GameState, u: Unit, force = false) {
   delete s.units[u.id];
   log(s, `${d.name} dies.`, null);
   if (d.category === 'Token') log(s, `${d.name} is a token and is banished.`, null); // Codex "Token"
-  else s.players[Number(u.inst[0]) as PlayerId].cemetery.push(u.inst);
+  else { const own = s.players[Number(u.inst[0]) as PlayerId]; own.cemetery.push(u.inst); if (own.died?.turn !== s.turn) own.died = { turn: s.turn, insts: [] }; own.died.insts.push(u.inst); }
   react(s, 'dies', u);
   fire(s, u.inst, 'deathrite', u.owner, { c: u.c, r: u.r });
 }
@@ -332,8 +333,8 @@ function drawCard(s: GameState, p: PlayerId, deck: 'spellbook' | 'atlas'): boole
 function spellcasters(s: GameState, p: PlayerId): Unit[] {
   return Object.values(s.units).filter((u) => u.owner === p && (u.avatar || has(s, u, 'Spellcaster')) && !isDisabled(s, u));
 }
-function inRange(from: Loc, to: Loc, range: Effect['range']): boolean {
-  if (range === 'any' || !range) return true;
+function inRange(from: Loc, to: Loc, range: Effect['range'], sameRegion = false): boolean {
+  if (range === 'any' || !range) return !sameRegion || from.r === to.r; // Codex "Target": the source must be in the target's region
   if (from.r !== to.r) return false;
   if (range === 'here') return from.c === to.c;
   if (range === 'two' || range === 'three') { const [a, b] = xy(from.c), [c2, d2] = xy(to.c); return Math.abs(a - c2) + Math.abs(b - d2) <= (range === 'two' ? 2 : 3); } // up to N steps away
@@ -341,7 +342,7 @@ function inRange(from: Loc, to: Loc, range: Effect['range']): boolean {
   return nearby(from.c).includes(to.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => e.op === 'pick' || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -400,8 +401,9 @@ export function effectsOn(d: CardDef, on: Trigger, fx?: number): number[] {
 export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, origins: Loc[], self?: string): string[] {
   const e = d.effects[i];
   if (!e || e.who !== 'target' || e.ref) return [];
+  const targeted = e.targets !== false;
   return Object.values(s.units).filter((u) => {
-    if (u.owner !== p && hasStealth(s, u)) return false;
+    if (targeted && u.owner !== p && hasStealth(s, u)) return false; // Codex "Stealth": cannot be targeted by the opponent
     if ((e.op === 'destroy' || e.op === 'banish' || e.op === 'bounce') && u.avatar) return false;
     switch (e.only) {
       case 'minion': if (u.avatar) return false; break;
@@ -413,7 +415,7 @@ export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, ori
     }
     if (e.other && u.id === self) return false;
     if (!fits(s, e, u)) return false;
-    return origins.some((o) => inRange(o, u, e.range));
+    return origins.some((o) => inRange(o, u, e.range, targeted));
   }).map((u) => u.id);
 }
 /** Where targeted magic is measured from. */
@@ -538,7 +540,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.ref) { const prev = idx.slice(0, idx.indexOf(i)).reverse().find((k) => d.effects[k].who === 'target' && !d.effects[k].ref); const pt = prev !== undefined ? ch[prev]?.target : subject; const t = pt ? s.units[pt] : undefined; if (t && !shielded.has(t.id)) victims = [t]; break; }
         const t = c?.target ? s.units[c.target] : undefined;
         if (t && shielded.has(t.id)) break;
-        if (t && t.owner !== p && warded(s, t)) { breakWard(s, t, `${d.name} targeted it`); shielded.add(t.id); break; }
+        if (t && e.targets !== false && t.owner !== p && warded(s, t)) { breakWard(s, t, `${d.name} targeted it`); shielded.add(t.id); break; }
         if (t) victims = [t]; break;
       }
       case 'enemyAvatar': victims = [s.units[s.players[other(p)].avatar]]; break;
@@ -648,6 +650,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       } break;
       case 'teleport': for (const v of victims) { if (c?.cell === undefined) break; v.c = c.cell; v.r = 'surface'; log(s, `${nm(v)} teleports (${d.name}).`, p); if (!s.sites[v.c] && !v.avatar && !has(s, v, 'Voidwalk')) removeUnit(s, v, 'banish', 'the void'); } break;
       case 'choose': break;
+      case 'pick': resolvePick(s, d, e, p, loc, c2, src); break;
       case 'unward': {
         for (const v of victims) if (v.ward) { v.ward = false; log(s, `${nm(v)}'s Ward breaks (${d.name}).`, p); }
         if (loc && (e.who === 'unitsNearby' || e.who === 'enemiesNearby' || e.who === 'alliesNearby')) for (const c0 of nearby(loc.c)) { const st = s.sites[c0]; if (st?.ward) { st.ward = false; log(s, `A site's Ward breaks (${d.name}).`, p); } }
@@ -718,6 +721,102 @@ function sacrifice(s: GameState, src: Source) {
   s.players[Number(st.inst[0]) as PlayerId].cemetery.push(st.inst); log(s, `${cardOf(s, st.inst).name} is sacrificed and leaves Rubble.`, st.owner);
   s.sites[src.site] = { inst: null, owner: null };
 }
+// ---------- choosing cards from a zone (search, look at, reveal, return, collection) ----------
+export interface PickOption { key: string; inst?: string; cardId: string; zone: Zone; owner: PlayerId }
+function matchesFilter(s: GameState, f: CardFilter | undefined, d: CardDef, self: CardDef, p: PlayerId, inst?: string): boolean {
+  if (!f) return true;
+  if (f.same && d.name !== self.name) return false;
+  if (f.name && d.name.toLowerCase() !== f.name.toLowerCase()) return false;
+  if (f.type && !f.type.includes(d.type)) return false;
+  if (f.notType?.includes(d.type)) return false;
+  if (f.minion && d.type !== 'Minion') return false;
+  if (f.sub?.length && !f.sub.some((x) => d.subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
+  if (f.maxCost !== undefined && d.cost > f.maxCost) return false;
+  if (f.rarity?.length && !f.rarity.includes(d.rarity ?? '')) return false;
+  if (f.kw && !d.keywords.includes(f.kw)) return false;
+  if (f.diedThisTurn && !(inst && s.players[p].died?.turn === s.turn && s.players[p].died!.insts.includes(inst))) return false;
+  return true;
+}
+/** What a pick effect may choose from right now. Hidden cards are only offered to their controller. */
+export function pickOptions(s: GameState, p: PlayerId, d: CardDef, e: Effect): PickOption[] {
+  const pk = e.pick; if (!pk) return [];
+  const out: PickOption[] = []; const seen = new Set<string>();
+  const add = (inst: string, zone: Zone, owner: PlayerId) => { const cd = cardOf(s, inst); if (matchesFilter(s, pk.filter, cd, d, owner, inst)) out.push({ key: inst, inst, cardId: cd.id, zone, owner }); };
+  for (const z of pk.zones) {
+    const me = s.players[p], opp = s.players[other(p)];
+    if (z === 'spellbook' || z === 'atlas') { const deck = me[z]; const slice = pk.top ? (pk.fromBottom ? deck.slice(-pk.top) : deck.slice(0, pk.top)) : deck; slice.forEach((i) => add(i, z, p)); }
+    else if (z === 'oppSpellbook') (pk.top ? opp.spellbook.slice(0, pk.top) : opp.spellbook).forEach((i) => add(i, z, other(p)));
+    else if (z === 'hand') me.hand.forEach((i) => add(i, z, p));
+    else if (z === 'oppHand') opp.hand.forEach((i) => add(i, z, other(p)));
+    else if (z === 'cemetery') me.cemetery.forEach((i) => add(i, z, p));
+    else if (z === 'anyCemetery') { me.cemetery.forEach((i) => add(i, 'cemetery', p)); opp.cemetery.forEach((i) => add(i, 'cemetery', other(p))); }
+    else if (z === 'collection') {
+      (me.collection ?? []).forEach((i) => { add(i, z, p); seen.add(cardOf(s, i).name); });
+      // Codex "Collection", casual play: a card named by the effect can always be taken from your collection
+      if (pk.filter?.name && !seen.has(pk.filter.name)) { const nd = Object.values(s.cards).find((x) => x.name.toLowerCase() === pk.filter!.name!.toLowerCase()); if (nd) out.push({ key: 'card:' + nd.id, cardId: nd.id, zone: z, owner: p }); }
+    }
+  }
+  return out;
+}
+function takeFromZone(s: GameState, o: PickOption, p: PlayerId): string {
+  if (!o.inst) { const inst = `${p}col${s.nextId++}`; s.inst[inst] = o.cardId; return inst; } // a named card fetched for the collection
+  const pl = s.players[o.owner];
+  for (const z of ['spellbook', 'atlas', 'hand', 'cemetery'] as const) { const i = pl[z].indexOf(o.inst); if (i >= 0) { pl[z].splice(i, 1); return o.inst; } }
+  const ci = pl.collection?.indexOf(o.inst) ?? -1; if (ci >= 0) pl.collection!.splice(ci, 1);
+  return o.inst;
+}
+function resolvePick(s: GameState, d: CardDef, e: Effect, p: PlayerId, loc: Loc | null, c: Choice | undefined, src?: Source) {
+  const pk = e.pick!; const opts = pickOptions(s, p, d, e);
+  let chosenKeys = (c?.cards ?? []).filter((k) => opts.some((o) => o.key === k));
+  if (pk.take === 'all') chosenKeys = opts.map((o) => o.key);
+  else chosenKeys = chosenKeys.slice(0, pk.take);
+  const looked = pk.top ? (() => { const deck = s.players[p][pk.zones.includes('atlas') ? 'atlas' : 'spellbook']; return pk.fromBottom ? deck.slice(-pk.top) : deck.slice(0, pk.top); })() : [];
+  const names = chosenKeys.map((k) => cardOf(s, opts.find((o) => o.key === k)!.inst ?? '') ?? s.cards[opts.find((o) => o.key === k)!.cardId]).map((x) => x?.name ?? '?');
+  const where = pk.zones.join(' / ');
+  if (!chosenKeys.length) log(s, `${pname(p)} ${pk.top ? `looks at ${pk.top} card(s)` : `searches ${where}`} for ${d.name} and takes nothing.`, p);
+  let summonAt: Loc | null = loc;
+  if ((pk.to === 'summon' || pk.to === 'cast') && pk.where === 'choose' && c?.cell !== undefined) summonAt = { c: c.cell, r: 'surface' };
+  if ((pk.to === 'summon' || pk.to === 'cast') && pk.where === 'avatar') { const av = s.units[s.players[p].avatar]; summonAt = { c: av.c, r: av.r }; }
+  for (const key of chosenKeys) {
+    const o = opts.find((x) => x.key === key)!;
+    const cd = s.cards[o.cardId];
+    if (pk.to === 'cast') {
+      const pl = s.players[p];
+      if (pl.mana < cd.cost) { log(s, `${pname(p)} cannot pay ${cd.cost} mana to cast ${cd.name}.`, p); continue; }
+      pl.mana -= cd.cost;
+    }
+    const inst = takeFromZone(s, o, p);
+    switch (pk.to) {
+      case 'hand': s.players[p].hand.push(inst); log(s, `${pname(p)} puts ${pk.reveal || o.zone === 'cemetery' ? cd.name : 'a card'} into their hand (${d.name}).`, p); break;
+      case 'summon': case 'cast': {
+        if (!summonAt || cd.type !== 'Minion') { s.players[Number(inst[0]) as PlayerId].cemetery.push(inst); break; }
+        const id = `u${s.nextId++}`;
+        s.units[id] = { id, inst, owner: p, c: summonAt.c, r: s.sites[summonAt.c] ? 'surface' : summonAt.r, tapped: false, damage: 0, enteredTurn: s.turn, avatar: false, stealthLost: false, lance: cd.keywords.includes('Lance'), ...(cd.keywords.includes('Ward') ? { ward: true } : {}) };
+        log(s, `${pname(p)} ${pk.to === 'cast' ? 'casts' : 'summons'} ${cd.name} (${d.name}).`, p);
+        resolve(s, cd, effectsOn(cd, 'genesis').filter((k) => !needsChoice(cd.effects[k])), p, summonAt, [], { unit: id });
+        break;
+      }
+      case 'bottom': s.players[o.owner][o.zone === 'atlas' ? 'atlas' : 'spellbook'].push(inst); log(s, `${pname(p)} puts a card on the bottom (${d.name}).`, p); break;
+      case 'top': s.players[o.owner][o.zone === 'atlas' ? 'atlas' : 'spellbook'].unshift(inst); log(s, `${pname(p)} puts a card on top (${d.name}).`, p); break;
+      case 'banish': log(s, `${cd.name} is banished (${d.name}).`, p); break;
+      case 'discard': s.players[o.owner].cemetery.push(inst); log(s, `${cd.name} goes to the cemetery (${d.name}).`, p); break;
+      case 'none': s.players[o.owner][o.zone === 'oppHand' ? 'hand' : o.zone === 'atlas' ? 'atlas' : 'spellbook'].push(inst); break;
+    }
+  }
+  if (pk.top && pk.rest && pk.rest !== 'stay') {
+    const deckName = pk.zones.includes('atlas') ? 'atlas' : 'spellbook'; const deck = s.players[p][deckName];
+    const rest = looked.filter((i) => deck.includes(i));
+    for (const i of rest) deck.splice(deck.indexOf(i), 1);
+    if (pk.rest === 'bottom') deck.push(...rest);
+    else if (pk.rest === 'top') deck.unshift(...rest);
+    else if (pk.rest === 'shuffle') { deck.push(...rest); shuffle(s, deck); }
+    else if (pk.rest === 'banish') { /* banished */ }
+    else s.players[p].cemetery.push(...rest);
+    if (rest.length) log(s, `The other ${rest.length} go${rest.length === 1 ? 'es' : ''} ${pk.rest === 'bottom' ? 'to the bottom' : pk.rest === 'top' ? 'back on top' : pk.rest === 'shuffle' ? 'back and the deck is shuffled' : pk.rest === 'banish' ? 'into banishment' : 'to the cemetery'}.`, p);
+  }
+  if (pk.shuffle) { for (const z of pk.zones) if (z === 'spellbook' || z === 'atlas') shuffle(s, s.players[p][z]); log(s, `${pname(p)} shuffles.`, p); }
+  void names; void src;
+}
 function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; }
   delete s.units[u.id];
@@ -774,6 +873,7 @@ export function attackTargets(s: GameState, u: Unit, at: Loc): { unit?: string; 
   const out: { unit?: string; site?: boolean }[] = [];
   for (const e of unitsAt(s, at)) {
     if (e.owner === u.owner) continue;
+    if (hasStealth(s, e)) continue; // Codex "Stealth": attacks cannot target it
     if (has(s, e, 'Airborne') && !has(s, u, 'Airborne')) continue;
     out.push({ unit: e.id });
   }
@@ -974,6 +1074,7 @@ export function check(s: GameState, a: Action): Check {
         else if (!ts.some((t) => t.unit === a.attack!.unit)) {
           const e = a.attack.unit ? s.units[a.attack.unit] : undefined;
           if (e && has(s, e, 'Airborne')) return no('Airborne units can only be attacked by Airborne units.', 'Airborne');
+          if (e && hasStealth(s, e)) return no(`${unitCard(s, e).name} has Stealth: it cannot be targeted by attacks until it interacts with the realm.`, 'Stealth');
           return no('You can only attack an enemy at the location where the move ends.');
         }
       }
@@ -1187,6 +1288,12 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
       // the AI aims area effects at squares with more enemies than allies
       const cells = cellsFor(s, d, i, origins).map((c) => ({ c, v: Object.values(s.units).filter((u) => u.c === c).reduce((n, u) => n + (u.owner === p ? -1 : 1), 0) })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
       if (!cells.length) return []; base[i] = { ...(base[i] ?? {}), cell: cells[0].c };
+    }
+    if (e.op === 'pick' && e.pick && e.pick.take !== 'all') {
+      const opts = pickOptions(s, p, d, e).sort((a, b) => (s.cards[b.cardId]?.cost ?? 0) - (s.cards[a.cardId]?.cost ?? 0));
+      const usable = e.pick.to === 'cast' ? opts.filter((o) => (s.cards[o.cardId]?.cost ?? 0) <= s.players[p].mana) : opts;
+      base[i] = { ...(base[i] ?? {}), cards: usable.slice(0, e.pick.take).map((o) => o.key) };
+      if (e.pick.where === 'choose') { const cl = cellsFor(s, d, i, origins); if (cl.length) base[i] = { ...base[i]!, cell: cl[0] }; }
     }
     if (e.op === 'teleport') { const t = base[i]?.target ? s.units[base[i]!.target!] : undefined; const cl = teleportCells(s, e, t); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }
     if (e.op === 'shoot') { const dirs = origins.length ? shotDirs(s, p, origins[0]) : []; const dir = dirs.find(([dx, dy]) => projectileHit(s, p, origins[0], dx, dy, 9, self)?.owner !== p); if (!dir) return []; base[i] = { ...(base[i] ?? {}), dir }; }

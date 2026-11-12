@@ -40,6 +40,12 @@ export const KEYWORD_HELP: Record<string, { text: string; enforced: boolean }> =
 
 /** Rule terms used in card text, with a one-line reminder and the Codex entry that explains them. */
 export const RULE_TERMS: Record<string, { id: string; text: string }> = {
+  Target: { id: '98943611-2a6f-4756-ad9b-a7d6598e9729', text: 'Only effects that say "target" target. You must choose a legal one in the same region as the caster or source, or the spell cannot be cast. Stealth and Ward protect against targets.' },
+  Collection: { id: '78ce4090-a2e1-4893-97c0-6eaafd5c5937', text: 'Extra cards outside your decks (up to 10 in constructed play). In casual play a named card can always be taken from your collection.' },
+  'Look at': { id: '0f71f26a-a091-4fb2-9dcc-bcfed14f282a', text: 'Only you see the cards; put them back in any order unless the card says otherwise.' },
+  'Forced movement': { id: '8ffdae56-1aef-44f7-b9af-cdcbc334a377', text: 'Movement the unit does not do itself (drag, pull, push, teleport). Immobile units can still be moved this way.' },
+  Control: { id: '40fc4dfb-0290-4f9e-9f98-4ad5b28ccc8f', text: 'The owner never changes; control can. Cards always go back to their owner\'s hand, deck or cemetery.' },
+  Aura: { id: '1c5c02a4-586e-4bfd-99ce-11e9230ed140', text: 'An aura sits on the corner where four squares meet and affects those four squares.' },
   Nearby: { id: '7de60b0a-855c-4bab-95a7-7e6f172ba4a0', text: 'Its own square and the eight around it, diagonals included. For units and locations, only within the same region.' },
   Adjacent: { id: '1d3363e4-3b12-46fb-99d9-f4319967f484', text: 'Its own square and the four that share an edge with it (no diagonals).' },
   Here: { id: '8e4684e4-479b-45d1-a75b-a41568ea6e6f', text: 'The location the card occupies. For a site: its surface and below it.' },
@@ -98,6 +104,7 @@ export const RULE_TERMS: Record<string, { id: string; text: string }> = {
 
 /** How a word in card text maps to a term above (lowercase match on whole words). */
 const TERM_WORDS: [RegExp, string][] = [
+  [/\btarget\b/i, 'Target'], [/\bcollection\b/i, 'Collection'], [/\blook at\b/i, 'Look at'], [/\b(drag|pull|push)/i, 'Forced movement'], [/\bcontrol\b/i, 'Control'], [/\baffected\b/i, 'Aura'],
   [/\bnearby\b|\bnear\b/i, 'Nearby'], [/\badjacent\b/i, 'Adjacent'], [/\bhere\b|\bthere\b/i, 'Here'], [/\batop\b/i, 'Atop'],
   [/\buntap/i, 'Untap'], [/\btap\b|\btaps\b|\btapped\b/i, 'Tap'], [/\bstrikes?\b/i, 'Strike'], [/\bdamage\b/i, 'Damage'],
   [/\bdefend/i, 'Defend'], [/\bintercept/i, 'Intercept'], [/death'?s door/i, "Death's Door"], [/death blow/i, 'Death Blow'],

@@ -49,6 +49,8 @@ export type Op =
   | 'flood'
   /** the units do not untap the next time they would */
   | 'noUntap'
+  /** choose cards from a zone (Effect.pick) */
+  | 'pick'
   /** remove Ward marks from the units (and sites) it reaches */
   | 'unward'
   /** summon a random dead minion from any cemetery at a chosen location, under your control */
@@ -86,6 +88,10 @@ export interface Effect {
   ev?: EventFilter;
   /** "You may …": the player can skip this part when it resolves */
   optional?: boolean;
+  /** pick: the zone step */
+  pick?: ZonePick;
+  /** the text says "target" (Codex "Target"): Stealth and Ward apply, and the source must be in the same region. A choice without the word ("an ally") is not a target. */
+  targets?: boolean;
   /** "it" / "them": the unit chosen for the previous targeted effect on the same line */
   ref?: boolean;
   /** group effects (each, all …): leave out the card's own unit */
@@ -157,7 +163,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
+export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -224,6 +230,10 @@ export interface PlayerState {
   cemetery: string[];
   avatar: string; // unit id
   mulliganDone: boolean;
+  /** Codex "Collection": instance ids of the cards outside the decks */
+  collection?: string[];
+  /** minions of this player that died this turn (instance ids), for "a minion that died this turn" */
+  died?: { turn: number; insts: string[] };
   /** spells cast this turn (card ids), for "the sum of (A) on spells you've cast this turn" */
   cast?: { turn: number; ids: string[] };
   /** the site this player's "until you do so again" flood is on */
@@ -322,7 +332,33 @@ export type Action =
 
 export type Check = { ok: true } | { ok: false; reason: string; keyword?: string };
 
-export interface DeckList { name: string; avatar: string; spellbook: string[]; atlas: string[] }
+export interface DeckList { name: string; avatar: string; spellbook: string[]; atlas: string[]; /** Codex "Collection": extra cards outside the decks (card ids) */ collection?: string[] }
+
+/** Which cards a "search / look at / return / summon from …" effect may pick. */
+export interface CardFilter {
+  type?: CardType[]; minion?: boolean; sub?: string[]; name?: string; same?: boolean; maxCost?: number;
+  rarity?: string[]; kw?: string; diedThisTurn?: boolean; notType?: CardType[];
+}
+export type Zone = 'spellbook' | 'atlas' | 'hand' | 'cemetery' | 'anyCemetery' | 'collection' | 'oppHand' | 'oppSpellbook';
+/** One "choose cards from a zone" step: search, look at, reveal, return, summon or cast from a zone. */
+export interface ZonePick {
+  zones: Zone[];
+  /** only the top (or bottom) N cards of the deck */
+  top?: number; fromBottom?: boolean;
+  /** how many may be chosen ('all' = every match is taken) */
+  take: number | 'all';
+  filter?: CardFilter;
+  /** where chosen cards go */
+  to: 'hand' | 'summon' | 'cast' | 'bottom' | 'top' | 'banish' | 'discard' | 'none';
+  /** what happens to the other cards looked at */
+  rest?: 'bottom' | 'top' | 'shuffle' | 'stay' | 'banish' | 'discard';
+  /** shuffle the deck afterwards */
+  shuffle?: boolean;
+  /** summon/cast: where (the ability's location, or a square the player chooses) */
+  where?: 'here' | 'choose' | 'avatar';
+  /** the chosen card is shown to everyone */
+  reveal?: boolean;
+}
 
 export const COLS = 5;
 export const ROWS = 4;

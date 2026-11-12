@@ -776,3 +776,84 @@ describe('short passive and end-of-turn lines', () => {
     expect(rangedOf(s, s.units[u])).toBe(3);
   });
 });
+
+describe('choosing cards from zones, the collection, and targets', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense, keywords: c.keywords } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 20; return s; };
+  const fxOf = (cid: string, op: string) => cards[cid].effects.findIndex((e) => e.op === op);
+  it('"Search your spellbook for an … card, reveal it, and put it into your hand. Shuffle your spellbook."', () => {
+    let s = board();
+    const tutor = read('Magic', 'Test Tutor', 'Search your spellbook for a minion that costs ② or less, reveal it, and put it into your hand. Shuffle your spellbook.', { cost: 1 });
+    const want = s.players[0].spellbook.find((i) => cards[s.inst[i]].type === 'Minion' && cards[s.inst[i]].cost <= 2)!;
+    const ch: { cards?: string[] }[] = []; ch[fxOf(tutor, 'pick')] = { cards: [want] };
+    s = apply(s, { t: 'cast', inst: give(s, 0, tutor), choices: ch });
+    expect(s.players[0].hand).toContain(want); expect(s.players[0].spellbook).not.toContain(want);
+  });
+  it('"Look at your next seven spells. Put one in your hand and the rest on the bottom …"', () => {
+    let s = board();
+    const browse = read('Magic', 'Test Browse', 'Look at your next seven spells. Put one in your hand and the rest on the bottom of your spellbook in any order.', { cost: 1 });
+    const seven = s.players[0].spellbook.slice(0, 7);
+    const ch: { cards?: string[] }[] = []; ch[fxOf(browse, 'pick')] = { cards: [seven[3]] };
+    s = apply(s, { t: 'cast', inst: give(s, 0, browse), choices: ch });
+    expect(s.players[0].hand).toContain(seven[3]);
+    expect(s.players[0].spellbook.slice(-6).sort()).toEqual(seven.filter((x) => x !== seven[3]).sort());
+  });
+  it('"Return a minion from your cemetery to your hand."', () => {
+    let s = board();
+    const rescue = read('Magic', 'Test Rescue', 'Return a minion from your cemetery to your hand.', { cost: 1 });
+    s.inst['0dd'] = id('Kiln Brute'); s.players[0].cemetery.push('0dd');
+    const ch: { cards?: string[] }[] = []; ch[fxOf(rescue, 'pick')] = { cards: ['0dd'] };
+    s = apply(s, { t: 'cast', inst: give(s, 0, rescue), choices: ch });
+    expect(s.players[0].hand).toContain('0dd');
+  });
+  it('a named card is cast from the collection (casual play: always available), paying its cost', () => {
+    let s = board(); s.players[0].mana = 5;
+    const town = read('Site', 'Test Town', 'Genesis → You may cast a Kiln Brute from your collection to this site.');
+    s.sites[cell(1, 3)] = null; s.units[s.players[0].avatar].tapped = false;
+    s = apply(s, { t: 'playSite', inst: give(s, 0, town), c: cell(1, 3) });
+    expect(s.queue?.length).toBe(1);
+    const opts = (s.queue![0]); void opts;
+    const ch: { cards?: string[] }[] = []; ch[fxOf(town, 'pick')] = { cards: ['card:' + id('Kiln Brute')] };
+    s = apply(s, { t: 'trigger', choices: ch });
+    expect(Object.values(s.units).some((u) => cards[s.inst[u.inst]].name === 'Kiln Brute' && u.c === cell(1, 3))).toBe(true);
+    expect(s.players[0].mana).toBe(5 + 1 - 3);                              // site mana +1, Kiln Brute costs 3
+  });
+  it('a deck\'s collection is a zone in the game', () => {
+    const s = createGame(cards, [{ ...PRACTICE_DECKS[0], collection: [id('Hill Giant')] }, PRACTICE_DECKS[1]], 3, 0);
+    expect(s.players[0].collection?.map((i) => cards[s.inst[i]].name)).toEqual(['Hill Giant']);
+  });
+  it('"Reveal your topmost spell. If it\'s a minion, you may summon it here."', () => {
+    let s = board();
+    const mother = read('Minion', 'Test Mother', "At the start of your turn, reveal your topmost spell. If it's a minion, you may summon it here.", { attack: 1, defense: 1 });
+    unit(s, 0, cell(2, 3), mother);
+    s.inst['0tp'] = id('Ember Runner'); s.players[0].spellbook.unshift('0tp');
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' }); s = apply(s, { t: 'endTurn' });
+    expect(s.queue?.length).toBe(1);
+    const ch: { cards?: string[] }[] = []; ch[fxOf(mother, 'pick')] = { cards: ['0tp'] };
+    s = apply(s, { t: 'trigger', choices: ch });
+    expect(Object.values(s.units).some((u) => u.inst === '0tp')).toBe(true);
+  });
+  it('targets: a choice without the word "target" may pick a stealthed enemy; a target may not; attacks cannot target Stealth', () => {
+    let s = board();
+    const kill = read('Magic', 'Test Kill', 'Kill target minion.', { cost: 1 });
+    const slay = read('Magic', 'Test Slay', 'Kill a minion.', { cost: 1 });
+    const sneak = unit(s, 1, cell(2, 2), id('Root Stalker'));                // Stealth
+    expect(cards[kill].effects[0].targets).toBe(true); expect(cards[slay].effects[0].targets).toBe(false);
+    expect(reason(s, { t: 'cast', inst: give(s, 0, kill), target: sneak })).toMatch(/valid target/);
+    s = apply(s, { t: 'cast', inst: give(s, 0, slay), target: sneak });
+    expect(s.units[sneak]).toBeUndefined();
+    let t = board(); t.units[t.players[1].avatar].tapped = true;
+    const sn = unit(t, 1, cell(2, 2), id('Root Stalker')); const att = unit(t, 0, cell(2, 3), id('Hill Giant'));
+    expect(reason(t, { t: 'move', unit: att, path: [{ c: cell(2, 2), r: 'surface' }], attack: { unit: sn } })).toMatch(/Stealth/);
+  });
+  it('targets: the source must be in the same region as what it targets', () => {
+    let s = board();
+    const zap = read('Magic', 'Test Far Zap', 'Deal 1 damage to target minion.', { cost: 1 });
+    const mole = unit(s, 1, cell(2, 2), id('Burrow Mole'), { r: 'under' });
+    expect(reason(s, { t: 'cast', inst: give(s, 0, zap), target: mole })).toMatch(/valid target/);
+  });
+});

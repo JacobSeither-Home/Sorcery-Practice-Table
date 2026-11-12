@@ -7,10 +7,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, cellsFor, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, cellsFor, pickOptions, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
-import { CardFace, mainElement } from './CardFace';
+import { CardFace, hoverProps, mainElement } from './CardFace';
 import { TRIGGER_SHORT, describe } from './abilityText';
 import { usePace } from './pace';
 import { HowItWorks } from './Explain';
@@ -142,6 +142,19 @@ function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: numbe
           const here = Object.values(s.units).filter((u) => u.c === cl); const on = c?.cell === cl;
           return <button key={cl} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ cell: cl })} onPointerEnter={() => here[0] && focus(here[0].id)} onPointerLeave={() => focus(null)}>{sq(cl)}<small> {here.length ? here.map((u) => unitCard(s, u).name).join(', ') : s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'empty'}</small></button>;
         })}</div> : <small className="none"> — no location in range</small>)}
+        {e.op === 'pick' && e.pick && (() => {
+          const opts = pickOptions(s, pl.p, pl.d, e); const pk = e.pick!; const chosen = c?.cards ?? [];
+          const max = pk.take === 'all' ? opts.length : pk.take;
+          const ZONE: Record<string, string> = { spellbook: 'spellbook', atlas: 'atlas', hand: 'hand', cemetery: 'cemetery', collection: 'collection', oppHand: "opponent's hand", oppSpellbook: "opponent's spellbook", anyCemetery: 'cemetery' };
+          if (pk.take === 'all') return <small> — {opts.length ? `${opts.length} match${opts.length === 1 ? 'es' : ''}: ${opts.map((o) => s.cards[o.cardId].name).join(', ')}` : 'nothing matches'}</small>;
+          if (!opts.length) return <small className="none"> — nothing there matches</small>;
+          return <div className="chips targets">
+            <small>{max === 0 ? 'You see:' : `Choose up to ${max}:`}</small>
+            {opts.map((o) => { const on = chosen.includes(o.key); const cd = s.cards[o.cardId];
+              return <button key={o.key} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} disabled={max === 0} {...hoverProps(cd)}
+                onClick={() => set({ cards: on ? chosen.filter((k) => k !== o.key) : [...chosen, o.key].slice(-max) })}>{cd.name}<small> {ZONE[o.zone] ?? o.zone}{o.owner !== pl.p ? ' (theirs)' : ''}</small></button>; })}
+          </div>;
+        })()}
         {e.op === 'discard' && !e.random && e.who === 'controller' && (() => {
           const hand = s.players[pl.p].hand.filter((x) => (pl.d && x !== (pl as { inst?: string }).inst) && (e.deck === 'atlas' ? cardOf(s, x).type === 'Site' : e.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true));
           return hand.length ? <div className="chips targets"><small>Discard:</small>{hand.map((x) => <button key={x} className={`chip ${c?.card === x ? 'on' : ''}`} onClick={() => set({ card: x })}>{cardOf(s, x).name}</button>)}</div> : <small className="none"> — nothing to discard</small>;

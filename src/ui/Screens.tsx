@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { type CardDef, type CardType, type Coverage, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, KEYWORDS as KW_ALL, TRIGGERS, effectsFromText, makeCard } from '../engine';
+import { type CardDef, type CardType, type Coverage, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, codexUrl, KEYWORDS as KW_ALL, TRIGGERS, effectsFromText, makeCard } from '../engine';
 import { OP_LABEL, TRIGGER_LABEL, WHO_LABEL, whoFor } from './abilityText';
 import { claudePrompt, coverage, download as downloadFile, cardsCsv, coverageMarkdown, pickCardFolder, rememberedCardFolder, reportGaps, saveToCardFolder, supportsSaveFolder } from '../data/coverage';
 import type { Difficulty } from '../ai/ai';
@@ -119,7 +119,9 @@ export function Decks() {
   const { list, bar, zoom } = useSearch(pool);
   const count = (id: string) => (cur ? [...cur.spellbook, ...cur.atlas].filter((x) => x === id).length : 0);
   const add = (c: CardDef) => cur && setCur(c.type === 'Avatar' ? { ...cur, avatar: c.id } : c.type === 'Site' ? { ...cur, atlas: [...cur.atlas, c.id] } : { ...cur, spellbook: [...cur.spellbook, c.id] });
-  const drop = (id: string, where: 'spellbook' | 'atlas') => { if (!cur) return; const a = cur[where].slice(); a.splice(a.lastIndexOf(id), 1); setCur({ ...cur, [where]: a }); };
+  const drop = (id: string, where: 'spellbook' | 'atlas' | 'collection') => { if (!cur) return; const a = (cur[where] ?? []).slice(); a.splice(a.lastIndexOf(id), 1); setCur({ ...cur, [where]: a }); };
+  const [toCollection, setToCollection] = useState(false);
+  const addCol = (c: CardDef) => cur && c.type !== 'Avatar' && setCur({ ...cur, collection: [...(cur.collection ?? []), c.id] });
   const group = (ids: string[]) => [...new Set(ids)].map((id) => ({ id, n: ids.filter((x) => x === id).length, c: pool[id] })).sort((x, y) => (x.c?.cost ?? 0) - (y.c?.cost ?? 0) || (x.c?.name ?? '').localeCompare(y.c?.name ?? ''));
   if (!cur) return (
     <div className="page">
@@ -158,7 +160,7 @@ export function Decks() {
           <button className="primary" disabled={!cur.name.trim() || isBuiltIn(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
         {bar}
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => (
-          <button key={c.id} className="gridcard" onClick={() => add(c)} {...hoverProps(c)} data-tip="Add to deck"><CardFace card={c} size="sm" />{count(c.id) > 0 && <span className="n">{count(c.id)}</span>}{cur.avatar === c.id && <span className="n">✓</span>}</button>
+          <button key={c.id} className="gridcard" onClick={() => (toCollection ? addCol(c) : add(c))} {...hoverProps(c)} data-tip={toCollection ? 'Add to the collection' : 'Add to deck'}><CardFace card={c} size="sm" />{count(c.id) > 0 && <span className="n">{count(c.id)}</span>}{cur.avatar === c.id && <span className="n">✓</span>}</button>
         ))}</div>
       </div>
       <aside className="builder-side">
@@ -168,6 +170,10 @@ export function Decks() {
           <h3>{w === 'spellbook' ? 'Spellbook' : 'Atlas'} ({cur[w].length})</h3>
           <ul className="decklines">{group(cur[w]).map((x) => <li key={x.id} {...hoverProps(x.c)}><span>{x.n}× {x.c?.name ?? x.id}</span><button onClick={() => drop(x.id, w)} aria-label="Remove one">−</button></li>)}</ul>
         </div>))}
+        <h3>Collection ({cur.collection?.length ?? 0})</h3>
+        <label className="switch"><input type="checkbox" checked={toCollection} onChange={(e) => setToCollection(e.target.checked)} /> Clicking a card adds it to the collection</label>
+        <p className="note">Cards outside your decks that some cards fetch ("… from your collection"). Up to 10 in constructed play. A card that names a specific card can always fetch it (casual play), even if it is not listed here. <a href={codexUrl('Collection')} target="_blank" rel="noreferrer">Collection in the Codex ↗</a></p>
+        {(cur.collection?.length ?? 0) > 0 && <ul className="decklines">{group(cur.collection ?? []).map((x) => <li key={x.id} {...hoverProps(x.c)}><span>{x.n}× {x.c?.name ?? x.id}</span><button onClick={() => drop(x.id, 'collection')} aria-label="Remove one">−</button></li>)}</ul>}
         {notes.length > 0 && <div className="notes"><h3>Constructed-format notes</h3><ul>{notes.map((n) => <li key={n}>{n}</li>)}</ul><p className="note">These don't block games here. A deck needs an Avatar, 10 spells and 6 sites to be playable here.</p></div>}
       </aside>
     </div>

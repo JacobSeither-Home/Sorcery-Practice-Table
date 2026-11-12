@@ -9,7 +9,7 @@
 // on 2026-11-12 (1,100 cards), and the Codex at https://sorcerytcg.com/codex for what the words mean
 // (nearby, adjacent, here, heal, Ward, projectile …). `node tests/coverage.mjs cards.json` reports what
 // is still by hand.
-import type { CardDef, CardType, Effect, Element, EventFilter, Trigger, Who } from './types';
+import type { CardDef, CardFilter, CardType, Effect, Element, EventFilter, Trigger, Who, Zone, ZonePick } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
 const KEYWORD_LINE = new RegExp(`^((?:air |earth |fire |water |non-(?:air|earth|fire|water) )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -68,7 +68,7 @@ const subOf = (w: string): string | null => {
 };
 
 /** What a noun phrase picks out. */
-type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref' | 'siteKind'>;
+type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref' | 'siteKind' | 'targets'>;
 
 /**
  * The noun-phrase grammar for units in card text:
@@ -140,9 +140,9 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   if (mode === 'minion' && kind === 'unit') kind = 'minion';
   const filters = { ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
   const only: Effect['only'] = kind === 'avatar' ? 'avatar' : kind === 'minion' ? (side === 'enemy' ? 'enemyMinion' : side === 'ally' ? 'allyMinion' : 'minion') : side === 'enemy' ? 'enemy' : side === 'ally' ? 'ally' : undefined;
-  if (atTarget) return { who: 'atTarget', range: range ?? 'any', ...(only ? { only } : {}), ...filters };
+  if (atTarget) return { who: 'atTarget', range: range ?? 'any', targets: /target/i.test(np), ...(only ? { only } : {}), ...filters };
   const chosen = q === 'target' || q === 'an' || q === 'a' || q === 'another' || q === 'one';
-  if (chosen) return { who: 'target', range: range ?? 'any', ...(only ? { only } : {}), ...filters };
+  if (chosen) return { who: 'target', range: range ?? 'any', targets: q === 'target', ...(only ? { only } : {}), ...filters };
   // a group needs each/all, a plural, or a place
   if (!q && !/s$/.test(noun) && !/ies$/.test(noun) && !range && !(subs.length && other)) return null;
   const here = range === 'here', near = range === 'nearby' || range === 'adjacent';
@@ -159,6 +159,122 @@ const minionOnly = (v: Sel | null): Sel | null => {
   if (v.who === 'target' || v.who === 'atTarget') return { ...v, only: v.only === 'enemy' ? 'enemyMinion' : v.only === 'ally' ? 'allyMinion' : v.only ?? 'minion' };
   return v;
 };
+
+
+// ---- choosing cards from zones (search, look at, reveal, return, collection) ----
+const RARITIES = ['Ordinary', 'Exceptional', 'Elite', 'Unique'];
+const TYPE_WORDS: Record<string, CardType[]> = { minion: ['Minion'], magic: ['Magic'], artifact: ['Artifact'], aura: ['Aura'], site: ['Site'], spell: ['Minion', 'Magic', 'Artifact', 'Aura'], card: [] };
+/** "an Exceptional Mortal", "up to three Beasts", "another Brother Knight", "an artifact that costs ① or less" → how many, and which cards. */
+export function cardFilter(text: string, self = ''): { count: number | 'all'; filter: CardFilter } | null {
+  let t = text.trim().replace(/[.,]$/, ''); const f: CardFilter = {}; let count: number | 'all' = 1; let m: RegExpMatchArray | null;
+  if ((m = t.match(/^(?:all|any number of|every) /i))) { count = 'all'; t = t.slice(m[0].length); }
+  else if ((m = t.match(/^up to (\w+) /i))) { count = WORDNUM[m[1].toLowerCase()] ?? +m[1]; t = t.slice(m[0].length); }
+  else if ((m = t.match(/^(a|an|one|any|another)\s+/i))) { if (/another/i.test(m[1])) f.same = true; t = t.slice(m[0].length); }
+  else if ((m = t.match(/^(two|three|four|five|six|seven|\d+)(?: different)?\s+/i))) { count = WORDNUM[m[1].toLowerCase()] ?? +m[1]; t = t.slice(m[0].length); }
+  if ((m = t.match(/ that died this turn$/i))) { f.diedThisTurn = true; t = t.slice(0, m.index); }
+  if ((m = t.match(new RegExp(`(?: that costs?| with mana cost) ${MANA} or less$`, 'i')))) { f.maxCost = manaOf(m[1]); t = t.slice(0, m.index); }
+  if ((m = t.match(new RegExp(`(?: with (\\w+) and mana cost ${MANA} or less)$`, 'i')))) { f.kw = KEYWORDS.find((k) => k.toLowerCase() === m![1].toLowerCase()); f.maxCost = manaOf(m[2]); t = t.slice(0, m.index); if (!f.kw) return null; }
+  if (/^dead minions?$/i.test(t)) { f.minion = true; return { count, filter: f }; }
+  const words = t.split(' '); const last = words[words.length - 1].toLowerCase().replace(/s$/, '').replace(/ie$/, 'y');
+  if (f.same && (words.join(' ').toLowerCase() === self.toLowerCase() || /^this$/i.test(t))) return { count, filter: { ...f, same: true } };
+  if (TYPE_WORDS[last] || subOf(words[words.length - 1])) {
+    for (const w of words.slice(0, -1)) {
+      const r = RARITIES.find((x) => x.toLowerCase() === w.toLowerCase()); if (r) { (f.rarity ??= []).push(r); continue; }
+      const sb = subOf(w); if (sb) { (f.sub ??= []).push(sb); continue; }
+      const kw = KEYWORDS.find((k) => k.toLowerCase() === w.toLowerCase()); if (kw) { f.kw = kw; continue; }
+      if (/^(different|other)$/i.test(w)) continue;
+      return null;
+    }
+    if (TYPE_WORDS[last]) { if (TYPE_WORDS[last].length) f.type = TYPE_WORDS[last]; if (last === 'spell') f.notType = ['Site']; }
+    else { (f.sub ??= []).push(subOf(words[words.length - 1])!); f.minion = true; }
+    return { count, filter: f };
+  }
+  // otherwise it names a card ("two Hellhounds", "a Ghoul", "Horrible Hybrids")
+  if (!/^[A-Z][\w'’-]*(?: (?:of|the|and|[A-Z][\w'’-]*))*$/.test(t)) return null;
+  f.same = false; f.name = t.replace(/’/g, "'"); return { count, filter: f };
+}
+const ZONE_WORDS: Record<string, Zone> = { hand: 'hand', cemetery: 'cemetery', spellbook: 'spellbook', atlas: 'atlas' };
+const zonesOf = (t: string): Zone[] | null => { const z = t.toLowerCase().split(/, or |, and |, | or | and /).map((w) => ZONE_WORDS[w.trim()]); return z.every(Boolean) ? (z as Zone[]) : null; };
+const pickFx = (pick: ZonePick, optional: boolean, extra: Partial<Effect> = {}): Omit<Effect, 'on'> => ({ op: 'pick', who: 'controller', pick, ...(optional ? { optional: true } : {}), ...extra });
+/**
+ * Read one search / look-at / return / collection sentence (and the sentences after it that finish it:
+ * "Shuffle if needed.", "Put the rest at the bottom …"). Returns the effect and how many sentences it used.
+ */
+function readPick(ss: string[], k: number, self: string): { fx: Omit<Effect, 'on'>; used: number } | null {
+  const t = ss[k]; let m: RegExpMatchArray | null; let used = 1;
+  const next = (re: RegExp) => { const n = ss[k + used]; if (n && re.test(n)) { used++; return n.match(re); } return null; };
+  const shuffleNext = () => !!next(/^(?:Shuffle(?: if needed| your spellbook| afterward)?|Then shuffle)\.$/i);
+  // Search your <zones> for <cards>, (reveal it,) and put it into your hand / summon it here|nearby.
+  if ((m = t.match(/^(you may )?search your ([a-z, ]+?) for (.+?)(?:, reveal (?:it|them),)?,? (?:and )?(put (?:it|them) (?:in|into) your hand|summon (?:it|them) (here|nearby|there))(?:, then shuffle(?: afterward)?)?\.$/i))) {
+    const zones = zonesOf(m[2]); const cf = cardFilter(m[3], self); if (!zones || !cf) return null;
+    const summon = /^summon/i.test(m[4]);
+    const sh = /then shuffle/i.test(t) || shuffleNext();
+    return { fx: pickFx({ zones, take: cf.count, filter: cf.filter, to: summon ? 'summon' : 'hand', where: summon ? (m[5]?.toLowerCase() === 'nearby' ? 'choose' : 'here') : undefined, shuffle: sh || zones.includes('spellbook'), reveal: !summon }, !!m[1], summon && m[5]?.toLowerCase() === 'nearby' ? { who: 'atTarget', range: 'nearby' } : {}), used };
+  }
+  // Search your top N spells (for a minion to discard). + You may summon/reveal and draw … from among them. + Put the rest at the bottom.
+  if ((m = t.match(/^search your top (\w+) (spells|sites)(?: for (.+?) to discard)?\.$/i))) {
+    const n = WORDNUM[m[1].toLowerCase()] ?? +m[1]; const zone: Zone = /site/i.test(m[2]) ? 'atlas' : 'spellbook';
+    let pick: ZonePick | null = null; let optional = false;
+    if (m[3]) { const cf = cardFilter(m[3], self); if (!cf) return null; pick = { zones: [zone], top: n, take: cf.count, filter: cf.filter, to: 'discard' }; }
+    else {
+      const f = next(/^(You may )?(summon|reveal and draw|draw|put) (.+?) from among them(?: into your hand)?(?: to each other adjacent site)?(?:, then shuffle)?\.$/i);
+      if (!f) return null;
+      const cf = cardFilter(f[3], self); if (!cf) return null; optional = !!f[1];
+      pick = { zones: [zone], top: n, take: cf.count, filter: cf.filter, to: /summon/i.test(f[2]) ? 'summon' : 'hand', where: 'here', reveal: true, rest: /then shuffle/i.test(f[0]) ? 'shuffle' : 'stay' };
+    }
+    if (next(/^(?:Put the rest (?:at|on) the bottom(?: of your (?:spellbook|atlas))?(?: in (?:a random|any) order)?|Bottom the rest)\.$/i)) pick.rest = 'bottom';
+    else if (next(/^(?:Then )?shuffle\.$/i)) pick.rest = 'shuffle';
+    return { fx: pickFx(pick, optional), used };
+  }
+  // Look at your next / top / bottom N spells. + Put one in your hand and the rest on the bottom … / Put three on the bottom … / Put one on top … / Put them back in any order.
+  if ((m = t.match(/^look at your (next|top|topmost|bottom) (\w+) (spells|sites)\.$/i))) {
+    const n = WORDNUM[m[2].toLowerCase()] ?? +m[2]; const zone: Zone = /site/i.test(m[3]) ? 'atlas' : 'spellbook'; const bottom = /bottom/i.test(m[1]);
+    let f: RegExpMatchArray | null;
+    if ((f = next(/^Put (\w+) (?:in|into) your hand and the rest (?:on|at) the bottom(?: of your (?:spellbook|atlas))?(?: in any order)?\.$/i)))
+      return { fx: pickFx({ zones: [zone], top: n, fromBottom: bottom, take: WORDNUM[f[1].toLowerCase()] ?? 1, to: 'hand', rest: 'bottom' }, false), used };
+    if ((f = next(/^Put (\w+) on the bottom(?: of your (?:spellbook|atlas))?\.$/i)))
+      return { fx: pickFx({ zones: [zone], top: n, fromBottom: bottom, take: WORDNUM[f[1].toLowerCase()] ?? 1, to: 'bottom', rest: 'stay' }, false), used };
+    if ((f = next(/^Put (\w+) on top(?: of your (?:spellbook|atlas))?\.$/i)))
+      return { fx: pickFx({ zones: [zone], top: n, fromBottom: bottom, take: WORDNUM[f[1].toLowerCase()] ?? 1, to: 'top', rest: 'stay' }, false), used };
+    if (next(/^Put them back in any order\.$/i)) return { fx: pickFx({ zones: [zone], top: n, take: 0, to: 'none', rest: 'stay' }, false), used };
+    return null;
+  }
+  // (You may) return a minion (that died this turn) from your cemetery to your hand.
+  if ((m = t.match(/^(you may )?return (.+?) from your cemetery to your hand\.$/i))) {
+    const cf = cardFilter(m[2], self); if (!cf) return null;
+    return { fx: pickFx({ zones: ['cemetery'], take: cf.count, filter: cf.filter, to: 'hand' }, !!m[1]), used };
+  }
+  // (You may) summon <cards> from <your|a|any> cemetery <here|to its location|to a nearby location>.
+  if ((m = t.match(/^(you may |each player may )?summon (.+?) from (your|a|any|their) cemetery (here|there|to (?:its|this|her|his|her) location|to (?:this|that) site|to a nearby location)\.$/i)) || (m = t.match(/^(you may )?summon (a dead minion) ()(here|there)\.$/i))) {
+    const cf = cardFilter(m[2], self); if (!cf) return null;
+    const near = /nearby/i.test(m[4]);
+    return { fx: pickFx({ zones: [m[3] && /your|their/i.test(m[3]) ? 'cemetery' : 'anyCemetery'], take: cf.count, filter: { ...cf.filter, ...(cf.filter.type ? {} : { minion: true }) }, to: 'summon', where: near ? 'choose' : 'here' }, !!m[1], near ? { who: 'atTarget', range: 'nearby' } : {}), used };
+  }
+  // (You may) cast / summon <named card> from your collection <to this site | here | to your Avatar's location>.
+  if ((m = t.match(/^(you may )?(cast|summon) (.+?) from your collection (to this site|here|there|to this location|to (?:this|its) location|to your avatar's location)\.$/i))) {
+    const cf = cardFilter(m[3], self); if (!cf) return null;
+    return { fx: pickFx({ zones: ['collection'], take: cf.count, filter: cf.filter, to: m[2].toLowerCase() === 'cast' ? 'cast' : 'summon', where: /avatar/i.test(m[4]) ? 'avatar' : 'here' }, !!m[1]), used };
+  }
+  // Reveal your next N spells, then summon all X from among them to this site. + Put the rest on the bottom …
+  if ((m = t.match(/^reveal your (?:next|top) (\w+) spells, then summon all (.+?) from among them (?:to this site|here)\.$/i))) {
+    const cf = cardFilter(m[2].replace(/^/, 'all '), self); if (!cf) return null;
+    const pick: ZonePick = { zones: ['spellbook'], top: WORDNUM[m[1].toLowerCase()] ?? +m[1], take: 'all', filter: cf.filter, to: 'summon', where: 'here', reveal: true, rest: 'stay' };
+    if (next(/^Put the rest (?:at|on) the bottom(?: of your spellbook)?(?: in (?:a random|any) order)?\.$/i)) pick.rest = 'bottom';
+    return { fx: pickFx(pick, false), used };
+  }
+  // Reveal your topmost spell. + If it's a minion, you may summon it here.
+  if (/^reveal your top(?:most)? spell\.$/i.test(t)) {
+    const f = next(/^If it'?s an? (minion|magic|artifact|aura), you may summon it here\.$/i);
+    if (!f) return null;
+    return { fx: pickFx({ zones: ['spellbook'], top: 1, take: 1, filter: { type: [cap(f[1].toLowerCase()) as CardType] }, to: 'summon', where: 'here', reveal: true, rest: 'stay' }, true), used };
+  }
+  // Target opponent reveals their hand. + You may banish a card from it. / Look at each opponent's hand.
+  if ((m = t.match(/^(?:target opponent reveals their hand|look at (?:each|your) opponent'?s'? hand)( and banishes a card)?\.$/i))) {
+    const f = next(/^You may banish a card from it\.$/i);
+    return { fx: pickFx({ zones: ['oppHand'], take: f || m[1] ? 1 : 0, to: f || m[1] ? 'banish' : 'none' }, !!f), used };
+  }
+  return null;
+}
 
 interface Rule { id: string; label: string; re: RegExp; build: (m: RegExpMatchArray, on: Trigger, type: CardType) => Omit<Effect, 'on'>[] | null }
 const KW = `(?:${GRANTABLE.join('|')})`;
@@ -398,8 +514,9 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       out.lines.push({ text: raw, on: 'static', effects: fx, manual: [] }); out.effects.push(...fx); return;
     }
     if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined;
-    if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false;
+    if ((m = line.match(/^Genesis\s*&\s*Deathrite\s*→\s*(.+)$/i))) { on = 'genesis'; body = m[1]; both = true; }
+    else if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
     else if ((m = line.match(/^At the (?:start|beginning) of your turn,\s*(.+)$/i))) { on = 'startTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^At the end of your turn,\s*(.+)$/i))) { on = 'endTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
@@ -433,6 +550,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         rl.effects.push({ on, op: 'shoot', who: 'controller', n: +pierce[1], pierce: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-pierce', auto: true, ...(cost ? { cost } : {}) });
         k++; continue;
       }
+      const pk = readPick(ss, k, name);
+      if (pk) { rl.effects.push({ ...pk.fx, on, line: lineNo, text: ss.slice(k, k + pk.used).join(' '), rule: 'pick', auto: true, ...(cost ? { cost } : {}), ...(sac ? { sacrifice: true } : {}) }); k += pk.used - 1; continue; }
       if (/^They don'?t untap the next time they would\.$/i.test(sentence)) {
         const prev = [...rl.effects].reverse().find((e) => e.op === 'tap' && e.refCell);
         if (prev) { rl.effects.push({ ...prev, op: 'noUntap', text: sentence, rule: 'no-untap' }); continue; }
@@ -463,6 +582,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
+    if (both) rl.effects.push(...rl.effects.map((e) => ({ ...e, on: 'deathrite' as const })));
     out.lines.push(rl); out.effects.push(...rl.effects); out.manual.push(...rl.manual);
   });
   return out;
