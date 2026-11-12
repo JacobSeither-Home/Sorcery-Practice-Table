@@ -52,10 +52,10 @@ function provided(s: GameState, p: PlayerId): Effect[] {
   if (!set) { set = new Set(Object.values(s.cards).filter((d) => d.effects.some((e) => e.on === 'static' && e.op === 'provide')).map((d) => d.id)); provideCache.set(s.cards, set); }
   if (!set.size) return [];
   const out: Effect[] = [];
-  const add = (inst: string) => { const d = cardOf(s, inst); if (set!.has(d.id)) for (const e of d.effects) if (e.on === 'static' && e.op === 'provide') out.push(e); };
-  for (const u of Object.values(s.units)) if (u.owner === p && !isDisabled(s, u)) add(u.inst);
-  for (const m of s.perms) if (m.owner === p) add(m.inst);
-  for (const st of s.sites) if (st?.inst && st.owner === p) add(st.inst);
+  const add = (inst: string, at: Loc, self?: string) => { const d = cardOf(s, inst); if (set!.has(d.id)) for (const e of d.effects) if (e.on === 'static' && e.op === 'provide' && condHolds(s, e.when, p, at, self)) out.push(e); };
+  for (const u of Object.values(s.units)) if (u.owner === p && !isDisabled(s, u)) add(u.inst, u, u.id);
+  for (const m of s.perms) if (m.owner === p) add(m.inst, { c: m.c, r: 'surface' });
+  s.sites.forEach((st, c) => { if (st?.inst && st.owner === p) add(st.inst, { c, r: 'surface' }); });
   return out;
 }
 /** Mana a player gets at the start of the turn: 1 per site plus "Provides ①" abilities. */
@@ -72,6 +72,28 @@ function staticCards(s: GameState): Set<string> {
   return set;
 }
 interface Bonus { atk: number; def: number; kws: string[] }
+/** Does a condition on an ability hold, for a card controlled by `p` at `at` (unit `self` if it is one)? */
+export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc | null, self?: string): boolean {
+  if (!w) return true;
+  const me = self ? s.units[self] : undefined;
+  const subOk = (d: CardDef) => (!w.sub || d.subtypes.some((y) => y.toLowerCase() === w.sub!.toLowerCase())) && (!w.name || d.name === w.name);
+  let r = false;
+  switch (w.k) {
+    case 'backRow': r = !!at && xy(at.c)[1] === (p === 0 ? ROWS - 1 : 0); break;
+    case 'warded': r = !!me?.ward; break;
+    case 'deathsDoor': r = s.players[p].deathsDoor; break;
+    case 'control': r = Object.values(s.units).some((u) => u.owner === p && (!w.other || u.id !== self) && subOk(unitCard(s, u))); break;
+    case 'lostLife': r = s.players[p].lostTurn === s.turn; break;
+    case 'dead': r = ([0, 1] as PlayerId[]).some((q) => s.players[q].cemetery.some((i) => subOk(cardOf(s, i)))); break;
+    case 'atop': { const st = at ? s.sites[at.c] : null; r = !!st?.inst && (!me || me.r === 'surface') && subOk(cardOf(s, st.inst)); break; }
+    case 'yourTurn': r = s.active === p; break;
+    case 'enemyTurn': r = s.active !== p; break;
+    case 'inVoid': r = !!at && !s.sites[at.c]; break;
+    case 'adjacentAlly': r = !!at && Object.values(s.units).some((u) => u.owner === p && u.id !== self && u.r === at.r && [at.c, ...orthAdjacent(at.c)].includes(u.c) && (subOk(unitCard(s, u)) || (!!w.sub && has(s, u, w.sub)))); break;
+    case 'noEnemiesHere': r = !!at && !Object.values(s.units).some((u) => u.owner !== p && u.c === at.c); break;
+  }
+  return w.not ? !r : r;
+}
 /** The four squares an aura at top-left square `c` covers (Codex "Casting Auras"). */
 export function auraArea(c: number): number[] { const [x, y] = xy(c); return [cell(x, y), cell(x + 1, y), cell(x, y + 1), cell(x + 1, y + 1)].filter((n) => n >= 0); }
 const AURA_HERE: Partial<Record<Effect['who'], Effect['who']>> = { unitsHere: 'affected', minionsHere: 'affected', enemiesHere: 'affected', alliesHere: 'affected' };
@@ -122,7 +144,7 @@ export function bonus(s: GameState, u: Unit): Bonus {
   for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
   const set = staticCards(s); if (!set.size) return b;
   const add = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
-    for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer)) {
+    for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && condHolds(s, e.when, p, at, self ?? bearer)) {
       if (e.op === 'buff') { const k = e.per ? countFor(s, e.per, d, p, at, self) : 1; b.atk += (e.atk ?? 0) * k; b.def += (e.def ?? 0) * k; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
     }
   };
@@ -258,13 +280,14 @@ function damageAvatar(s: GameState, p: PlayerId, n: number) {
     if (pl.ddTurn === s.turn) { log(s, `${pname(p)}'s Avatar is at death's door and immune to damage this turn.`, null); return; }
     log(s, `Death blow to ${pname(p)}'s Avatar.`, null); win(s, other(p)); return;
   }
-  pl.life = Math.max(0, pl.life - n);
+  pl.life = Math.max(0, pl.life - n); pl.lostTurn = s.turn;
   log(s, `${pname(p)}'s Avatar takes ${n} damage (life ${pl.life}).`, null);
   if (pl.life === 0) { pl.deathsDoor = true; pl.ddTurn = s.turn; log(s, `${pname(p)} is at death's door.`, null); }
 }
 function loseLife(s: GameState, p: PlayerId, n: number) {
   const pl = s.players[p];
   if (n <= 0 || pl.deathsDoor) return; // life loss cannot deal a death blow
+  pl.lostTurn = s.turn;
   pl.life = Math.max(0, pl.life - n);
   log(s, `${pname(p)} loses ${n} life (life ${pl.life}).`, null);
   if (pl.life === 0) { pl.deathsDoor = true; pl.ddTurn = s.turn; log(s, `${pname(p)} is at death's door.`, null); }
@@ -550,6 +573,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
     if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((x) => s.sites[x]!.inst && cardOf(s, s.sites[x]!.inst!).name === d.name).length !== 1) continue;
     if (e.refCell) { const prev = idx.slice(0, idx.indexOf(i)).reverse().find((k) => ch[k]?.cell !== undefined); ch = ch.slice(); ch[i] = { ...(ch[i] ?? {}), cell: prev !== undefined ? ch[prev]!.cell : undefined }; }
     const c2 = ch[i] ?? undefined;
+    if (e.when && !condHolds(s, e.when, p, loc, self ?? bearer)) { if (e.on !== 'static') log(s, `${d.name}: the condition is not met (${e.text ?? ''}).`, p); continue; }
     if (e.afterSite && !(s.players[p].cast?.turn === s.turn && lastSiteEl(s, p) === e.afterSite)) continue;
     const n = e.amount === 'airCastThisTurn' ? (s.players[p].cast?.turn === s.turn ? s.players[p].cast!.ids.reduce((t, id) => t + (s.cards[id]?.thresholds.air ?? 0), 0) : 0)
       : e.amount === 'banishedElement' ? s.players[p].banished ?? 0

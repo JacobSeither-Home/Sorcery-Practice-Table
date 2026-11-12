@@ -92,6 +92,8 @@ export interface Effect {
   ev?: EventFilter;
   /** "You may …": the player can skip this part when it resolves */
   optional?: boolean;
+  /** only while / if this holds ("while Warded", "if you're on Death's Door", "during enemy turns" …) */
+  when?: Cond;
   /** pick: the zone step */
   pick?: ZonePick;
   /** the text says "target" (Codex "Target"): Stealth and Ward apply, and the source must be in the same region. A choice without the word ("an ally") is not a target. */
@@ -241,6 +243,8 @@ export interface PlayerState {
   mulliganDone: boolean;
   /** Codex "Collection": instance ids of the cards outside the decks */
   collection?: string[];
+  /** turn on which this player last lost life ("if you've lost life this turn") */
+  lostTurn?: number;
   /** minions of this player that died this turn (instance ids), for "a minion that died this turn" */
   died?: { turn: number; insts: string[] };
   /** spells cast this turn (card ids), for "the sum of (A) on spells you've cast this turn" */
@@ -342,6 +346,12 @@ export type Action =
 export type Check = { ok: true } | { ok: false; reason: string; keyword?: string };
 
 export interface DeckList { name: string; avatar: string; spellbook: string[]; atlas: string[]; /** Codex "Collection": extra cards outside the decks (card ids) */ collection?: string[] }
+
+/** A condition on an ability ("while …", "if …", "unless …", "during …"), measured from the card that has it. */
+export interface Cond {
+  k: 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere';
+  sub?: string; name?: string; other?: boolean; not?: boolean;
+}
 
 /** Which cards a "search / look at / return / summon from …" effect may pick. */
 export interface CardFilter {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
-import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, has, isWater, legalActions, rangedOf, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
+import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, has, isDisabled, isWater, legalActions, rangedOf, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
 import { chooseAction, determinize } from '../src/ai/ai';
 
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
@@ -928,5 +928,37 @@ describe('auras occupy a 2×2 area (Codex "Casting Auras")', () => {
     s = apply(s, { t: 'cast', inst: give(s, 0, storm), c: cell(2, 0) });
     s = apply(s, { t: 'endTurn' });
     expect(s.units[a].damage + s.units[b].damage).toBe(2);                 // both squares of the area were hit (enemy damage clears at the end of their own turn)
+  });
+});
+
+describe('conditions on abilities', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  it('"Has Airborne and +1 power while Warded" only while it has a Ward', () => {
+    const s = start(0);
+    const angel = read('Minion', 'Test Angel', 'Has Airborne and +1 power while Warded.', { attack: 2, defense: 2 });
+    const u = unit(s, 0, cell(2, 2), angel, { ward: true });
+    expect(power(s, s.units[u])).toBe(3); expect(has(s, s.units[u], 'Airborne')).toBe(true);
+    s.units[u].ward = false;
+    expect(power(s, s.units[u])).toBe(2); expect(has(s, s.units[u], 'Airborne')).toBe(false);
+  });
+  it('"Has +3 power during enemy turns"', () => {
+    let s = start(0);
+    const iron = read('Minion', 'Test Ironside', 'Has +3 power during enemy turns.', { attack: 2, defense: 2 });
+    const u = unit(s, 0, cell(2, 3), iron);
+    expect(power(s, s.units[u])).toBe(2);
+    s = apply(s, { t: 'endTurn' });
+    expect(power(s, s.units[u])).toBe(5);
+  });
+  it('"Disabled unless adjacent to an allied Spellcaster"', () => {
+    const s = start(0);
+    const spirit = read('Minion', 'Test Bound', 'Disabled unless adjacent to an allied Spellcaster.', { attack: 3, defense: 3 });
+    const u = unit(s, 0, cell(0, 0), spirit);
+    expect(isDisabled(s, s.units[u]) || has(s, s.units[u], 'Disabled')).toBe(true);
+    unit(s, 0, cell(1, 0), id('Tide Caller'));                              // a Spellcaster next to it
+    expect(has(s, s.units[u], 'Disabled')).toBe(false);
   });
 });

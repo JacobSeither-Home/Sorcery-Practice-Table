@@ -9,7 +9,7 @@
 // on 2026-11-12 (1,100 cards), and the Codex at https://sorcerytcg.com/codex for what the words mean
 // (nearby, adjacent, here, heal, Ward, projectile …). `node tests/coverage.mjs cards.json` reports what
 // is still by hand.
-import type { CardDef, CardFilter, CardType, Effect, Element, EventFilter, Trigger, Who, Zone, ZonePick } from './types';
+import type { CardDef, CardFilter, CardType, Cond, Effect, Element, EventFilter, Trigger, Who, Zone, ZonePick } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
 const KEYWORD_LINE = new RegExp(`^((?:air |earth |fire |water |non-(?:air|earth|fire|water) )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
@@ -61,7 +61,7 @@ const EL: Record<string, Element> = { A: 'air', E: 'earth', F: 'fire', W: 'water
 const elementsOf = (t: string) => { const o: Partial<Record<Element, number>> = {}; for (const m of t.matchAll(/\(([AEFW])\)/g)) o[EL[m[1]]] = (o[EL[m[1]]] ?? 0) + 1; return o; };
 
 /** Subtypes and umbrella words that narrow a noun ("Undead allies", "target nearby Giant"). From the API's subtype list. */
-const SUBTYPES = ['Angel', 'Beast', 'Demon', 'Dragon', 'Dwarf', 'Faerie', 'Giant', 'Gnome', 'Goblin', 'Merfolk', 'Monster', 'Mortal', 'Ogre', 'Spirit', 'Sphinx', 'Troll', 'Undead', 'Knight', 'Royalty', 'Evil'];
+const SUBTYPES = ['Angel', 'Beast', 'Demon', 'Dragon', 'Dwarf', 'Faerie', 'Giant', 'Gnome', 'Goblin', 'Merfolk', 'Monster', 'Mortal', 'Ogre', 'Spirit', 'Sphinx', 'Troll', 'Undead', 'Knight', 'Royalty', 'Evil', 'Desert', 'River', 'Tower', 'Village', 'Weapon', 'Armor', 'Relic', 'Device', 'Document', 'Instruments', 'Monument', 'Potion', 'Automaton'];
 const subOf = (w: string): string | null => {
   const t = w.toLowerCase().replace(/ies$/, 'y').replace(/(?<=[a-z])s$/, '').replace(/^faery$/, 'faerie');
   return SUBTYPES.find((x) => x.toLowerCase() === t || x.toLowerCase() === w.toLowerCase()) ?? null;
@@ -335,7 +335,7 @@ export const RULES: Rule[] = [
   // power and keywords
   { id: 'power', label: '… gets / has +N power', re: new RegExp(`^(?:give )?(.+?) (?:gets?|gains?|has|have|\\+)? ?([+\\-−]\\d+) power(?: and ([+\\-−]\\d+) defen[cs]e)?${UNTIL}\\.$`, 'i'),
     build: (m, on) => {
-      const v = nounPhrase(m[1]); if (!v || (on === 'static' && (v.who === 'target' || v.who === 'atTarget'))) return null;
+      const v = nounPhrase(m[1]); if (!v || (on === 'static' && ((v.who === 'target' && !v.ref) || v.who === 'atTarget'))) return null;
       if (on === 'static' && m[4]) return null;
       return [{ op: 'buff', ...v, atk: num(m[2]), def: m[3] ? num(m[3]) : num(m[2]), until: until(m[4], on) }];
     } },
@@ -353,11 +353,24 @@ export const RULES: Rule[] = [
       else if (/^void in (?:their|its|this's) row$/.test(w)) per = { kind: 'voidsInRow' };
       return per ? [{ op: 'buff', ...v, atk: +m[2], def: +m[2], until: 'permanent', per }] : null;
     } },
+  { id: 'has-list', label: '… has +N power, a keyword, and …', re: /^(.+?) (?:has|have|gains?|gets?) ((?:[^,]+, )*[^,]+?,? and [^,]+?)( this turn| until your next turn)?\.$/i,
+    build: (m, on) => {
+      const v = nounPhrase(m[1]); if (!v || (on === 'static' && ((v.who === 'target' && !v.ref) || v.who === 'atTarget'))) return null;
+      const items = m[2].split(/, and |, | and /).map((x) => x.trim()); if (items.length < 2) return null;
+      const out: Omit<Effect, 'on'>[] = [];
+      for (const it of items) {
+        let mm: RegExpMatchArray | null;
+        if ((mm = it.match(/^([+\-−]\d+) power$/i))) out.push({ op: 'buff', ...v, atk: num(mm[1]), def: num(mm[1]), until: until(m[3], on) });
+        else if ((mm = it.match(/^(ranged|movement) \+?(\d+)$/i))) out.push({ op: 'grant', ...v, keyword: cap(mm[1].toLowerCase()), n: +mm[2], until: until(m[3], on) });
+        else { const k = GRANTABLE.concat(['Ranged']).find((g) => g.toLowerCase() === it.toLowerCase()); if (!k) return null; out.push({ op: 'grant', ...v, keyword: k, until: until(m[3], on) }); }
+      }
+      return out;
+    } },
   { id: 'give-power', label: 'Give … +N power', re: new RegExp(`^give (.+?) ([+\\-−]\\d+) power${UNTIL}\\.$`, 'i'),
     build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'buff', ...v, atk: num(m[2]), def: num(m[2]), until: until(m[3], on) }] : null; } },
   { id: 'grant', label: '… gains / has a keyword', re: new RegExp(`^(.+?) (?:gets?|gains?|has|have) (${KW}(?:(?:, | and |, and )${KW})*)${UNTIL}\\.$`, 'i'),
     build: (m, on) => {
-      const v = nounPhrase(m[1]); if (!v || (on === 'static' && (v.who === 'target' || v.who === 'atTarget'))) return null;
+      const v = nounPhrase(m[1]); if (!v || (on === 'static' && ((v.who === 'target' && !v.ref) || v.who === 'atTarget'))) return null;
       if (on === 'static' && m[3]) return null;
       return kwList(m[2]).map((keyword) => ({ op: 'grant' as const, ...v, keyword, until: until(m[3], on) }));
     } },
@@ -482,6 +495,17 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   // "You may pay ① to X." — X costs mana and is optional
   const pay = sentence.match(new RegExp(`^(?:you may )?pay ${MANA} to (.+)$`, 'i'));
   if (pay) { const r = matchSentence(cap(pay[2]), on, type, false); if (r) return { got: r.got.map((e, i) => ({ ...e, ...(i === 0 ? { pay: manaOf(pay[1]) } : {}), ...(/^you may/i.test(sentence) ? { optional: true } : {}) })), rule: 'pay+' + r.rule }; }
+  // conditions: "X while Warded." "If you're on Death's Door, X." "X unless adjacent to an allied Spellcaster."
+  let cm: RegExpMatchArray | null;
+  if (top && ((cm = sentence.match(/^(?:if|while) ([^,]+), (.+)$/i)) || (cm = sentence.match(/^(.+?),? (?:while|if|unless|during) (.+?)\.$/i)))) {
+    const lead = /^(?:if|while) /i.test(sentence);
+    const condText = lead ? cm[1] : cm[2]; const body = lead ? cap(cm[2]) : cm[1] + '.';
+    const w = condOf(condText, /\bunless\b/i.test(sentence) && !lead, /\bduring\b/i.test(sentence) && !lead);
+    if (w) { const r = matchSentence(body, on, type, false); if (r) return { got: r.got.map((e) => ({ ...e, when: w })), rule: 'cond+' + r.rule }; }
+  }
+  // a bare keyword on a permanent: "Disabled." (after a condition was taken off)
+  const bare = sentence.match(new RegExp(`^(${KEYWORDS.join('|')})\\.$`, 'i'));
+  if (bare && on === 'static') return { got: [{ op: 'grant', who: 'self', keyword: KEYWORDS.find((k) => k.toLowerCase() === bare[1].toLowerCase())!, until: 'permanent' }], rule: 'bare-keyword' };
   // wrappers that do not change what happens: "When it arrives, …", "… on arrival", "… if it is untapped"
   let w: RegExpMatchArray | null;
   if ((w = sentence.match(/^(?:when it arrives|upon arrival|on arrival), (.+)$/i))) return matchSentence(cap(w[1]), on, type, top);
@@ -510,6 +534,23 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
 }
 
 const cap = (t: string) => t.replace(/^./, (c) => c.toUpperCase());
+/** The conditions the reader understands. Null when the wording is not one of them. */
+function condOf(t0: string, unless = false, during = false): Cond | null {
+  const t = t0.trim().toLowerCase().replace(/’/g, "'"); let m: RegExpMatchArray | null; let w: Cond | null = null;
+  if (during) { if (/^(enemy|opponents?'?s?|your opponent'?s?) turns?$/.test(t)) w = { k: 'enemyTurn' }; else if (/^your turns?$/.test(t)) w = { k: 'yourTurn' }; }
+  else if (/^(?:it'?s |this is |in )?(?:in )?your back row$/.test(t)) w = { k: 'backRow' };
+  else if (/^(?:this is |it'?s )?warded$/.test(t)) w = { k: 'warded' };
+  else if (/^(?:you'?re|you are) on death'?s door$/.test(t)) w = { k: 'deathsDoor' };
+  else if (/^you'?ve lost life this turn$/.test(t)) w = { k: 'lostLife' };
+  else if (/^(?:this is |it'?s )?in the void$/.test(t)) w = { k: 'inVoid' };
+  else if (/^there are no enemies here$/.test(t)) w = { k: 'noEnemiesHere' };
+  else if ((m = t.match(/^you control (another|an?) (\w+)$/))) { const sb = subOf(m[2]); if (sb) w = { k: 'control', sub: sb, ...(m[1] === 'another' ? { other: true } : {}) }; }
+  else if ((m = t.match(/^there are dead (\w+)$/))) { const sb = subOf(m[1]); w = sb ? { k: 'dead', sub: sb } : { k: 'dead', name: cap(m[1]) }; }
+  else if ((m = t.match(/^(?:this is |it'?s )?atop an? (\w+)$/))) { const sb = subOf(m[1]) ?? cap(m[1].replace(/s$/, '')); w = { k: 'atop', sub: sb }; }
+  else if ((m = t.match(/^adjacent to an allied (\w+)$/))) { const sb = subOf(m[1]) ?? KEYWORDS.find((k) => k.toLowerCase() === m![1]); if (sb) w = { k: 'adjacentAlly', sub: sb }; }
+  if (w && unless) w.not = true;
+  return w;
+}
 /** "Whenever a nearby allied minion dies" → which deaths count. Null when a word is not understood. */
 function eventFilter(q: string, np: string, where?: string): EventFilter | null {
   const sel = nounPhrase(`${q.toLowerCase() === 'another' ? 'another' : 'an'} ${np}`); if (!sel) return null;
@@ -536,6 +577,11 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
     const parts = line.replace(/\.$/, '').split(/,\s*/);
     const PASSIVE: Record<string, string> = { "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend" };
+    const readable = (x: string) => !KEYWORD_LINE.test(x.trim()) && !PASSIVE[x.trim().toLowerCase().replace('’', "'")] && !!matchSentence(cap(x.trim()) + '.', 'static', type);
+    if (parts.length > 1 && type !== 'Magic' && parts.every((x) => KEYWORD_LINE.test(x.trim()) || readable(x)) && parts.some(readable)) {
+      const fx = parts.filter(readable).flatMap((x) => matchSentence(cap(x.trim()) + '.', 'static', type)!.got.map((e) => ({ ...e, on: 'static' as const, line: lineNo, text: x.trim(), rule: 'keyword-line', auto: true })));
+      out.lines.push({ text: raw, on: 'static', effects: fx, manual: [] }); out.effects.push(...fx); return;
+    }
     if (parts.length > 1 && parts.every((x) => KEYWORD_LINE.test(x.trim()) || PASSIVE[x.trim().toLowerCase().replace('’', "'")]) && parts.some((x) => PASSIVE[x.trim().toLowerCase().replace('’', "'")])) {
       const fx = parts.filter((x) => PASSIVE[x.trim().toLowerCase().replace('’', "'")]).map((x) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: PASSIVE[x.trim().toLowerCase().replace('’', "'")], until: 'permanent' as const, line: lineNo, text: x.trim(), rule: 'keyword-passive', auto: true }));
       out.lines.push({ text: raw, on: 'static', effects: fx, manual: [] }); out.effects.push(...fx); return;
@@ -603,6 +649,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       }
       let hit = matchSentence(sentence, on, type);
       // in a reaction about the card itself ("When this is struck, destroy it"), "it" is the card
+      if (hit && on === 'static' && hit.got.some((e) => e.ref)) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined, targets: undefined } : e)) };
       if (hit && ev?.self) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined } : e)) };
       // "it" must have something to point back to on this line
       if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
