@@ -682,3 +682,66 @@ describe('damage prevention read from text', () => {
     expect(t.units[brute].damage).toBe(2);                                   // 3 - 1
   });
 });
+
+describe('Beta Avatar abilities from their text', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense, life: c.life } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const withAvatar = (av: string, life = 20) => { const s = start(0); s.inst[s.units[s.players[0].avatar].inst] = av; cards[av].life = life; return s; };
+  it('Sparkmage-style: damage to a random other unit at a nearby location equal to the (A) on spells cast this turn', () => {
+    const av = read('Avatar', 'Test Spark', "Tap → Play or draw a site.\n\nTap → Target nearby location. Deal damage to another random unit there equal to the sum of (A) on spells you've cast this turn.");
+    let s = withAvatar(av); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 9;
+    const gust = give(s, 0, id('Gust Strike')); // an air spell (1 air)
+    const foe = unit(s, 1, cell(2, 2), id('Kiln Brute'));
+    s.players[0].hand.push(gust); site(s, 0, cell(0, 3), 'Gale Ridge' as never);
+    const fxi = cards[av].effects.findIndex((e) => e.op === 'choose');
+    s.players[0].cast = { turn: s.turn, ids: [id('Gust Strike'), id('Gust Strike')] };   // two air spells already cast this turn
+    const ch: { cell?: number }[] = []; ch[fxi] = { cell: cell(2, 2) };
+    s = apply(s, { t: 'ability', src: { unit: s.players[0].avatar }, fx: fxi, choices: ch });
+    expect(s.units[foe].damage).toBe(2);
+    expect(s.units[s.players[0].avatar].tapped).toBe(true);
+  });
+  it('Flamecaller-style: banish dead fire minions as the cost; the projectile deals their (F)', () => {
+    const av = read('Avatar', 'Test Flame', 'Tap → Play or draw a site.\n\nTap, Banish all your dead fire minions → Shoot a projectile. It deals damage equal to to the sum of their (F).');
+    let s = withAvatar(av); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c);
+    const fxi = cards[av].effects.findIndex((e) => e.op === 'shoot');
+    expect(reason(s, { t: 'ability', src: { unit: s.players[0].avatar }, fx: fxi, choices: [] })).toMatch(/no dead fire/);
+    s.inst['0d1'] = id('Kiln Brute'); s.inst['0d2'] = id('Pyre Drake'); s.players[0].cemetery.push('0d1', '0d2'); // 1 + 2 fire
+    const foe = unit(s, 1, cell(2, 1), id('Hill Giant'));
+    const ch: { dir?: [number, number] }[] = []; ch[fxi] = { dir: [0, -1] };
+    s = apply(s, { t: 'ability', src: { unit: s.players[0].avatar }, fx: fxi, choices: ch });
+    expect(s.units[foe].damage).toBe(3); expect(s.players[0].cemetery).not.toContain('0d1');
+  });
+  it('Geomancer-style: after playing an earth site, a void next to the Avatar may become Rubble; Rubble can be replaced by the top site', () => {
+    const av = read('Avatar', 'Test Geo', 'Tap → Play or draw a site. If you played an earth site, fill a void adjacent to you with Rubble.\n\nTap → Replace an adjacent Rubble with the topmost site of your atlas.');
+    let s = withAvatar(av);
+    const terrace = give(s, 0, id('Stone Terrace'));
+    s = apply(s, { t: 'playSite', inst: terrace, c: AVATAR_START[0] });
+    expect(s.queue?.length).toBe(1);                                         // choose which void
+    const fxi = cards[av].effects.findIndex((e) => e.op === 'rubble');
+    const ch: { cell?: number }[] = []; ch[fxi] = { cell: cell(1, 3) };
+    s = apply(s, { t: 'trigger', choices: ch });
+    expect(s.sites[cell(1, 3)]).toEqual({ inst: null, owner: null });
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' }); s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' });
+    const rep = cards[av].effects.findIndex((e) => e.op === 'replaceRubble');
+    const top = s.players[0].atlas[0];
+    const ch2: { cell?: number }[] = []; ch2[rep] = { cell: cell(1, 3) };
+    s = apply(s, { t: 'ability', src: { unit: s.players[0].avatar }, fx: rep, choices: ch2 });
+    expect(s.sites[cell(1, 3)]).toEqual({ inst: top, owner: 0 });
+  });
+  it('Waveshaper-style: flood a site near water, tap minions there without Submerge, and they skip their next untap', () => {
+    const av = read('Avatar', 'Test Wave', "Tap → Play or draw a site.\n\nTap → Flood a site near your body of water until you do so again. Tap minions without submerge there. They don't untap the next time they would.");
+    let s = withAvatar(av); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c);
+    site(s, 0, cell(1, 2), 'Mill Pond');                                    // water next to the target
+    const foe = unit(s, 1, cell(2, 2), id('Kiln Brute')); const fish = unit(s, 1, cell(2, 2), id('Reed Lurker'));
+    const fxi = cards[av].effects.findIndex((e) => e.op === 'flood');
+    const ch: { cell?: number }[] = []; ch[fxi] = { cell: cell(2, 2) };
+    s = apply(s, { t: 'ability', src: { unit: s.players[0].avatar }, fx: fxi, choices: ch });
+    expect(isWater(s, cell(2, 2))).toBe(true);
+    expect(s.units[foe].tapped).toBe(true); expect(s.units[fish].tapped).toBe(false);
+    s = apply(s, { t: 'endTurn' });
+    expect(s.units[foe].tapped).toBe(true);                                 // skipped this untap
+  });
+});

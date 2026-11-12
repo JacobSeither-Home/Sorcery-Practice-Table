@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', destroySite: 'Sites & threshold', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -271,6 +271,16 @@ export const RULES: Rule[] = [
     build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Prevent first damage each turn', until: 'permanent' }] : null) },
   { id: 'destroy-site', label: 'Destroy a nearby site', re: /^destroy (?:a|target) (nearby |adjacent )?site\.$/i,
     build: (m) => [{ op: 'destroySite', who: 'atTarget', range: (m[1]?.trim() || 'any') as Effect['range'], siteKind: undefined }] },
+  { id: 'after-site-rubble', label: 'If you played an earth site, fill a void with Rubble', re: /^if you played an? (air|earth|fire|water) site, fill a void adjacent to you with rubble\.$/i,
+    build: (m) => [{ op: 'rubble', who: 'atTarget', range: 'adjacent', afterSite: m[1].toLowerCase() as Element }] },
+  { id: 'replace-rubble', label: 'Replace an adjacent Rubble with your top site', re: /^replace an adjacent rubble with the top(?:most)? site of your atlas\.$/i,
+    build: () => [{ op: 'replaceRubble', who: 'atTarget', range: 'adjacent' }] },
+  { id: 'choose-location', label: 'Target a location', re: /^target (?:a )?(nearby |adjacent )?location\.$/i, build: (m) => [{ op: 'choose', who: 'atTarget', range: (m[1]?.trim() || 'any') as Effect['range'] }] },
+  { id: 'damage-air-cast', label: 'Damage equal to the (A) on spells cast this turn', re: /^deal damage to another random unit there equal to the sum of \((A|E|F|W)\) on spells you'?ve cast this turn\.$/i,
+    build: (m) => (m[1] === 'A' ? [{ op: 'damage', who: 'atTarget', refCell: true, random: 1, other: true, amount: 'airCastThisTurn' }] : null) },
+  { id: 'flood-near-water', label: 'Flood a site near your body of water', re: /^flood a site near your body of water until you do so again\.$/i, build: () => [{ op: 'flood', who: 'atTarget', range: 'any' }] },
+  { id: 'tap-without', label: 'Tap minions without a keyword there', re: /^tap minions without (\w+) there\.$/i,
+    build: (m) => { const k = KEYWORDS.find((x) => x.toLowerCase() === m[1].toLowerCase()); return k ? [{ op: 'tap', who: 'atTarget', refCell: true, only: 'minion', notKw: k }] : null; } },
   { id: 'lose-stealth', label: '… lose Stealth', re: /^(.+?) (?:permanently )?loses? stealth\.$/i,
     build: (m, on) => { const v = nounPhrase(m[1]); return v && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses Stealth', until: 'permanent' }] : null; } },
   // deck-building rules apply when the deck is built (Decks screen), not during play
@@ -366,7 +376,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     raw = raw.replace(/^(?:\([AEFW]\))+\s*[—–-]\s*/, '');
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
     if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false;
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined;
     if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
     else if ((m = line.match(/^At the (?:start|beginning) of your turn,\s*(.+)$/i))) { on = 'startTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
@@ -374,6 +384,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^(Once (?:on your|per|each) turn,\s*)?([①-⑳]|\(\d+\))\s*→\s*(.+)$/i))) { on = 'activated'; cost = manaOf(m[2]); repeat = !m[1]; body = m[3]; }
     else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you|this)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
+    else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) attacks,\s*(.+)$/i))) { on = 'attacks'; ev = { self: true }; body = cap(m[1]); }
@@ -398,6 +409,15 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         rl.effects.push({ on, op: 'shoot', who: 'controller', n: +pierce[1], pierce: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-pierce', auto: true, ...(cost ? { cost } : {}) });
         k++; continue;
       }
+      if (/^They don'?t untap the next time they would\.$/i.test(sentence)) {
+        const prev = [...rl.effects].reverse().find((e) => e.op === 'tap' && e.refCell);
+        if (prev) { rl.effects.push({ ...prev, op: 'noUntap', text: sentence, rule: 'no-untap' }); continue; }
+      }
+      const sum = ss[k + 1]?.match(/^It deals damage equal to (?:to )?the sum of their \(([AEFW])\)\.$/i);
+      if (/^shoot a projectile\.$/i.test(sentence) && sum && banishDead) {
+        rl.effects.push({ on, op: 'shoot', who: 'controller', amount: 'banishedElement', line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-banished', auto: true, banishDead });
+        k++; continue;
+      }
       if (/^Fall asleep\.$/i.test(sentence) && /^this is disabled until hurt\.$/i.test(ss[k + 1] ?? '')) {
         rl.effects.push({ on, op: 'grant', who: 'self', keyword: 'Disabled', until: 'hurt', line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'sleep', auto: true });
         k++; continue;
@@ -414,7 +434,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       let hit = matchSentence(sentence, on, type);
       // "it" must have something to point back to on this line
       if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
-      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}) })));
+      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
     out.lines.push(rl); out.effects.push(...rl.effects); out.manual.push(...rl.manual);

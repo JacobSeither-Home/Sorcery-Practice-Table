@@ -41,6 +41,14 @@ export type Op =
   | 'sink'
   /** move a unit straight to a chosen location (Choice.cell) */
   | 'teleport'
+  /** only choose a location for the effects after it on the line ("Target nearby location.") */
+  | 'choose'
+  /** fill a chosen void with Rubble; or replace a chosen Rubble with the top site of your atlas */
+  | 'rubble' | 'replaceRubble'
+  /** flood a chosen site until this ability is used again */
+  | 'flood'
+  /** the units do not untap the next time they would */
+  | 'noUntap'
   /** destroy the site at a chosen square (it leaves Rubble) */
   | 'destroySite'
   /** static damage prevention for the units it reaches ("takes no damage from …", "take 1 less damage") */
@@ -100,6 +108,16 @@ export interface Effect {
   per?: { kind: 'sameNearby' | 'adjacentSites' | 'wards' | 'deadSub' | 'sameInCemetery' | 'voidsInRow' | 'nearbySites'; sub?: string; el?: Element };
   /** prevent: damage removed (undefined = all of it), and which sources it applies to */
   less?: number; fromMinPower?: number; fromSub?: string[]; fromMagic?: boolean; fromElement?: string; fromSite?: string[];
+  /** the number comes from the game: the (A) on spells you cast this turn, or the (F) on dead minions banished for the cost */
+  amount?: 'airCastThisTurn' | 'banishedElement';
+  /** use the location chosen by the previous effect on the line ("… there") */
+  refCell?: boolean;
+  /** leave out units with this keyword ("minions without Submerge") */
+  notKw?: string;
+  /** activated cost: banish all your dead minions of this element */
+  banishDead?: Element;
+  /** only when the Avatar's site ability played a site of this element ("If you played an earth site") */
+  afterSite?: Element;
   /** pay this much mana first; the effect does not happen if it cannot be paid */
   pay?: number;
   /** draw: from the bottom of the deck */
@@ -176,6 +194,8 @@ export interface Unit {
   avatar: boolean;
   stealthLost: boolean;
   lance: boolean;
+  /** skips its next untap */
+  noUntap?: boolean;
   /** turn on which a "the first time … would take damage each turn, prevent it" shield was used */
   shieldTurn?: number;
   /** Ward mark (Codex "Ward"): breaks instead of the unit being damaged, destroyed or targeted by the opponent */
@@ -200,6 +220,12 @@ export interface PlayerState {
   cemetery: string[];
   avatar: string; // unit id
   mulliganDone: boolean;
+  /** spells cast this turn (card ids), for "the sum of (A) on spells you've cast this turn" */
+  cast?: { turn: number; ids: string[] };
+  /** the site this player's "until you do so again" flood is on */
+  flooded?: number;
+  /** the element total of the cards banished for the last ability's cost */
+  banished?: number;
   /** threshold (and mana already added) from "Provides … this turn" effects, for the turn given */
   extra?: { turn: number; th: Partial<Record<Element, number>> };
 }

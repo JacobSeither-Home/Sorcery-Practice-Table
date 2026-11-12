@@ -14,7 +14,7 @@ export const OP_LABEL: Record<Op, string> = {
   damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
-  destroySite: 'Destroy a site', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
+  destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
 };
 export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
@@ -35,10 +35,10 @@ const ONLY: Record<string, string> = { minion: 'minion', enemy: 'enemy', ally: '
 
 /** One line describing what an effect does, for the pop-up. */
 export function describe(e: Effect): string {
-  const n = e.x ? 'X' : String(e.n ?? 1);
+  const n = e.amount === 'airCastThisTurn' ? 'the (A) on spells you cast this turn' : e.amount === 'banishedElement' ? `the (${(e.banishDead ?? 'f')[0].toUpperCase()}) on the minions banished` : e.x ? 'X' : String(e.n ?? 1);
   const group = e.only === 'minion' ? WHO_LABEL[e.who].replace(/\b(enemy|ally|unit)\b/, (w) => (w === 'unit' ? 'minion' : `${w === 'ally' ? 'allied' : w} minion`)) : WHO_LABEL[e.who];
   const filt = [e.random ? 'one at random' : '', e.surface ? 'on the surface' : '', e.wounded ? 'wounded' : '', ...(e.sub ?? []), e.kw ?? '', e.maxPower !== undefined ? `power ${e.maxPower} or less` : '', e.minPower !== undefined ? `power ${e.minPower} or more` : ''].filter(Boolean).join(', ');
-  const who0 = e.ref ? 'that unit' : e.who === 'target' ? `target ${ONLY[e.only ?? ''] ?? 'unit'}${RANGE[e.range ?? 'any']}` : (e.other ? group.replace(/^each /, 'each other ') : group);
+  const who0 = e.ref ? 'that unit' : e.refCell ? `${e.random ? 'a random other unit' : e.only === 'minion' ? 'minions' : 'units'} there${e.notKw ? ` without ${e.notKw}` : ''}` : e.who === 'target' ? `target ${ONLY[e.only ?? ''] ?? 'unit'}${RANGE[e.range ?? 'any']}` : (e.other ? group.replace(/^each /, 'each other ') : group);
   const who = filt ? `${who0} (${filt} only)` : who0;
   switch (e.op) {
     case 'damage': return `Deal ${n} damage to ${who}`;
@@ -65,6 +65,11 @@ export function describe(e: Effect): string {
     case 'shoot': return e.pierce ? `Shoot a piercing projectile: ${n} damage to each unit it passes` : `Shoot ${e.shots && e.shots !== 1 ? (e.shots === -1 ? 'X projectiles' : `${e.shots} projectiles`) : 'a projectile'} for ${n} damage${e.shots && e.shots !== 1 ? ' each, in one direction' : ''}${e.splash ? ` (and ${e.splash} to each other unit where it hits)` : ''}`;
     case 'strike': return `Strike ${who}`;
     case 'prevent': return `${who[0].toUpperCase() + who.slice(1)} take${e.who === 'self' ? 's' : ''} ${e.less === undefined ? 'no' : `${e.less} less`} damage${e.fromMinPower !== undefined ? ` from units with ${e.fromMinPower} or more power` : ''}${e.fromElement ? ` from ${e.fromElement} spells` : e.fromMagic ? ' from magic' : ''}${e.fromSub ? ` from ${e.fromSub.join(', ')}` : ''}${e.fromSite ? ` from ${e.fromSite.join(', ')} sites` : ''}`;
+    case 'choose': return `Choose a location${RANGE[e.range ?? 'any']}`;
+    case 'rubble': return `${e.afterSite ? `After you play an ${e.afterSite} site: ` : ''}fill a void adjacent to you with Rubble`;
+    case 'replaceRubble': return 'Replace an adjacent Rubble with the top site of your atlas';
+    case 'flood': return 'Flood a site near water (until you flood another)';
+    case 'noUntap': return 'Those minions do not untap the next time they would';
     case 'destroySite': return `Destroy a site you choose${RANGE[e.range ?? 'any']} (it leaves Rubble)`;
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;

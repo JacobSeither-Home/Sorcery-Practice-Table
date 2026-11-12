@@ -3,7 +3,7 @@
 // rulebook reader (not fetched from sorcerytcg.com). Known simplifications are listed in docs/RULES_COVERAGE.md.
 import {
   type Action, type CardDef, type Check, type Choice, type DeckList, type Effect, type GameState, type Loc, type ManualOp,
-  type PlayerId, type PlayerState, type Queued, type Source, type Thresholds, type Trigger, type Unit, CELLS, COLS, ELEMENTS, ROWS,
+  type Element, type PlayerId, type PlayerState, type Queued, type Source, type Thresholds, type Trigger, type Unit, CELLS, COLS, ELEMENTS, ROWS,
 } from './types';
 
 // ---------- helpers ----------
@@ -28,7 +28,7 @@ export function isWater(s: GameState, c: number): boolean {
   const site = s.sites[c];
   if (!site || !site.inst) return false;
   const d = cardOf(s, site.inst);
-  if (d.thresholds.water > 0 || d.keywords.includes('Flood')) return true; // Codex "Flooded": a flooded site is a water site
+  if (d.thresholds.water > 0 || d.keywords.includes('Flood') || s.players?.some((pl) => pl?.flooded === c)) return true; // Codex "Flooded": a flooded site is a water site
   return Object.values(s.units).some((u) => u.c === c && unitCard(s, u).effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Flood' && e.who === 'siteHere'));
 }
 export const isLand = (s: GameState, c: number) => !!s.sites[c] && !isWater(s, c);
@@ -210,7 +210,7 @@ export function actor(s: GameState): PlayerId {
 
 function startTurn(s: GameState, p: PlayerId) {
   s.turn++; s.active = p;
-  for (const u of Object.values(s.units)) if (u.owner === p) u.tapped = false;
+  for (const u of Object.values(s.units)) if (u.owner === p) { if (u.noUntap) { delete u.noUntap; log(s, `${unitCard(s, u).name} does not untap this time.`, p); } else u.tapped = false; }
   for (const m of s.perms) if (m.owner === p) m.tapped = false;
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
@@ -326,7 +326,7 @@ function inRange(from: Loc, to: Loc, range: Effect['range']): boolean {
   return nearby(from.c).includes(to.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || e.who === 'atTarget' || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -344,7 +344,10 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins: Loc[]): n
   for (let c = 0; c < CELLS; c++) {
     if (e.siteKind && (!s.sites[c]?.inst || (e.siteKind === 'water') !== isWater(s, c))) continue;
     if (e.op === 'destroySite' && !s.sites[c]?.inst) continue;
-    if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c)) && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
+    if (e.op === 'rubble' && s.sites[c]) continue;
+    if (e.op === 'replaceRubble' && !(s.sites[c] && !s.sites[c]!.inst)) continue;
+    if (e.op === 'flood' && !(s.sites[c]?.inst && nearby(c).some((x) => x !== c && isWater(s, x)))) continue;
+    if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c) || e.op === 'rubble') && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
   }
   const busy = (c: number) => Object.values(s.units).some((u) => u.c === c) ? 0 : 1;
   return out.sort((a, b) => busy(a) - busy(b) || a - b); // squares with units first
@@ -376,7 +379,7 @@ function projectileHit(s: GameState, p: PlayerId, from: Loc, dx: number, dy: num
 /** Indices of a card's effects that happen on `on` (and, for activated abilities, come from the same line as effect `fx`). */
 export function effectsOn(d: CardDef, on: Trigger, fx?: number): number[] {
   const line = fx === undefined ? undefined : d.effects[fx]?.line;
-  return d.effects.map((e, i) => [e, i] as const).filter(([e, i]) => e.on === on && (fx === undefined || (line === undefined ? i === fx : e.line === line))).map(([, i]) => i);
+  return d.effects.map((e, i) => [e, i] as const).filter(([e, i]) => e.on === on && !e.afterSite && (fx === undefined || (line === undefined ? i === fx : e.line === line))).map(([, i]) => i);
 }
 /** Units effect `i` of card `d` may target, measured from `origins` (spellcasters for magic, the source otherwise). */
 export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, origins: Loc[], self?: string): string[] {
@@ -424,7 +427,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
       if (!c?.target || !ok.includes(c.target)) return no('Choose a valid target: in range and region of a spellcaster you control, and not a stealthed enemy.', 'Stealth');
     }
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
-    if (e.who === 'atTarget') { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
+    if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
     if (e.op === 'teleport') { const u = c?.target ? s.units[c.target] : undefined; if (c?.cell === undefined || !teleportCells(s, e, u).includes(c.cell)) return no('Choose where it goes.'); }
   }
@@ -491,6 +494,10 @@ function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
 }
 
 /** Carry out effects `idx` of card `d` for player `p`. `loc` is where the ability happens; `src` what it came from. */
+function lastSiteEl(s: GameState, p: PlayerId): Element | null {
+  const ids = s.players[p].cast?.ids ?? []; const last = [...ids].reverse().find((x) => x.startsWith('site:'));
+  if (!last) return null; const d = s.cards[last.slice(5)]; return d ? (ELEMENTS.find((e) => d.thresholds[e] > 0) ?? null) : null;
+}
 function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc | null, ch: (Choice | null)[], src?: Source, subject?: string) {
   const self = selfUnit(s, src), bearer = bearerOf(s, src);
   const shielded = new Set<string>(); // targets a Ward protected: the rest of the effect on them does not resolve
@@ -500,7 +507,12 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
     if (e.optional && c?.skip) { log(s, `${pname(p)} chooses not to: ${e.text ?? ''}`, p); continue; }
     if (e.pay) { if (s.players[p].mana < e.pay) { log(s, `${pname(p)} cannot pay ${e.pay} mana for ${d.name}.`, p); continue; } s.players[p].mana -= e.pay; log(s, `${pname(p)} pays ${e.pay} mana (${d.name}).`, p); }
     if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((x) => s.sites[x]!.inst && cardOf(s, s.sites[x]!.inst!).name === d.name).length !== 1) continue;
-    const n = e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
+    if (e.refCell) { const prev = idx.slice(0, idx.indexOf(i)).reverse().find((k) => ch[k]?.cell !== undefined); ch = ch.slice(); ch[i] = { ...(ch[i] ?? {}), cell: prev !== undefined ? ch[prev]!.cell : undefined }; }
+    const c2 = ch[i] ?? undefined;
+    if (e.afterSite && !(s.players[p].cast?.turn === s.turn && lastSiteEl(s, p) === e.afterSite)) continue;
+    const n = e.amount === 'airCastThisTurn' ? (s.players[p].cast?.turn === s.turn ? s.players[p].cast!.ids.reduce((t, id) => t + (s.cards[id]?.thresholds.air ?? 0), 0) : 0)
+      : e.amount === 'banishedElement' ? s.players[p].banished ?? 0
+      : e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
     const all = Object.values(s.units);
     const here = (u: Unit) => !!loc && u.c === loc.c && u.r === loc.r;
     const near = (u: Unit) => !!loc && u.r === loc.r && nearby(loc.c).includes(u.c);
@@ -528,14 +540,14 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
       case 'allMinions': victims = all.filter((u) => !u.avatar); break;
       case 'enemyMinions': victims = all.filter((u) => !u.avatar && u.owner !== p); break;
       case 'allyMinions': victims = all.filter((u) => !u.avatar && u.owner === p); break;
-      case 'atTarget': victims = c?.cell === undefined ? [] : all.filter((u) => u.c === c.cell && (u.r === 'surface' || !loc || u.r === loc.r)); break;
+      case 'atTarget': victims = c2?.cell === undefined ? [] : all.filter((u) => u.c === c2.cell && (u.r === 'surface' || !loc || u.r === loc.r)); break;
     }
     if (e.who !== 'target') {
       if (e.only === 'minion' || e.who === 'minionsHere') victims = victims.filter((u) => !u.avatar);
       if (e.only === 'enemy' || e.only === 'enemyMinion') victims = victims.filter((u) => u.owner !== p);
       if (e.only === 'ally' || e.only === 'allyMinion') victims = victims.filter((u) => u.owner === p);
       if (e.other) victims = victims.filter((u) => u.id !== self);
-      victims = victims.filter((u) => fits(s, e, u));
+      victims = victims.filter((u) => fits(s, e, u) && !(e.notKw && has(s, u, e.notKw)));
       if (e.random && victims.length > e.random) { const pick: Unit[] = []; const pool = victims.slice(); while (pick.length < e.random && pool.length) pick.push(pool.splice(Math.floor(rand(s) * pool.length), 1)[0]); victims = pick; }
     }
     const players: PlayerId[] = e.who === 'opponent' ? [other(p)] : e.who === 'controller' ? [p] : e.who === 'allAvatars' ? [p, other(p)] : [];
@@ -618,6 +630,16 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
       case 'teleport': for (const v of victims) { if (c?.cell === undefined) break; v.c = c.cell; v.r = 'surface'; log(s, `${nm(v)} teleports (${d.name}).`, p); if (!s.sites[v.c] && !v.avatar && !has(s, v, 'Voidwalk')) removeUnit(s, v, 'banish', 'the void'); } break;
+      case 'choose': break;
+      case 'noUntap': for (const v of victims) { v.noUntap = true; } if (victims.length) log(s, `${victims.map(nm).join(', ')} will not untap next time (${d.name}).`, p); break;
+      case 'flood': if (c2?.cell !== undefined && s.sites[c2.cell]?.inst) { s.players[p].flooded = c2.cell; log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name}: it is a water site until ${pname(p)} floods another.`, p); } break;
+      case 'rubble': if (c2?.cell !== undefined && !s.sites[c2.cell]) { s.sites[c2.cell] = { inst: null, owner: null }; log(s, `${d.name} fills the void with Rubble.`, p); } break;
+      case 'replaceRubble': {
+        const st = c2?.cell !== undefined ? s.sites[c2.cell] : null; const top = s.players[p].atlas[0];
+        if (!st || st.inst || !top) break;
+        s.players[p].atlas.shift(); s.sites[c2!.cell!] = { inst: top, owner: p }; log(s, `${d.name} replaces the Rubble with ${cardOf(s, top).name}.`, p);
+        break;
+      }
       case 'destroySite': {
         const st = c?.cell !== undefined ? s.sites[c.cell] : null;
         if (!st?.inst) break;
@@ -882,7 +904,8 @@ export function check(s: GameState, a: Action): Check {
       const src = sourceOf(s, a.src);
       if (!src || src.owner !== p) return no('That is not yours.');
       const d = cardOf(s, src.inst); const e = d.effects[a.fx];
-      if (!e || (e.on !== 'tap' && e.on !== 'activated')) return no(`${d.name} has no ability to use there.`);
+      if (!e || (e.on !== 'tap' && e.on !== 'activated') || e.afterSite) return no(`${d.name} has no ability to use there.`);
+      if (!effectsOn(d, e.on, a.fx).length) return no(`${d.name} has no ability to use there.`);
       if (src.unit && isDisabled(s, src.unit)) return no(`${d.name} is disabled and its abilities do not work.`, 'Disabled');
       if (e.on === 'tap') {
         if (src.unit) { const can = canAct(s, src.unit); if (!can.ok) return can; }
@@ -890,6 +913,7 @@ export function check(s: GameState, a: Action): Check {
       } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`);
       const cost = e.cost ?? 0;
       if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`);
+      if (e.banishDead && !pl.cemetery.some((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0)) return no(`You have no dead ${e.banishDead} minions to banish.`);
       const idx = effectsOn(d, e.on, a.fx);
       return checkChoices(s, p, d, idx, a.choices ?? [], [src.loc], src.unit?.id);
     }
@@ -975,13 +999,19 @@ export function apply(state: GameState, a: Action): GameState {
       s.sites[a.c] = { inst: a.inst, owner: p, ...(cardOf(s, a.inst).keywords.includes('Ward') ? { ward: true } : {}) };
       pl.mana += 1;
       log(s, `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`);
+      (s.players[p].cast ??= { turn: s.turn, ids: [] }); if (s.players[p].cast!.turn !== s.turn) s.players[p].cast = { turn: s.turn, ids: [] };
+      s.players[p].cast!.ids.push('site:' + s.inst[a.inst]);
       fire(s, a.inst, 'genesis', p, { c: a.c, r: 'surface' }, { site: a.c });
+      // the Avatar's own "If you played an earth site, …" follow-ups
+      const av = s.units[pl.avatar]; const avd = unitCard(s, av); const follow = avd.effects.map((e, i) => [e, i] as const).filter(([e]) => e.afterSite).map(([, i]) => i);
+      if (follow.length) fire(s, av.inst, 'tap', p, { c: av.c, r: av.r }, { unit: av.id }, undefined, follow);
       break;
     }
     case 'cast': {
       const d = cardOf(s, a.inst);
       pl.hand.splice(pl.hand.indexOf(a.inst), 1);
       pl.mana -= d.cost;
+      if (!pl.cast || pl.cast.turn !== s.turn) pl.cast = { turn: s.turn, ids: [] }; pl.cast.ids.push(d.id);
       const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
       const idx = effectsOn(d, on);
       const ch = choicesOf(d, idx, a.choices, a.target);
@@ -1014,6 +1044,12 @@ export function apply(state: GameState, a: Action): GameState {
         else if ('site' in a.src) s.sites[a.src.site]!.tapped = true;
       } else (s.used ??= {})[`${srcKey(a.src)}:${e.line ?? a.fx}`] = s.turn;
       if (e.cost) pl.mana -= e.cost;
+      if (e.banishDead) {
+        const dead = pl.cemetery.filter((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0);
+        pl.cemetery = pl.cemetery.filter((i) => !dead.includes(i));
+        pl.banished = dead.reduce((n, i) => n + cardOf(s, i).thresholds[e.banishDead!], 0);
+        log(s, `${pname(p)} banishes ${dead.length} dead ${e.banishDead} minion(s) (${pl.banished} ${e.banishDead}).`);
+      }
       log(s, `${pname(p)} uses ${d.name}${e.on === 'tap' ? ' (tap)' : ''}${e.cost ? `, paying ${e.cost} mana` : ''}.`);
       resolve(s, d, effectsOn(d, e.on, a.fx), p, src.loc, a.choices ?? [], a.src);
       if (e.sacrifice) sacrifice(s, a.src);
@@ -1112,7 +1148,8 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
     if (e.who === 'target' && !e.ref) { const t = targetsFor(s, p, d, i, origins, self); if (!t.length) return []; if (spread < 0) spread = i; base[i] = { target: t[0] }; }
     if (e.x) base[i] = { ...(base[i] ?? {}), n: 1 };
     if (e.op === 'draw' && !e.deck) base[i] = { ...(base[i] ?? {}), deck: 'spellbook' };
-    if (e.who === 'atTarget') {
+    if (e.who === 'atTarget' && !e.refCell && !['damage', 'destroy', 'banish', 'strike', 'tap', 'sink', 'choose'].includes(e.op)) { const cl = cellsFor(s, d, i, origins); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }
+    else if (e.who === 'atTarget' && !e.refCell) {
       // the AI aims area effects at squares with more enemies than allies
       const cells = cellsFor(s, d, i, origins).map((c) => ({ c, v: Object.values(s.units).filter((u) => u.c === c).reduce((n, u) => n + (u.owner === p ? -1 : 1), 0) })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
       if (!cells.length) return []; base[i] = { ...(base[i] ?? {}), cell: cells[0].c };
