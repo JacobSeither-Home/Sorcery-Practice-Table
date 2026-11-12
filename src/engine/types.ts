@@ -18,10 +18,10 @@ export interface Loc { c: number; r: Region; /** an aura's location: its 2×2 ar
  *  static    — always on while the card is in the realm (stat changes and granted keywords) */
 export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | 'startTurn' | 'endTurn' | 'static'
   /** reactions ("Whenever …"): a unit dies, this takes damage, this attacks, a unit enters here; `ev` narrows which */
-  | 'dies' | 'damaged' | 'attacks' | 'enters';
-export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters'];
+  | 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts';
+export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts'];
 /** Which events a reaction listens to, relative to the card that has it. */
-export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean }
+export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
   | 'damage' | 'heal' | 'loseLife' | 'draw' | 'mana' | 'destroy' | 'banish' | 'bounce'
   | 'tap' | 'untap' | 'buff' | 'grant' | 'discard'
@@ -51,6 +51,8 @@ export type Op =
   | 'noUntap'
   /** "Lasts N of your turns": dispelled at the end of its controller's Nth turn */
   | 'lasts'
+  /** casting rules on the card itself: cost change ("Costs (2) less to cast if …"), where it may be cast from, and who may cast it */
+  | 'castRule'
   /** choose cards from a zone (Effect.pick) */
   | 'pick'
   /** remove Ward marks from the units (and sites) it reaches */
@@ -92,6 +94,8 @@ export interface Effect {
   ev?: EventFilter;
   /** "You may …": the player can skip this part when it resolves */
   optional?: boolean;
+  /** castRule: mana off the cost; may be cast from the cemetery (and is banished afterwards); may be cast by any ally (of these subtypes) */
+  less2?: number; fromCemetery?: boolean; banishAfter?: boolean; byAlly?: boolean; bySub?: string[];
   /** only while / if this holds ("while Warded", "if you're on Death's Door", "during enemy turns" …) */
   when?: Cond;
   /** pick: the zone step */
@@ -349,7 +353,7 @@ export interface DeckList { name: string; avatar: string; spellbook: string[]; a
 
 /** A condition on an ability ("while …", "if …", "unless …", "during …"), measured from the card that has it. */
 export interface Cond {
-  k: 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere';
+  k: 'moreLife' | 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere';
   sub?: string; name?: string; other?: boolean; not?: boolean;
 }
 

@@ -79,6 +79,7 @@ export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc 
   const subOk = (d: CardDef) => (!w.sub || d.subtypes.some((y) => y.toLowerCase() === w.sub!.toLowerCase())) && (!w.name || d.name === w.name);
   let r = false;
   switch (w.k) {
+    case 'moreLife': r = s.players[p].life > s.players[other(p)].life; break;
     case 'backRow': r = !!at && xy(at.c)[1] === (p === 0 ? ROWS - 1 : 0); break;
     case 'warded': r = !!me?.ward; break;
     case 'deathsDoor': r = s.players[p].deathsDoor; break;
@@ -341,6 +342,7 @@ function afterPrevention(s: GameState, u: Unit, n: number, from?: DmgFrom): numb
 }
 export function forgetPrevention(cards: Record<string, CardDef>) { preventCache.delete(cards); }
 function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: DmgFrom) {
+  const killer = from?.unit;
   if (n0 <= 0 || !s.units[u.id]) return;
   if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
   const n = afterPrevention(s, u, n0, from);
@@ -353,7 +355,7 @@ function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: Dm
   const dies = lethal || u.damage >= defenseOf(s, u);
   if (!dies && has(s, u, 'Heals from damage that does not kill it')) { u.damage = 0; log(s, `${unitCard(s, u).name} heals at once.`, null); }
   react(s, 'damaged', u);
-  if (dies && s.units[u.id]) killUnit(s, u, true);
+  if (dies && s.units[u.id]) { killUnit(s, u, true); if (killer && s.units[killer.id] && !s.units[u.id]) react(s, 'kills', killer, u); } // Codex "Kill Credit": the unit that struck or dealt the damage
 }
 function drawCard(s: GameState, p: PlayerId, deck: 'spellbook' | 'atlas'): boolean {
   const pl = s.players[p];
@@ -515,7 +517,7 @@ const selfUnit = (s: GameState, src?: Source) => (src && 'unit' in src ? src.uni
 const bearerOf = (s: GameState, src?: Source) => (src && 'perm' in src ? s.perms.find((m) => m.id === src.perm)?.carrier : undefined);
 
 /** A triggered ability: resolve it now when it needs no decision, otherwise queue it for its controller. */
-const TRIG_NAME: Partial<Record<Trigger, string>> = { deathrite: 'Deathrite', genesis: 'Genesis', startTurn: 'start of turn', endTurn: 'end of turn', dies: 'reaction', damaged: 'reaction', attacks: 'reaction', enters: 'reaction' };
+const TRIG_NAME: Partial<Record<Trigger, string>> = { deathrite: 'Deathrite', genesis: 'Genesis', startTurn: 'start of turn', endTurn: 'end of turn', dies: 'reaction', damaged: 'reaction', attacks: 'reaction', enters: 'reaction', kills: 'reaction', casts: 'reaction' };
 function fire(s: GameState, inst: string, on: Trigger, p: PlayerId, loc: Loc | null, src?: Source, subject?: string, only?: number[]) {
   const d = cardOf(s, inst); const idx = only ?? effectsOn(d, on);
   if (!idx.length || s.phase === 'over') return;
@@ -528,22 +530,25 @@ function fire(s: GameState, inst: string, on: Trigger, p: PlayerId, loc: Loc | n
 }
 /** Reactions ("Whenever …") of every card in the realm to something that happened to unit `u`. */
 let reacting = 0;
-function react(s: GameState, on: 'dies' | 'damaged' | 'attacks' | 'enters', u: Unit) {
+/** `u` is the unit the event is about (for kills and casts: the one who killed or cast); `subject` is what "it" means in the text (the killed unit; default u). */
+function react(s: GameState, on: 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts', u: Unit, subject?: Unit, spell?: CardDef) {
   if (reacting > 6 || s.phase === 'over') return; // a chain of reactions stops eventually
   reacting++;
   try {
     for (const p of [s.active, other(s.active)] as PlayerId[]) for (const x of sourcesOf(s, p)) {
       if (on === 'dies' && x.unit?.id === u.id) continue;
       const d = cardOf(s, x.inst);
-      const idx = d.effects.map((e, i) => [e, i] as const).filter(([e]) => e.on === on && e.ev && evMatches(s, e.ev, p, x.loc, x.unit?.id, x.src, u)).map(([, i]) => i);
+      const idx = d.effects.map((e, i) => [e, i] as const).filter(([e]) => e.on === on && e.ev && evMatches(s, e.ev, p, x.loc, x.unit?.id, x.src, u) && (!e.ev.magic || spell?.type === 'Magic')).map(([, i]) => i);
       if (x.unit && isDisabled(s, x.unit)) continue;
-      if (idx.length) fire(s, x.inst, on, p, x.loc, x.src, u.id, idx);
+      if (idx.length) fire(s, x.inst, on, p, x.loc, x.src, (subject ?? u).id, idx);
     }
   } finally { reacting--; }
 }
 function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: Loc, self: string | undefined, src: Source, u: Unit): boolean {
   if (f.self) return u.id === self || ('perm' in src && s.perms.find((m) => m.id === src.perm)?.carrier === u.id);
   if (f.other && u.id === self) return false;
+  if (f.notKw && has(s, u, f.notKw)) return false;
+  if (f.avatar && !u.avatar) return false;
   if (f.side === 'enemy' && u.owner === p) return false;
   if (f.side === 'ally' && u.owner !== p) return false;
   if (f.minion && u.avatar) return false;
@@ -1030,8 +1035,22 @@ function siteCells(s: GameState, p: PlayerId): number[] {
   const best = Math.min(...cands.map(dist));
   return cands.filter((c) => dist(c) === best);
 }
+/** What a spell costs right now: its printed cost less "Costs (N) less to cast if …" (Codex "Cost": never below 0). */
+export function costOf(s: GameState, p: PlayerId, d: CardDef): number {
+  let c = d.cost;
+  for (const e of d.effects) if (e.op === 'castRule' && e.less2 && condHolds(s, e.when, p, null)) c -= e.less2;
+  return Math.max(0, c);
+}
+const castRules = (d: CardDef) => d.effects.filter((e) => e.op === 'castRule');
+/** Where magic is measured from: your spellcasters, plus allies when the card says "May be cast by any ally". */
+function castOrigins(s: GameState, p: PlayerId, d: CardDef): Loc[] {
+  const by = castRules(d).find((e) => e.byAlly);
+  const extra = by ? Object.values(s.units).filter((u) => u.owner === p && !isDisabled(s, u) && (!by.bySub?.length || by.bySub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase())))).map((u) => ({ c: u.c, r: u.r })) : [];
+  return [...casterOrigins(s, p), ...extra];
+}
 function affordable(s: GameState, p: PlayerId, d: CardDef): Check {
-  if (s.players[p].mana < d.cost) return { ok: false, reason: `${d.name} costs ${d.cost} mana and you have ${s.players[p].mana}. Sites give 1 mana each at the start of your turn.`, keyword: 'Mana' };
+  const cost = costOf(s, p, d);
+  if (s.players[p].mana < cost) return { ok: false, reason: `${d.name} costs ${cost} mana${cost !== d.cost ? ` (${d.cost} printed)` : ''} and you have ${s.players[p].mana}. Sites give 1 mana each at the start of your turn.`, keyword: 'Mana' };
   const t = thresholdOf(s, p);
   for (const e of ELEMENTS) if (t[e] < d.thresholds[e]) return { ok: false, reason: `${d.name} needs ${d.thresholds[e]} ${e} threshold and your sites provide ${t[e]}. Threshold is counted from the element symbols on sites you control; it is not spent.`, keyword: 'Threshold' };
   return { ok: true };
@@ -1086,7 +1105,8 @@ export function check(s: GameState, a: Action): Check {
       return { ok: true };
     }
     case 'cast': {
-      if (!pl.hand.includes(a.inst)) return no('That card is not in your hand.');
+      const fromCem = !pl.hand.includes(a.inst) && pl.cemetery.includes(a.inst);
+      if (!pl.hand.includes(a.inst) && !(fromCem && castRules(cardOf(s, a.inst)).some((e) => e.fromCemetery))) return no(fromCem ? `${cardOf(s, a.inst).name} cannot be cast from the cemetery.` : 'That card is not in your hand.', 'Casting spells');
       const d = cardOf(s, a.inst);
       if (d.type === 'Site') return no('Sites are played with your Avatar ability, not cast.', 'Site');
       if (d.type === 'Avatar') return no('Avatars are not cast.');
@@ -1105,7 +1125,7 @@ export function check(s: GameState, a: Action): Check {
         if (!b || b.owner !== p || b.c !== a.c) return no('An artifact can be handed to one of your own units on the site where it is conjured.', 'Carry');
         return { ok: true };
       }
-      return checkChoices(s, p, d, idx, choicesOf(d, idx, a.choices, a.target), d.type === 'Magic' ? casterOrigins(s, p) : [{ c: a.c!, r: 'surface' }]);
+      return checkChoices(s, p, d, idx, choicesOf(d, idx, a.choices, a.target), d.type === 'Magic' ? castOrigins(s, p, d) : [{ c: a.c!, r: 'surface' }]);
     }
     case 'ability': {
       const src = sourceOf(s, a.src);
@@ -1217,9 +1237,12 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'cast': {
       const d = cardOf(s, a.inst);
-      pl.hand.splice(pl.hand.indexOf(a.inst), 1);
-      pl.mana -= d.cost;
+      const fromCem = !pl.hand.includes(a.inst);
+      if (fromCem) pl.cemetery.splice(pl.cemetery.indexOf(a.inst), 1); else pl.hand.splice(pl.hand.indexOf(a.inst), 1);
+      pl.mana -= costOf(s, p, d);
+      if (fromCem) log(s, `${pname(p)} casts ${d.name} from the cemetery.`);
       if (!pl.cast || pl.cast.turn !== s.turn) pl.cast = { turn: s.turn, ids: [] }; pl.cast.ids.push(d.id);
+      { const caster = s.units[pl.avatar]; if (caster) react(s, 'casts', caster, caster, d); }
       const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
       const idx = effectsOn(d, on);
       const ch = choicesOf(d, idx, a.choices, a.target);
@@ -1240,7 +1263,7 @@ export function apply(state: GameState, a: Action): GameState {
         log(s, `${pname(p)} casts ${d.name}.${hand}`);
         const caster = s.units[pl.avatar];
         resolve(s, d, idx, p, { c: caster.c, r: caster.r }, ch);
-        pl.cemetery.push(a.inst);
+        if (fromCem && castRules(d).some((e) => e.banishAfter)) log(s, `${d.name} is banished.`); else pl.cemetery.push(a.inst);
       }
       break;
     }
@@ -1414,11 +1437,12 @@ export function legalActions(s: GameState): Action[] {
     if (pl.atlas.length) out.push({ t: 'drawSite' });
   }
   const mine = sitesOf(s, p); const seen = new Set<string>();
-  for (const inst of pl.hand) {
+  for (const inst of [...pl.hand, ...pl.cemetery.filter((i) => castRules(cardOf(s, i)).some((e) => e.fromCemetery))]) {
     const d = cardOf(s, inst);
     if (d.type === 'Site' || d.type === 'Avatar' || seen.has(d.id) || !affordable(s, p, d).ok) continue; seen.add(d.id);
+    if (!pl.hand.includes(inst) && !castRules(d).some((e) => e.fromCemetery)) continue;
     if (d.type === 'Magic') {
-      for (const choices of choiceSets(s, p, d, effectsOn(d, 'cast'), casterOrigins(s, p))) out.push({ t: 'cast', inst, ...(choices.length ? { choices } : {}) });
+      for (const choices of choiceSets(s, p, d, effectsOn(d, 'cast'), castOrigins(s, p, d))) out.push({ t: 'cast', inst, ...(choices.length ? { choices } : {}) });
     } else {
       const places = d.type === 'Aura' ? [...Array(CELLS).keys()].filter((c) => xy(c)[0] <= COLS - 2 && xy(c)[1] <= ROWS - 2) : mine;
       for (const c of places) for (const choices of choiceSets(s, p, d, effectsOn(d, 'genesis'), [{ c, r: 'surface', ...(d.type === 'Aura' ? { aura: true } : {}) }])) out.push({ t: 'cast', inst, c, ...(choices.length ? { choices } : {}) });

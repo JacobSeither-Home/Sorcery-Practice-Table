@@ -290,7 +290,7 @@ export function Table() {
           </>)}
           {myInput && !pend && s.phase === 'main' && (<>
             {selUnit && selUnit.owner === who && abilities.filter((x) => 'unit' in x.src && x.src.unit === selUnit.id).map((x) => <button key={x.fx} className="ability" disabled={!x.ok} data-tip={x.ok ? x.label : x.why} onClick={() => setCast({ k: 'ability', src: x.src, fx: x.fx })}>✦ {x.on === 'tap' ? 'Tap: ' : ''}{x.label.length > 34 ? x.label.slice(0, 32) + '…' : x.label}</button>)}
-            {abilities.length > 0 && <button className="ability" onClick={() => setAbilOpen(true)} data-tip="Abilities of your units, sites and artifacts that you use when you choose">✦ Abilities ({abilities.filter((x) => x.ok).length})</button>}
+            {(abilities.length > 0 || me.cemetery.some((i) => cardOf(s, i).effects.some((e) => e.op === 'castRule' && e.fromCemetery))) && <button className="ability" onClick={() => setAbilOpen(true)} data-tip="Abilities of your units, sites and artifacts that you use when you choose">✦ Abilities ({abilities.filter((x) => x.ok).length})</button>}
             <button disabled={s.units[me.avatar].tapped || !me.atlas.length} onClick={() => act({ t: 'drawSite' })} data-tip="Avatar ability: tap to draw a site instead of playing one">Tap Avatar: draw a site</button>
             {g.mode === 'ai' && <button disabled={!canUndo} onClick={undo} data-tip={canUndo ? 'Take back your last move' : 'Nothing to take back. Moves that draw a card, pass the turn, or that the opponent has answered cannot be undone.'}>Undo</button>}
             <button className="end" onClick={() => act({ t: 'endTurn' })} data-tip="Damage on your minions clears and unspent mana is lost">End turn</button>
@@ -366,6 +366,8 @@ export function Table() {
             <motion.div className="sheet" initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }} transition={spring(pace, 420, 34)} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Abilities">
               <header><h2>Abilities</h2><button className="iconbtn" onClick={() => setAbilOpen(false)} aria-label="Close">✕</button></header>
               <p className="note">Abilities you use when you choose. Tap abilities tap the card; the others can be used once per turn.</p>
+              {me.cemetery.filter((i) => cardOf(s, i).effects.some((e) => e.op === 'castRule' && e.fromCemetery)).map((i) => { const cd = cardOf(s, i); return (
+                <button key={i} className="abil-row" onClick={() => { setAbilOpen(false); if (cd.type === 'Magic') play(i); else { setSel({ k: 'hand', inst: i }); toast(`Choose one of your sites for ${cd.name}.`); } }}><b>{cd.name}</b> <span>Cast it from your cemetery (costs {cd.cost})</span></button>); })}
               {abilities.map((x, i) => <button key={i} className="abil-row" disabled={!x.ok} onClick={() => { setAbilOpen(false); setCast({ k: 'ability', src: x.src, fx: x.fx }); }}><b>{x.name}</b> <span>{x.on === 'tap' ? 'Tap → ' : ''}{x.label}</span>{!x.ok && <small>{x.why}</small>}</button>)}
             </motion.div>
           </motion.div>

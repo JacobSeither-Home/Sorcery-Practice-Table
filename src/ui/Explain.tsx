@@ -17,6 +17,8 @@ const WHEN: Record<Trigger, string> = {
   damaged: 'Reaction: happens on its own whenever this takes damage.',
   attacks: 'Reaction: happens on its own whenever this attacks.',
   enters: 'Reaction: happens on its own whenever a unit it watches enters its location.',
+  kills: 'Reaction: happens on its own whenever this kills a unit (the unit that struck or dealt the damage gets the kill).',
+  casts: 'Reaction: happens on its own whenever the spellcaster it watches casts a spell.',
 };
 
 /** One line per ability group, saying what the table does with it. */

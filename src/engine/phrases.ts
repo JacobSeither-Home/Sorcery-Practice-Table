@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', castRule: 'Costs & mana rules', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -451,6 +451,12 @@ export const RULES: Rule[] = [
   { id: 'summon-anywhere', label: 'Summon N tokens (you choose where)', re: new RegExp(`^summon ${NUM} (foot soldier|skeleton|frog)(?: token)?s?(?: tokens?)?\\.$`, 'i'),
     build: (m) => [{ op: 'summon', ...amount(m[1]), who: 'atTarget', range: 'any', token: m[2].replace(/\b\w/g, (c) => c.toUpperCase()) }] },
   { id: 'raise-dead', label: 'Summon a random dead minion', re: /^summon a random dead minion\.$/i, build: () => [{ op: 'raise', who: 'atTarget', range: 'any' }] },
+  { id: 'cost-less', label: 'Costs (N) less to cast if …', re: new RegExp(`^costs? ${MANA} less to cast(?: if (.+?))?\\.$`, 'i'),
+    build: (m) => { if (!m[2]) return [{ op: 'castRule', who: 'self', less2: manaOf(m[1]) }]; const w = condOf(m[2]); return w ? [{ op: 'castRule', who: 'self', less2: manaOf(m[1]), when: w }] : null; } },
+  { id: 'cast-from-cemetery', label: 'May be cast from your cemetery', re: /^(?:you )?may (?:be )?cast(?: this(?: spell)?)? from your cemetery(, banishing it afterward)?\.$/i,
+    build: (m) => [{ op: 'castRule', who: 'self', fromCemetery: true, ...(m[1] ? { banishAfter: true } : {}) }] },
+  { id: 'cast-by-ally', label: 'May be cast by any ally / an allied X', re: /^may be cast by (?:any ally|an allied (\w+)(?: or (\w+))?)\.$/i,
+    build: (m) => { const subs = [m[1], m[2]].filter(Boolean).map((x) => subOf(x!)); if (subs.some((x) => !x)) return null; return [{ op: 'castRule', who: 'self', byAlly: true, ...(subs.length ? { bySub: subs as string[] } : {}) }]; } },
   // deck-building rules apply when the deck is built (Decks screen), not during play
   { id: 'deckbuilding', label: 'Deck-building rule', re: /^your (?:spellbook|atlas|deck) (?:may include any number of|can'?t contain|must contain) .+\.$/i, build: () => [] },
   { id: 'prevent', label: 'Takes no / less damage (from …)', re: /^(.+?) takes? (no|(\d+) less) damage(?: from (.+?))?\.$/i,
@@ -477,7 +483,7 @@ export const RULES: Rule[] = [
 ];
 
 /** Which ops make sense for each trigger. A static line can only change stats, keywords, prevention and what a card provides. */
-const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent', 'lasts'] };
+const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent', 'lasts', 'castRule'], cast: ['damage', 'heal', 'loseLife', 'draw', 'mana', 'destroy', 'banish', 'bounce', 'tap', 'untap', 'buff', 'grant', 'discard', 'manual', 'provide', 'summon', 'shoot', 'strike', 'mill', 'scry', 'sink', 'teleport', 'destroySite', 'choose', 'rubble', 'replaceRubble', 'flood', 'noUntap', 'unward', 'raise', 'pick', 'castRule'] };
 
 export interface ReadLine { text: string; on: Trigger | 'keywords'; effects: Effect[]; manual: string[] }
 export interface Reading { effects: Effect[]; lines: ReadLine[]; manual: string[] }
@@ -539,6 +545,7 @@ function condOf(t0: string, unless = false, during = false): Cond | null {
   const t = t0.trim().toLowerCase().replace(/’/g, "'"); let m: RegExpMatchArray | null; let w: Cond | null = null;
   if (during) { if (/^(enemy|opponents?'?s?|your opponent'?s?) turns?$/.test(t)) w = { k: 'enemyTurn' }; else if (/^your turns?$/.test(t)) w = { k: 'yourTurn' }; }
   else if (/^(?:it'?s |this is |in )?(?:in )?your back row$/.test(t)) w = { k: 'backRow' };
+  else if (/^you have more life than (?:each|your) opponents?$/.test(t)) w = { k: 'moreLife' };
   else if (/^(?:this is |it'?s )?warded$/.test(t)) w = { k: 'warded' };
   else if (/^(?:you'?re|you are) on death'?s door$/.test(t)) w = { k: 'deathsDoor' };
   else if (/^you'?ve lost life this turn$/.test(t)) w = { k: 'lostLife' };
@@ -601,9 +608,11 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^When(?:ever)? this is struck,\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^Whenever (?:this|bearer) (?:attacks and )?kills (?:an? (?:enemy|minion|unit)|an enemy minion),\s*(.+)$/i))) { on = 'kills'; ev = { self: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^(?:Whenever|After) (this|bearer|an? (?:nearby |enemy )?avatar|an enemy|your opponent|an opponent) casts? (?:a |an )?(spell|magic(?: spell)?),\s*(.+)$/i))) { on = 'casts'; ev = /this|bearer/i.test(m[1]) ? { self: true } : { ...( /enemy|opponent/i.test(m[1]) ? { side: 'enemy' as const } : {}), ...(/avatar/i.test(m[1]) ? { avatar: true } : {}), ...(/nearby/i.test(m[1]) ? { range: 'nearby' as const } : {}) }; if (/magic/i.test(m[2])) ev.magic = true; body = cap(m[3]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) attacks,\s*(.+)$/i))) { on = 'attacks'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (an?|another) (.+?) dies( nearby| here)?,\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], m[3]))) { on = 'dies'; body = cap(m[4]); }
-    else if ((m = line.match(/^Whenever (an?|another) (.+?) enters (?:here|this site),\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], ' here'))) { on = 'enters'; body = cap(m[3]); }
+    else if ((m = line.match(/^When(?:ever)? (an?|another) (non-(\w+) )?(.+?) enters (?:or leaves )?(?:here|this site|its site),\s*(.+)$/i)) && (ev = eventFilter(m[1], m[4], ' here'))) { on = 'enters'; if (m[3]) ev.notKw = KEYWORDS.find((k) => k.toLowerCase() === m![3].toLowerCase()); body = cap(m[5]); }
     else on = type === 'Magic' ? 'cast' : 'static';
     const rl: ReadLine = { text: raw, on, effects: [], manual: [] };
     const ss = sentences(body);

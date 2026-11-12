@@ -962,3 +962,37 @@ describe('conditions on abilities', () => {
     expect(has(s, s.units[u], 'Disabled')).toBe(false);
   });
 });
+
+describe('casting rules from card text', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); return s; };
+  it('"Costs (2) less to cast if you have more life than each opponent"', () => {
+    const s = board(); s.players[0].mana = 2;
+    const knight = read('Minion', 'Test Knight', 'Costs (2) less to cast if you have more life than each opponent.', { cost: 4, attack: 3, defense: 3 });
+    const k = give(s, 0, knight);
+    expect(reason(s, { t: 'cast', inst: k, c: cell(2, 3) })).toMatch(/costs 4/);
+    s.players[1].life = 15;
+    expect(reason(s, { t: 'cast', inst: k, c: cell(2, 3) })).toBe('');
+  });
+  it('"You may cast this spell from your cemetery, banishing it afterward."', () => {
+    let s = board(); s.players[0].mana = 9;
+    const ghost = read('Magic', 'Test Ghostfire', 'Gain 1 life.\nYou may cast this spell from your cemetery, banishing it afterward.', { cost: 1 });
+    s.inst['0gh'] = ghost; s.players[0].cemetery.push('0gh'); s.players[0].life = 15;
+    expect(legalActions(s).some((a) => a.t === 'cast' && a.inst === '0gh')).toBe(true);
+    s = apply(s, { t: 'cast', inst: '0gh' });
+    expect(s.players[0].life).toBe(16); expect(s.players[0].cemetery).not.toContain('0gh');
+  });
+  it('"May be cast by any ally": range is measured from your allies too', () => {
+    let s = board(); s.players[0].mana = 9;
+    const bury = read('Magic', 'Test Bury', 'May be cast by any ally.\nDeal 1 damage to target adjacent minion.', { cost: 1 });
+    const foe = unit(s, 1, cell(0, 0), id('Kiln Brute'));
+    expect(reason(s, { t: 'cast', inst: give(s, 0, bury), target: foe })).toMatch(/valid target/); // nothing of yours is adjacent
+    unit(s, 0, cell(1, 0), id('Ember Runner'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, bury), target: foe });
+    expect(s.units[foe].damage).toBe(1);
+  });
+});
