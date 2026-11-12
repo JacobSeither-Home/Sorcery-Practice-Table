@@ -377,7 +377,7 @@ function inRange(from: Loc, to: Loc, range: Effect['range'], sameRegion = false)
   return nearby(from.c).includes(to.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -558,7 +558,17 @@ function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: 
   return true;
 }
 function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
-  for (const x of sourcesOf(s, p)) fire(s, x.inst, on, p, x.loc, x.src);
+  for (const x of sourcesOf(s, p)) { const d = cardOf(s, x.inst); const idx = effectsOn(d, on).filter((i) => !d.effects[i].eachTurn); if (idx.length) fire(s, x.inst, on, p, x.loc, x.src, undefined, idx); }
+  // "At the end of each turn" / "At the start of each player's turn": cards of both players
+  for (const q of [p, other(p)] as PlayerId[]) for (const x of sourcesOf(s, q)) { const d = cardOf(s, x.inst); const idx = effectsOn(d, on).filter((i) => d.effects[i].eachTurn); if (idx.length) fire(s, x.inst, on, q, x.loc, x.src, undefined, idx); }
+}
+/** A site that keeps some units out ("Units with 3 or more power can't enter this site"). */
+function entryBlocked(s: GameState, u: Unit, c: number, ground = true): boolean {
+  const st = s.sites[c]; if (!st?.inst) return false;
+  // a site's own rule, or one from a minion standing on it ("Allies can't enter this site")
+  const holders = [cardOf(s, st.inst), ...Object.values(s.units).filter((x) => x.c === c && x.id !== u.id).map((x) => unitCard(s, x))];
+  return holders.some((hd) => hd.effects.some((e) => e.on === 'static' && e.noEnter && (!e.noEnter.ground || (ground && !has(s, u, 'Airborne'))) && (e.noEnter.minPower === undefined || power(s, u) >= e.noEnter.minPower)
+    && (!e.noEnter.side || (e.noEnter.side === 'ally' ? u.owner === st.owner : u.owner !== st.owner))));
 }
 
 /** Carry out effects `idx` of card `d` for player `p`. `loc` is where the ability happens; `src` what it came from. */
@@ -664,6 +674,20 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'summon': {
         const tok = Object.values(s.cards).find((x) => x.name.toLowerCase() === (e.token ?? '').toLowerCase());
         if (e.who === 'atTarget' && c2?.cell !== undefined) loc = { c: c2.cell, r: 'surface' };
+        if (e.places) {
+          const av = s.units[s.players[p].avatar];
+          const at = loc ? loc.c : av.c;
+          const cells = e.places === 'adjacentSites' ? orthAdjacent(at).filter((c) => s.sites[c]?.inst) : e.places === 'adjacentLocations' ? orthAdjacent(at).filter((c) => !!s.sites[c])
+            : e.places === 'nearAvatar' ? nearby(av.c).filter((c) => s.sites[c]?.inst)
+            : e.places === 'bordersEnemy' ? sitesOf(s, p).filter((c) => orthAdjacent(c).some((n) => s.sites[n]?.owner === other(p)))
+            : e.places === 'allyMinion' ? (c2?.target && s.units[c2.target] ? [s.units[c2.target].c] : [])
+            : (c2?.cell !== undefined ? [c2.cell] : []);
+          const tok0 = Object.values(s.cards).find((x) => x.name.toLowerCase() === (e.token ?? '').toLowerCase());
+          if (!tok0) { log(s, `${d.name}: the ${e.token} token is not in the card pool; summon it by hand.`, p); break; }
+          for (const c of cells) for (let k = 0; k < n; k++) { const inst = `${p}tok${s.nextId}`; s.inst[inst] = tok0.id; const id = `u${s.nextId++}`; s.units[id] = { id, inst, owner: p, c, r: 'surface', tapped: false, damage: 0, enteredTurn: s.turn, avatar: false, stealthLost: false, lance: false }; }
+          log(s, `${d.name} summons ${cells.length * n} ${tok0.name} token(s).`, p);
+          break;
+        }
         if (!tok || !loc) { log(s, `${d.name}: the ${e.token} token is not in the card pool; summon it by hand.`, p); break; }
         for (let k = 0; k < n; k++) {
           const inst = `${p}tok${s.nextId}`; s.inst[inst] = tok.id; const id = `u${s.nextId++}`;
@@ -676,10 +700,15 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'banish': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'banish', d.name); break;
       case 'bounce': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'hand', d.name); break;
       case 'heal':
-        if (e.who === 'controller' || e.who === 'opponent') for (const q of players) gainLife(s, q, n);
+        if (e.who === 'siteController') { const sc = loc ? s.sites[loc.c]?.owner : undefined; if (sc != null) gainLife(s, sc, n); }
+        else if (e.who === 'controller' || e.who === 'opponent') for (const q of players) gainLife(s, q, n);
         else for (const v of victims) if (v.avatar) gainLife(s, v.owner, n); else { v.damage = Math.max(0, v.damage - n); log(s, `${nm(v)} heals ${n}.`, p); }
         break;
-      case 'loseLife': for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) loseLife(s, q, n); break;
+      case 'loseLife': {
+        const sc = e.who === 'siteController' && loc ? s.sites[loc.c]?.owner : undefined;
+        for (const q of e.who === 'siteController' ? (sc != null ? [sc] : []) : players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) loseLife(s, q, n);
+        break;
+      }
       case 'mana': s.players[p].mana += n; log(s, `${pname(p)} gains ${n} mana (${d.name}).`, p); break;
       case 'draw': {
         const deck = e.deck ?? c?.deck ?? 'spellbook';
@@ -727,6 +756,11 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         break;
       }
       case 'choose': break;
+      case 'control': for (const v of victims) {
+        if (v.avatar || v.owner === p) continue;
+        v.ctrl = { was: v.owner, ...(e.until === 'turn' ? { turn: s.turn } : {}) }; v.owner = p;
+        log(s, `${pname(p)} gains control of ${nm(v)}${e.until === 'turn' ? ' this turn' : ''} (${d.name}).`, p);
+      } break;
       case 'pick': resolvePick(s, d, e, p, loc, c2, src); break;
       case 'unward': {
         for (const v of victims) if (v.ward) { v.ward = false; log(s, `${nm(v)}'s Ward breaks (${d.name}).`, p); }
@@ -905,6 +939,7 @@ function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
 
 // ---------- movement ----------
 function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
+  if (from.c !== to.c && entryBlocked(s, u, to.c)) return false;
   if (from.c === to.c) {
     if (from.r === to.r || !s.sites[to.c]) return false;
     return isWater(s, to.c) ? has(s, u, 'Submerge') : has(s, u, 'Burrowing');
@@ -1323,6 +1358,7 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'endTurn': {
       fireAll(s, p, 'endTurn');
+      for (const u of Object.values(s.units)) if (u.ctrl?.turn !== undefined) { log(s, `${unitCard(s, u).name} returns to ${pname(u.ctrl.was)}'s control.`, null); u.owner = u.ctrl.was; delete u.ctrl; }
       for (const m of [...s.perms]) { // Codex "Lasts 3 of Your Turns": a counter each end of turn, dispelled at N
         if (m.owner !== p) continue;
         const n = cardOf(s, m.inst).effects.find((e) => e.op === 'lasts')?.n; if (!n) continue;

@@ -996,3 +996,43 @@ describe('casting rules from card text', () => {
     expect(s.units[foe].damage).toBe(1);
   });
 });
+
+describe('site rules, control, tokens to many places, each-turn triggers', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 20; return s; };
+  it('"Units with 3 or more power can\'t enter this site"', () => {
+    const s = board();
+    const hollows = read('Site', 'Test Hollows', "Units with 3 or more power can't enter this site.");
+    s.inst['1hh'] = hollows; s.sites[cell(2, 1)] = { inst: '1hh', owner: 1 };
+    const giant = unit(s, 0, cell(2, 2), id('Hill Giant')); const runner = unit(s, 0, cell(3, 1), id('Ember Runner'));
+    expect(reason(s, { t: 'move', unit: giant, path: [{ c: cell(2, 1), r: 'surface' }] })).not.toBe('');
+    expect(reason(s, { t: 'move', unit: runner, path: [{ c: cell(2, 1), r: 'surface' }] })).toBe('');
+  });
+  it('"Gain control of target enemy minion this turn and untap it": control comes back at the end of the turn', () => {
+    let s = board();
+    const betray = read('Magic', 'Test Betrayal', 'Gain control of target enemy minion this turn and untap it.', { cost: 1 });
+    const foe = unit(s, 1, cell(2, 2), id('Kiln Brute'), { tapped: true });
+    s = apply(s, { t: 'cast', inst: give(s, 0, betray), target: foe });
+    expect(s.units[foe].owner).toBe(0); expect(s.units[foe].tapped).toBe(false);
+    s = apply(s, { t: 'endTurn' });
+    expect(s.units[foe].owner).toBe(1);
+  });
+  it('"Summon a Skeleton token to each other adjacent site"', () => {
+    let s = board();
+    cards['tok:skel2'] = makeCard({ id: 'tok:skel2', name: 'Skeleton', type: 'Minion', attack: 1, defense: 1, category: 'Token' });
+    const necro = read('Minion', 'Test Necro', 'Genesis → Summon a Skeleton token to each other adjacent site.', { attack: 1, defense: 1 });
+    s = apply(s, { t: 'cast', inst: give(s, 0, necro), c: cell(2, 2) });
+    expect(Object.values(s.units).filter((u) => cards[s.inst[u.inst]].name === 'Skeleton').map((u) => u.c).sort()).toEqual([cell(1, 2), cell(3, 2), cell(2, 1), cell(2, 3)].sort());
+  });
+  it('"At the end of each turn, the controller of this\'s site loses 1 life" happens on both players\' turns', () => {
+    let s = board();
+    const egg = read('Artifact', 'Test Egg', "At the end of each turn, the controller of Test Egg's site loses 1 life.");
+    s.inst['0eg'] = egg; s.perms.push({ id: 'meg', inst: '0eg', owner: 0, c: cell(2, 1), kind: 'artifact' }); // on player 2's site
+    s = apply(s, { t: 'endTurn' }); s = apply(apply(s, { t: 'draw', deck: 'spellbook' }), { t: 'endTurn' });
+    expect(s.players[1].life).toBe(18);
+  });
+});

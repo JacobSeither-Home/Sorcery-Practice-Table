@@ -51,6 +51,8 @@ export type Op =
   | 'noUntap'
   /** "Lasts N of your turns": dispelled at the end of its controller's Nth turn */
   | 'lasts'
+  /** take control of the units (Codex "Ownership and Control": the owner never changes) */
+  | 'control'
   /** casting rules on the card itself: cost change ("Costs (2) less to cast if …"), where it may be cast from, and who may cast it */
   | 'castRule'
   /** choose cards from a zone (Effect.pick) */
@@ -73,6 +75,8 @@ export type Who =
   | 'atTarget'
   /** the site this card is at: damage to it costs its controller life */
   | 'siteHere'
+  /** the controller of the site this card is at */
+  | 'siteController'
   /** an aura's area (Codex "Casting Auras": the four squares around its intersection): the units atop them, or the sites */
   | 'affected' | 'affectedSites';
 
@@ -94,6 +98,12 @@ export interface Effect {
   ev?: EventFilter;
   /** "You may …": the player can skip this part when it resolves */
   optional?: boolean;
+  /** startTurn / endTurn: on every player's turn, not just yours ("At the end of each turn") */
+  eachTurn?: boolean;
+  /** summon: where the tokens go (one at the source by default) */
+  places?: 'adjacentSites' | 'adjacentLocations' | 'bordersEnemy' | 'nearAvatar' | 'allyMinion' | 'allySite';
+  /** static on a site: units that can't enter it */
+  noEnter?: { minPower?: number; side?: 'ally' | 'enemy'; ground?: boolean };
   /** castRule: mana off the cost; may be cast from the cemetery (and is banished afterwards); may be cast by any ally (of these subtypes) */
   less2?: number; fromCemetery?: boolean; banishAfter?: boolean; byAlly?: boolean; bySub?: string[];
   /** only while / if this holds ("while Warded", "if you're on Death's Door", "during enemy turns" …) */
@@ -219,6 +229,8 @@ export interface Unit {
   avatar: boolean;
   stealthLost: boolean;
   lance: boolean;
+  /** control taken by an effect: who controlled it before, and until when ("this turn") */
+  ctrl?: { was: PlayerId; turn?: number };
   /** skips its next untap */
   noUntap?: boolean;
   /** turn on which a "the first time … would take damage each turn, prevent it" shield was used */

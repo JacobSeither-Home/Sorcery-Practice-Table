@@ -16,13 +16,13 @@ export const OP_LABEL: Record<Op, string> = {
   damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
-  castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
+  control: 'Gain control', castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
 };
 export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
   opponent: 'your opponent', self: 'this unit', alliesHere: 'each ally here', unitsHere: 'each unit here', minionsHere: 'each minion here', enemiesNearby: 'each enemy nearby',
   alliesNearby: 'each ally nearby', unitsNearby: 'each unit nearby', allMinions: 'every minion', enemyMinions: 'every enemy minion', allyMinions: 'every allied minion',
-  allAvatars: 'both Avatars', bearer: 'the bearer', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area',
+  allAvatars: 'both Avatars', bearer: 'the bearer', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
 };
 /** Which "applies to" choices make sense for an op. */
 export function whoFor(op: Op): Who[] {
@@ -60,15 +60,17 @@ export function describe(e: Effect): string {
       if (e.until === 'hurt') return `${who[0].toUpperCase() + who.slice(1)} falls asleep: disabled until it takes damage`;
       if (e.keyword && /^(Doesn|Summon to|Play to|Prevent first|Heals from|Loses Stealth|Can)/.test(e.keyword)) return `${who[0].toUpperCase() + who.slice(1)}: ${e.keyword.toLowerCase()}`;
       if (e.who === 'siteHere') return `This site ${e.keyword === 'Ward' ? 'gains a Ward' : 'is flooded (a water site)'}`;
+      if (e.noEnter) return `Units ${e.noEnter.minPower !== undefined ? `with ${e.noEnter.minPower} or more power ` : ''}${e.noEnter.side === 'ally' ? "(its controller's) " : e.noEnter.side === 'enemy' ? '(enemies) ' : ''}can't enter this site${e.noEnter.ground ? ' on the ground' : ''}`;
       if (e.who === 'affectedSites') return `The sites in its 2×2 area are flooded (water sites)`;
       return `${who[0].toUpperCase() + who.slice(1)} gains ${e.keyword}${e.until === 'turn' ? ' this turn' : ''}`;
     case 'discard': if (!e.random && e.who === 'controller') return `Discard a ${e.deck === 'atlas' ? 'site' : e.deck === 'spellbook' ? 'spell' : 'card'} of your choice`;
       return `${e.who === 'controller' ? 'You discard' : 'Your opponent discards'} ${n} at random`;
     case 'provide': { const el = Object.entries(e.el ?? {}).map(([k, v]) => `${v} ${k}`).join(', '); return `Provides ${[el && `${el} threshold`, e.n ? `${e.n} mana` : ''].filter(Boolean).join(' and ')}${e.on === 'static' ? ' while in the realm' : ' this turn'}`; }
-    case 'summon': return `Summon ${n === '1' ? 'a' : n} ${e.token} token${n === '1' ? '' : 's'} here`;
+    case 'summon': return `Summon ${n === '1' ? 'a' : n} ${e.token} token${n === '1' ? '' : 's'} ${({ adjacentSites: 'to each other adjacent site', adjacentLocations: 'to each adjacent location', bordersEnemy: 'to each site you control that borders an enemy site', nearAvatar: 'to each site near your Avatar', allyMinion: "to an allied minion's location", allySite: 'to a site you choose' } as Record<string, string>)[e.places ?? ''] ?? (e.who === 'atTarget' ? 'at a location you choose' : 'here')}`;
     case 'shoot': return e.pierce ? `Shoot a piercing projectile: ${n} damage to each unit it passes` : `Shoot ${e.shots && e.shots !== 1 ? (e.shots === -1 ? 'X projectiles' : `${e.shots} projectiles`) : 'a projectile'} for ${n} damage${e.shots && e.shots !== 1 ? ' each, in one direction' : ''}${e.splash ? ` (and ${e.splash} to each other unit where it hits)` : ''}`;
     case 'strike': return `Strike ${who}`;
     case 'prevent': return `${who[0].toUpperCase() + who.slice(1)} take${e.who === 'self' ? 's' : ''} ${e.less === undefined ? 'no' : `${e.less} less`} damage${e.fromMinPower !== undefined ? ` from units with ${e.fromMinPower} or more power` : ''}${e.fromElement ? ` from ${e.fromElement} spells` : e.fromMagic ? ' from magic' : ''}${e.fromSub ? ` from ${e.fromSub.join(', ')}` : ''}${e.fromSite ? ` from ${e.fromSite.join(', ')} sites` : ''}`;
+    case 'control': return `Gain control of ${who}${e.until === 'turn' ? ' this turn' : ''}`;
     case 'castRule': return e.less2 ? `Costs ${e.less2} less to cast${e.when ? ' when its condition holds' : ''}` : e.fromCemetery ? `May be cast from your cemetery${e.banishAfter ? ' (then it is banished)' : ''}` : e.byAlly ? `May be cast by ${e.bySub?.length ? `an allied ${e.bySub.join(' or ')}` : 'any ally'}` : 'Casting rule';
     case 'lasts': return `Lasts ${e.n} of your turns, then it is dispelled`;
     case 'pick': { const pk = e.pick!; const f = pk.filter ?? {};

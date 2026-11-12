@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', castRule: 'Costs & mana rules', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', control: 'Movement & position', castRule: 'Costs & mana rules', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -419,6 +419,15 @@ export const RULES: Rule[] = [
     } },
   { id: 'lance-token', label: 'Acquire a Lance token', re: /^(?:this )?acquires? a lance(?: token)?\.$/i, build: () => [{ op: 'grant', who: 'self', keyword: 'Lance', until: 'permanent' }] },
   { id: 'first-strike-attacking', label: 'Strikes first while attacking', re: /^(?:this )?strikes first while attacking\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Strikes first while attacking', until: 'permanent' }] : null) },
+  { id: 'site-controller-life', label: "The controller of this's site heals / loses N life", re: /^the controller of (?:this'?s?|its) site (heals|loses) (\d+)(?: life)?\.$/i,
+    build: (m) => [{ op: /heal/i.test(m[1]) ? 'heal' : 'loseLife', n: +m[2], who: 'siteController' }] },
+  { id: 'no-enter', label: "… can't enter this site", re: /^(units with (\d+) or more power|allies|enemies|enemy units|minions) can'?t (?:enter|move to) (?:this site|here)( on the ground)?\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'No entry', until: 'permanent', noEnter: { ...(m[2] ? { minPower: +m[2] } : {}), ...(/^allies/i.test(m[1]) ? { side: 'ally' as const } : /^enem/i.test(m[1]) ? { side: 'enemy' as const } : {}), ...(m[3] ? { ground: true } : {}) } }] : null) },
+  { id: 'gain-control', label: 'Gain control of …', re: /^gain control of (.+?)( this turn)?( and untap it)?\.$/i,
+    build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); if (!v) return null; const fx: Omit<Effect, 'on'>[] = [{ op: 'control', ...v, until: m[2] ? 'turn' : 'permanent' }]; if (m[3]) fx.push({ op: 'untap', who: 'target', ref: true }); return fx; } },
+  { id: 'summon-token-each', label: 'Summon a token to each … site', re: new RegExp(`^summon ${NUM} (foot soldier|skeleton|frog)(?: tokens?)? (?:token )?to (each other adjacent site|each adjacent location|each (?:site you control|allied site) that borders an enemy site|each site near your avatar|an allied site|an allied minion)\\.$`, 'i'),
+    build: (m) => { const w = m[3].toLowerCase(); const places = /adjacent location/.test(w) ? 'adjacentLocations' : /adjacent/.test(w) ? 'adjacentSites' : /borders/.test(w) ? 'bordersEnemy' : /avatar/.test(w) ? 'nearAvatar' : /allied minion/.test(w) ? 'allyMinion' : 'allySite';
+      return [{ op: 'summon', ...amount(m[1]), token: m[2].replace(/\b\w/g, (c) => c.toUpperCase()), places, ...(places === 'allyMinion' ? { who: 'target' as const, only: 'allyMinion' as const, range: 'any' as const } : places === 'allySite' ? { who: 'atTarget' as const, range: 'any' as const } : { who: 'controller' as const }) }]; } },
   { id: 'lasts', label: 'Lasts N of your turns', re: /^lasts (\w+) of your turns\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'lasts', who: 'self', n: WORDNUM[m[1].toLowerCase()] ?? +m[1] }] : null) },
   { id: 'affected-flooded', label: 'Affected sites are flooded', re: /^affected (?:\w+ )?sites are flooded\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'affectedSites', keyword: 'Flood', until: 'permanent' }] : null) },
   { id: 'first-damage', label: 'Prevent the first damage each turn', re: /^the first time .+? would take damage each turn, prevent that damage\.$/i,
@@ -429,7 +438,7 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'rubble', who: 'atTarget', range: 'adjacent', afterSite: m[1].toLowerCase() as Element }] },
   { id: 'replace-rubble', label: 'Replace an adjacent Rubble with your top site', re: /^replace an adjacent rubble with the top(?:most)? site of your atlas\.$/i,
     build: () => [{ op: 'replaceRubble', who: 'atTarget', range: 'adjacent' }] },
-  { id: 'choose-location', label: 'Target a location', re: /^target (?:a )?(nearby |adjacent )?location\.$/i, build: (m) => [{ op: 'choose', who: 'atTarget', range: (m[1]?.trim() || 'any') as Effect['range'] }] },
+  { id: 'choose-location', label: 'Target a location', re: /^target (?:a )?(nearby |adjacent )?location(?: up to (two|three) steps away)?\.$/i, build: (m) => [{ op: 'choose', who: 'atTarget', range: (m[1]?.trim() || m[2]?.toLowerCase() || 'any') as Effect['range'], targets: true }] },
   { id: 'damage-air-cast', label: 'Damage equal to the (A) on spells cast this turn', re: /^deal damage to another random unit there equal to the sum of \((A|E|F|W)\) on spells you'?ve cast this turn\.$/i,
     build: (m) => (m[1] === 'A' ? [{ op: 'damage', who: 'atTarget', refCell: true, random: 1, other: true, amount: 'airCastThisTurn' }] : null) },
   { id: 'flood-near-water', label: 'Flood a site near your body of water', re: /^flood a site near your body of water until you do so again\.$/i, build: () => [{ op: 'flood', who: 'atTarget', range: 'any' }] },
@@ -483,7 +492,7 @@ export const RULES: Rule[] = [
 ];
 
 /** Which ops make sense for each trigger. A static line can only change stats, keywords, prevention and what a card provides. */
-const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent', 'lasts', 'castRule'], cast: ['damage', 'heal', 'loseLife', 'draw', 'mana', 'destroy', 'banish', 'bounce', 'tap', 'untap', 'buff', 'grant', 'discard', 'manual', 'provide', 'summon', 'shoot', 'strike', 'mill', 'scry', 'sink', 'teleport', 'destroySite', 'choose', 'rubble', 'replaceRubble', 'flood', 'noUntap', 'unward', 'raise', 'pick', 'castRule'] };
+const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent', 'lasts', 'castRule'] };
 
 export interface ReadLine { text: string; on: Trigger | 'keywords'; effects: Effect[]; manual: string[] }
 export interface Reading { effects: Effect[]; lines: ReadLine[]; manual: string[] }
@@ -594,12 +603,13 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       out.lines.push({ text: raw, on: 'static', effects: fx, manual: [] }); out.effects.push(...fx); return;
     }
     if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false;
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false;
     if ((m = line.match(/^Genesis\s*&\s*Deathrite\s*→\s*(.+)$/i))) { on = 'genesis'; body = m[1]; both = true; }
     else if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
     else if ((m = line.match(/^At the (?:start|beginning) of your turn,\s*(.+)$/i))) { on = 'startTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^At the end of your turn,\s*(.+)$/i))) { on = 'endTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
+    else if ((m = line.match(/^At the (end|start) of each (?:player's )?turn,\s*(.+)$/i))) { on = m[1].toLowerCase() === 'end' ? 'endTurn' : 'startTurn'; body = cap(m[2]); eachTurn = true; }
     else if ((m = line.match(/^(Once (?:on your|per|each) turn,\s*)?([①-⑳]|\(\d+\))\s*→\s*(.+)$/i))) { on = 'activated'; cost = manaOf(m[2]); repeat = !m[1]; body = m[3]; }
     else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you|this)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^(Dies|Untaps|Gains (\w+)) at the end of your turn\.$/i))) { on = 'endTurn'; body = /^dies/i.test(m[1]) ? 'Kill this.' : /^untaps/i.test(m[1]) ? 'Untap this.' : `This gains ${m[2]}.`; }
@@ -662,7 +672,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       if (hit && ev?.self) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined } : e)) };
       // "it" must have something to point back to on this line
       if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
-      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}) })));
+      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}), ...(eachTurn ? { eachTurn: true } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
     if (both) rl.effects.push(...rl.effects.map((e) => ({ ...e, on: 'deathrite' as const })));
