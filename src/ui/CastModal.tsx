@@ -4,7 +4,7 @@
 // animation, then sends one action to the engine. Sentences the engine does not automate get a
 // second step: the hand tools, which change life, mana, cards and units through logged manual actions.
 import { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, Reorder, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
   type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, cardOf, casterOrigins, cellsFor, pickOptions, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
@@ -149,18 +149,38 @@ function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: numbe
           const ZONE: Record<string, string> = { spellbook: 'spellbook', atlas: 'atlas', hand: 'hand', cemetery: 'cemetery', collection: 'collection', oppHand: "opponent's hand", oppSpellbook: "opponent's spellbook", anyCemetery: 'cemetery' };
           if (pk.take === 'all') return <small> — {opts.length ? `${opts.length} match${opts.length === 1 ? 'es' : ''}: ${opts.map((o) => s.cards[o.cardId].name).join(', ')}` : 'nothing matches'}</small>;
           if (!opts.length) return <small className="none"> — nothing there matches</small>;
-          return <div className="chips targets">
-            <small>{max === 0 ? 'You see:' : `Choose up to ${max}:`}</small>
-            {opts.map((o) => { const on = chosen.includes(o.key); const cd = s.cards[o.cardId];
-              return <button key={o.key} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} disabled={max === 0} {...hoverProps(cd)}
-                onClick={() => set({ cards: on ? chosen.filter((k) => k !== o.key) : [...chosen, o.key].slice(-max) })}>{cd.name}<small> {ZONE[o.zone] ?? o.zone}{o.owner !== pl.p ? ' (theirs)' : ''}</small></button>; })}
+          // Looking at the top of a deck: the cards are laid out in deck order and, when the card says
+          // "in any order", can be dragged into a new one. The left end is the top of the deck.
+          const fromTop = !!pk.top && opts.every((o) => o.inst);
+          const canOrder = fromTop && max === 0 && (pk.rest ?? 'stay') === 'stay' && opts.length > 1;
+          if (canOrder) {
+            const byKey = new Map(opts.map((o) => [o.key, o]));
+            const order = (c?.order?.length === opts.length && c.order.every((k) => byKey.has(k)) ? c.order : opts.map((o) => o.key));
+            return <div className="lookrow">
+              <small>Drag the cards into the order you want them back on the deck.</small>
+              <div className="deck-ends"><b>◀ Top of the deck</b><span>drawn first</span><i /><span>drawn later</span><b>Deeper in the deck ▶</b></div>
+              <Reorder.Group as="div" axis="x" values={order} onReorder={(v) => set({ order: v as string[] })} className="look-cards">
+                {order.map((k, n) => { const cd = s.cards[byKey.get(k)!.cardId]; return (
+                  <Reorder.Item as="div" key={k} value={k} className="look-card drag" whileDrag={{ scale: 1.06, zIndex: 5 }} {...hoverProps(cd)}>
+                    <span className="ord">{n === 0 ? 'Top' : n === order.length - 1 ? `${n + 1} (last of these)` : n + 1}</span><CardFace card={cd} size="md" />
+                  </Reorder.Item>); })}
+              </Reorder.Group>
+            </div>;
+          }
+          return <div className={`lookrow ${opts.length > 8 ? 'many' : ''}`}>
+            <small>{max === 0 ? 'You see:' : `Choose up to ${max}:`}{fromTop ? ' (left is the top of the deck)' : ''}</small>
+            <div className="look-cards">{opts.map((o) => { const on = chosen.includes(o.key); const cd = s.cards[o.cardId];
+              return <button key={o.key} className={`look-card ${on ? 'on' : ''}`} aria-pressed={on} disabled={max === 0} {...hoverProps(cd)}
+                onClick={() => set({ cards: on ? chosen.filter((k) => k !== o.key) : [...chosen, o.key].slice(-max) })}><CardFace card={cd} size={opts.length > 8 ? 'sm' : 'md'} /><span className="from">{ZONE[o.zone] ?? o.zone}{o.owner !== pl.p ? ' (theirs)' : ''}</span></button>; })}</div>
           </div>;
         })()}
         {e.op === 'discard' && !e.random && e.who === 'controller' && (() => {
           const hand = s.players[pl.p].hand.filter((x) => (pl.d && x !== (pl as { inst?: string }).inst) && (e.deck === 'atlas' ? cardOf(s, x).type === 'Site' : e.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true));
           return hand.length ? <div className="chips targets"><small>Discard:</small>{hand.map((x) => <button key={x} className={`chip ${c?.card === x ? 'on' : ''}`} onClick={() => set({ card: x })}>{cardOf(s, x).name}</button>)}</div> : <small className="none"> — nothing to discard</small>;
         })()}
-        {e.op === 'scry' && (() => { const top = s.players[pl.p][e.deck ?? 'spellbook'][0]; return top ? <span className="xpick"><span className="peek" data-tip="Only you see this">{cardOf(s, top).name}</span><button className={c?.bottom ? 'on' : ''} onClick={() => set({ bottom: !c?.bottom })}>{c?.bottom ? 'Goes to the bottom' : 'Put it on the bottom'}</button></span> : <small className="none"> — the deck is empty</small>; })()}
+        {e.op === 'scry' && (() => { const top = s.players[pl.p][e.deck ?? 'spellbook'][0]; return top ? <div className="lookrow"><small>Only you see this. It is the top card of your {e.deck ?? 'spellbook'}.</small>
+          <div className="look-cards"><div className="look-card" {...hoverProps(cardOf(s, top))}><CardFace card={cardOf(s, top)} size="md" /></div>
+            <span className="xpick col"><button className={!c?.bottom ? 'on' : ''} onClick={() => set({ bottom: false })}>▲ Leave it on top</button><button className={c?.bottom ? 'on' : ''} onClick={() => set({ bottom: true })}>▼ Put it on the bottom</button></span></div></div> : <small className="none"> — the deck is empty</small>; })()}
         {e.op === 'teleport' && (c?.target || e.who === 'self') && (!e.dest || ['nearby', 'site', 'adjacent', 'toward', 'away'].includes(e.dest)) && (() => { const mover = c?.target ? s.units[c.target] : pl.self ? s.units[pl.self] : undefined; const tc = teleportCells(s, e, mover, pl.origins[0]); return tc.length ? <div className="chips targets"><small>Where to:</small>{tc.map((cl) => <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })}>{sq(cl)}<small> {s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'void'}</small></button>)}</div> : <small className="none"> — nowhere to go</small>; })()}
         {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
         {e.who === 'target' && !e.ref && (targets.length ? <div className="chips targets">{targets.map((id) => {

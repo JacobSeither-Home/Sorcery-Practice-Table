@@ -188,7 +188,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
+export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {

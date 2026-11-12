@@ -616,3 +616,16 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .hide-info { align-self: flex-end; font-size: 12px; padding: 2px 6px; margin: -4px -4px 0 0; }
 @media (max-width: 1100px) { .wide-only { display: none; } }
 .site-art-box.upright img { width: 100%; height: 100%; transform: translate(-50%, -50%); }
+
+/* looking at cards from a deck: shown as cards, left end = top of the deck */
+.lookrow { margin: 8px 0 4px; } .lookrow > small { display: block; margin-bottom: 6px; }
+.look-cards { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.lookrow.many .look-cards { max-height: 46vh; overflow: auto; padding: 4px; }
+.look-card { position: relative; padding: 0; border: 0; background: none; border-radius: 8px; box-shadow: none; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.look-card:hover:not(:disabled) { background: none; } .look-card:disabled { opacity: 1; cursor: default; }
+.look-card.on .card { box-shadow: 0 0 0 3px var(--brass), 0 8px 20px #000; } .look-card .from { font-size: 11px; color: var(--muted); }
+.look-card.drag { cursor: grab; touch-action: none; user-select: none; } .look-card.drag:active { cursor: grabbing; }
+.look-card .ord { font: 700 11.5px var(--sans, sans-serif); color: var(--brass); }
+.deck-ends { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
+.deck-ends b { color: var(--parch); white-space: nowrap; } .deck-ends i { flex: 1; height: 2px; min-width: 30px; background: linear-gradient(90deg, var(--brass), #cfa64e22); border-radius: 2px; }
+.xpick.col { flex-direction: column; align-items: stretch; align-self: center; }

@@ -930,6 +930,17 @@ function resolvePick(s: GameState, d: CardDef, e: Effect, p: PlayerId, loc: Loc 
     else s.players[p].cemetery.push(...rest);
     if (rest.length) log(s, `The other ${rest.length} go${rest.length === 1 ? 'es' : ''} ${pk.rest === 'bottom' ? 'to the bottom' : pk.rest === 'top' ? 'back on top' : pk.rest === 'shuffle' ? 'back and the deck is shuffled' : pk.rest === 'banish' ? 'into banishment' : 'to the cemetery'}.`, p);
   }
+  // the player's order for the looked-at cards that stayed in the deck (first = nearest the top)
+  if (pk.top && c?.order?.length && !pk.shuffle && pk.rest !== 'shuffle') {
+    const deck = s.players[p][pk.zones.includes('atlas') ? 'atlas' : 'spellbook'];
+    const back = looked.filter((i) => deck.includes(i));
+    const want = c.order.filter((i) => back.includes(i));
+    if (back.length > 1 && want.length === back.length && new Set(want).size === want.length) {
+      const pos = back.map((i) => deck.indexOf(i)).sort((x, y) => x - y);
+      pos.forEach((ix, k) => { deck[ix] = want[k]; });
+      log(s, `${pname(p)} puts ${back.length} cards back in an order of their choosing (${d.name}).`, p);
+    }
+  }
   if (pk.shuffle) { for (const z of pk.zones) if (z === 'spellbook' || z === 'atlas') shuffle(s, s.players[p][z]); log(s, `${pname(p)} shuffles.`, p); }
   void names; void src;
 }
