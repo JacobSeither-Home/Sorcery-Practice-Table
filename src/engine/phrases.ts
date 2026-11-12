@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -196,12 +196,14 @@ export const RULES: Rule[] = [
   { id: 'opponent-draws', label: 'Your opponent draws', re: new RegExp(`^(?:your |each )?opponent draws ${NUM} (spell|site)s?\\.$`, 'i'),
     build: (m) => [{ op: 'draw', ...amount(m[1]), who: 'opponent', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook' }] },
   { id: 'discard-random', label: 'Discard at random', re: new RegExp(`^(?:(your |each )?(opponent) |you )?discards? ${NUM} (?:random )?(?:card|spell)s?(?: at random)?\\.$`, 'i'),
-    build: (m) => (/random/i.test(m[0]) ? [{ op: 'discard', ...amount(m[3]), who: m[2] ? 'opponent' : 'controller' }] : null) },
+    build: (m) => (/random/i.test(m[0]) ? [{ op: 'discard', ...amount(m[3]), who: m[2] ? 'opponent' : 'controller', random: 1 }] : null) },
+  { id: 'discard-choose', label: 'Discard a spell / site / card (you choose)', re: /^discard (?:a|one) (spell|site|card)\.$/i,
+    build: (m) => [{ op: 'discard', n: 1, who: 'controller', ...(m[1].toLowerCase() === 'card' ? {} : { deck: m[1].toLowerCase() === 'site' ? 'atlas' as const : 'spellbook' as const }) }] },
   // mana and threshold
   { id: 'mana', label: 'Gain mana this turn', re: new RegExp(`^(?:you )?gain ${MANA}(?: this turn)?\\.$`, 'i'), build: (m) => [{ op: 'mana', n: manaOf(m[1]), who: 'controller' }] },
   { id: 'mana-only-copy', label: 'If this is the only …, gain mana', re: new RegExp(`^if this is the only .+ you control, gain ${MANA} this turn\\.$`, 'i'),
     build: (m, on) => (on === 'genesis' ? [{ op: 'mana', n: manaOf(m[1]), who: 'controller', cond: 'onlyCopy' }] : null) },
-  { id: 'provides', label: 'Provides mana / threshold', re: /^(?:this site )?provides ((?:\([AEFW]\))*)(?:\s*(?:and|,)?\s*(?:an additional )?([①-⑳]|\(\d+\)))?( to its controller)?( this turn)?\.?$/i,
+  { id: 'provides', label: 'Provides mana / threshold', re: /^(?:this site |this )?provides? ((?:\([AEFW]\))*)(?:\s*(?:and|,)?\s*(?:an additional )?([①-⑳]|\(\d+\)))?( to its controller)?( this turn)?\.?$/i,
     build: (m, on) => {
       const el = elementsOf(m[1] ?? ''); const n = m[2] ? manaOf(m[2]) : 0;
       if (!Object.keys(el).length && !n) return null;
@@ -250,7 +252,7 @@ export const RULES: Rule[] = [
   { id: 'mill', label: 'Discard your top N spells', re: new RegExp(`^discard your top(?:most)? (?:${NUM} )?(spell|site)s?\\.$`, 'i'),
     build: (m) => [{ op: 'mill', ...amount(m[1] ?? 'a'), who: 'controller', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook' }] },
   { id: 'avatars-discard', label: 'Each nearby Avatar discards a random card', re: /^each (nearby )?avatar discards a random (?:card|spell)\.$/i,
-    build: (m) => [{ op: 'discard', n: 1, who: m[1] ? 'nearbyAvatars' : 'allAvatars' }] },
+    build: (m) => [{ op: 'discard', n: 1, who: m[1] ? 'nearbyAvatars' : 'allAvatars', random: 1 }] },
   { id: 'draw-bottom', label: 'Draw your bottommost spell', re: /^draw your bottom(?:most)? (spell|site)\.$/i, build: (m) => [{ op: 'draw', n: 1, who: 'controller', deck: m[1].toLowerCase() === 'site' ? 'atlas' : 'spellbook', fromBottom: true }] },
   { id: 'sink', label: 'Submerge / burrow …', re: /^(submerge|burrow) (.+?)(?:, if able)?\.$/i,
     build: (m) => { const v = minionOnly(nounPhrase(m[2].replace(/ or artifacts?\b| and artifacts\b|,? minions and artifacts/gi, (x) => (/minions/i.test(x) ? ' minions' : '')), 'minion')); return v ? [{ op: 'sink', ...v, under: m[1].toLowerCase() === 'submerge' ? 'water' : 'land' }] : null; } },
@@ -281,8 +283,20 @@ export const RULES: Rule[] = [
   { id: 'flood-near-water', label: 'Flood a site near your body of water', re: /^flood a site near your body of water until you do so again\.$/i, build: () => [{ op: 'flood', who: 'atTarget', range: 'any' }] },
   { id: 'tap-without', label: 'Tap minions without a keyword there', re: /^tap minions without (\w+) there\.$/i,
     build: (m) => { const k = KEYWORDS.find((x) => x.toLowerCase() === m[1].toLowerCase()); return k ? [{ op: 'tap', who: 'atTarget', refCell: true, only: 'minion', notKw: k }] : null; } },
-  { id: 'lose-stealth', label: '… lose Stealth', re: /^(.+?) (?:permanently )?loses? stealth\.$/i,
-    build: (m, on) => { const v = nounPhrase(m[1]); return v && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses Stealth', until: 'permanent' }] : null; } },
+  { id: 'lose-keyword', label: '… lose a keyword', re: new RegExp(`^(.+?) (?:permanently )?loses? (${KEYWORDS.join('|')})\\.$`, 'i'),
+    build: (m, on) => { const v = nounPhrase(m[1]); const k = KEYWORDS.find((x) => x.toLowerCase() === m[2].toLowerCase()); return v && k && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses ' + k, until: 'permanent' }] : null; } },
+  { id: 'are-keyword', label: '… are Spellcasters / are disabled', re: new RegExp(`^(.+?) (?:is|are) (?:an? )?(${KEYWORDS.join('|')}|spellcasters|disabled)\\.$`, 'i'),
+    build: (m, on) => { const v = nounPhrase(m[1]); const w = m[2].toLowerCase().replace(/s$/, ''); const k = KEYWORDS.find((x) => x.toLowerCase() === w); return v && k && on === 'static' && v.who !== 'target' && v.who !== 'self' ? [{ op: 'grant', ...v, keyword: k, until: 'permanent' }] : null; } },
+  { id: 'break-wards', label: 'Break nearby Wards', re: /^break (nearby|adjacent|all) wards\.$/i,
+    build: (m) => [{ op: 'unward', who: m[1].toLowerCase() === 'all' ? 'allMinions' : 'unitsNearby' }] },
+  { id: 'fully-heal', label: 'Fully heal …', re: /^fully heal (.+?)\.$/i, build: (m) => { const v = nounPhrase(m[1]); return v ? [{ op: 'heal', n: 99, ...v }] : null; } },
+  { id: 'bearer-number', label: 'Bearer has Ranged N / Movement +N', re: /^(bearer|this) has (ranged|movement) \+?(\d+)\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', keyword: m[2].toLowerCase() === 'ranged' ? 'Ranged' : 'Movement', n: +m[3], until: 'permanent' }] : null) },
+  { id: 'have-additional', label: 'You have an additional (E)(F)(W)(A)', re: /^you have an additional ((?:\([AEFW]\))+)\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'provide', who: 'controller', el: elementsOf(m[1]) }] : null) },
+  { id: 'summon-anywhere', label: 'Summon N tokens (you choose where)', re: new RegExp(`^summon ${NUM} (foot soldier|skeleton|frog)(?: token)?s?(?: tokens?)?\\.$`, 'i'),
+    build: (m) => [{ op: 'summon', ...amount(m[1]), who: 'atTarget', range: 'any', token: m[2].replace(/\b\w/g, (c) => c.toUpperCase()) }] },
+  { id: 'raise-dead', label: 'Summon a random dead minion', re: /^summon a random dead minion\.$/i, build: () => [{ op: 'raise', who: 'atTarget', range: 'any' }] },
   // deck-building rules apply when the deck is built (Decks screen), not during play
   { id: 'deckbuilding', label: 'Deck-building rule', re: /^your (?:spellbook|atlas|deck) (?:may include any number of|can'?t contain|must contain) .+\.$/i, build: () => [] },
   { id: 'prevent', label: 'Takes no / less damage (from …)', re: /^(.+?) takes? (no|(\d+) less) damage(?: from (.+?))?\.$/i,
@@ -375,6 +389,12 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     // the card's own name means "this" — unless the name is a word used as a verb ("Teleport an ally …")
     raw = raw.replace(/^(?:\([AEFW]\))+\s*[—–-]\s*/, '');
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
+    const parts = line.replace(/\.$/, '').split(/,\s*/);
+    const PASSIVE: Record<string, string> = { "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend" };
+    if (parts.length > 1 && parts.every((x) => KEYWORD_LINE.test(x.trim()) || PASSIVE[x.trim().toLowerCase().replace('’', "'")]) && parts.some((x) => PASSIVE[x.trim().toLowerCase().replace('’', "'")])) {
+      const fx = parts.filter((x) => PASSIVE[x.trim().toLowerCase().replace('’', "'")]).map((x) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: PASSIVE[x.trim().toLowerCase().replace('’', "'")], until: 'permanent' as const, line: lineNo, text: x.trim(), rule: 'keyword-passive', auto: true }));
+      out.lines.push({ text: raw, on: 'static', effects: fx, manual: [] }); out.effects.push(...fx); return;
+    }
     if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
     let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined;
     if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
@@ -383,6 +403,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^At the end of your turn,\s*(.+)$/i))) { on = 'endTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^(Once (?:on your|per|each) turn,\s*)?([①-⑳]|\(\d+\))\s*→\s*(.+)$/i))) { on = 'activated'; cost = manaOf(m[2]); repeat = !m[1]; body = m[3]; }
     else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you|this)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
+    else if ((m = line.match(/^(Dies|Untaps|Gains (\w+)) at the end of your turn\.$/i))) { on = 'endTurn'; body = /^dies/i.test(m[1]) ? 'Kill this.' : /^untaps/i.test(m[1]) ? 'Untap this.' : `This gains ${m[2]}.`; }
     else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }

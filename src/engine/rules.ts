@@ -130,17 +130,32 @@ export function isDisabled(s: GameState, u: Unit): boolean {
 }
 export function has(s: GameState, u: Unit, kw: string): boolean {
   if (isDisabled(s, u)) return false;
+  const b = staticCards(s).size > 0 ? bonus(s, u).kws : null;
+  if (b?.includes('Loses ' + kw)) return false; // "All other minions lose Airborne"
   if (unitCard(s, u).keywords.includes(kw) || u.mods?.some((m) => m.kw === kw)) return true;
-  return staticCards(s).size > 0 && bonus(s, u).kws.includes(kw);
+  return !!b?.includes(kw);
 }
-export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u, 'Stealth') && !(staticCards(s).size > 0 && bonus(s, u).kws.includes('Loses Stealth'));
+export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u, 'Stealth');
+/** Ranged X: printed, or given ("Bearer has Ranged 3"). 0 = not ranged. */
+export function rangedOf(s: GameState, u: Unit): number {
+  if (!has(s, u, 'Ranged') && !unitCard(s, u).ranged) { const g = givenNumber(s, u, 'Ranged'); return g; }
+  return Math.max(unitCard(s, u).ranged, givenNumber(s, u, 'Ranged'), has(s, u, 'Ranged') ? 1 : 0);
+}
+/** The number on a keyword given by a static ability (Ranged 3, Movement +7). */
+function givenNumber(s: GameState, u: Unit, kw: string): number {
+  let n = 0; const set = staticCards(s); if (!set.size) return 0;
+  const look = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => { for (const e of d.effects) if (e.on === 'static' && e.op === 'grant' && e.keyword === kw && e.n && staticReaches(s, e, p, at, u, self, bearer)) n = Math.max(n, e.n); };
+  for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id)) look(d, v.owner, v, v.id); }
+  for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) look(d, m.owner, { c: m.c, r: 'surface' }, undefined, m.carrier); }
+  return n;
+}
 /** A card in hand that may be put somewhere unusual ("May be summoned to any site", "You may play this site to any corner"). */
 const allows = (d: CardDef, what: string) => d.effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === what);
 export const summoningSick = (s: GameState, u: Unit) => !u.avatar && u.enteredTurn === s.turn && !has(s, u, 'Charge');
 export function unitsAt(s: GameState, l: Loc): Unit[] { return Object.values(s.units).filter((u) => u.c === l.c && u.r === l.r); }
 export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || staticCards(s).size ? bonus(s, u).atk : 0)); }
 /** Extra steps: Movement +X on the card plus any given this turn. */
-export const moveOf = (s: GameState, u: Unit) => unitCard(s, u).movement + (u.mods ?? []).reduce((n, m) => n + (m.move ?? 0), 0);
+export const moveOf = (s: GameState, u: Unit) => unitCard(s, u).movement + (u.mods ?? []).reduce((n, m) => n + (m.move ?? 0), 0) + givenNumber(s, u, 'Movement');
 export function defenseOf(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.defense + (u.mods?.length || staticCards(s).size ? bonus(s, u).def : 0)); }
 
 function rand(s: GameState): number {
@@ -326,7 +341,7 @@ function inRange(from: Loc, to: Loc, range: Effect['range']): boolean {
   return nearby(from.c).includes(to.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -498,8 +513,9 @@ function lastSiteEl(s: GameState, p: PlayerId): Element | null {
   const ids = s.players[p].cast?.ids ?? []; const last = [...ids].reverse().find((x) => x.startsWith('site:'));
   if (!last) return null; const d = s.cards[last.slice(5)]; return d ? (ELEMENTS.find((e) => d.thresholds[e] > 0) ?? null) : null;
 }
-function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc | null, ch: (Choice | null)[], src?: Source, subject?: string) {
+function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc | null, ch: (Choice | null)[], src?: Source, subject?: string) {
   const self = selfUnit(s, src), bearer = bearerOf(s, src);
+  let loc = loc0;
   const shielded = new Set<string>(); // targets a Ward protected: the rest of the effect on them does not resolve
   for (const i of idx) {
     const e = d.effects[i]; const c = ch[i] ?? undefined;
@@ -591,6 +607,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
       }
       case 'summon': {
         const tok = Object.values(s.cards).find((x) => x.name.toLowerCase() === (e.token ?? '').toLowerCase());
+        if (e.who === 'atTarget' && c2?.cell !== undefined) loc = { c: c2.cell, r: 'surface' };
         if (!tok || !loc) { log(s, `${d.name}: the ${e.token} token is not in the card pool; summon it by hand.`, p); break; }
         for (let k = 0; k < n; k++) {
           const inst = `${p}tok${s.nextId}`; s.inst[inst] = tok.id; const id = `u${s.nextId++}`;
@@ -631,6 +648,20 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
       } break;
       case 'teleport': for (const v of victims) { if (c?.cell === undefined) break; v.c = c.cell; v.r = 'surface'; log(s, `${nm(v)} teleports (${d.name}).`, p); if (!s.sites[v.c] && !v.avatar && !has(s, v, 'Voidwalk')) removeUnit(s, v, 'banish', 'the void'); } break;
       case 'choose': break;
+      case 'unward': {
+        for (const v of victims) if (v.ward) { v.ward = false; log(s, `${nm(v)}'s Ward breaks (${d.name}).`, p); }
+        if (loc && (e.who === 'unitsNearby' || e.who === 'enemiesNearby' || e.who === 'alliesNearby')) for (const c0 of nearby(loc.c)) { const st = s.sites[c0]; if (st?.ward) { st.ward = false; log(s, `A site's Ward breaks (${d.name}).`, p); } }
+        break;
+      }
+      case 'raise': {
+        const dead = ([0, 1] as PlayerId[]).flatMap((q) => s.players[q].cemetery.map((inst) => ({ q, inst }))).filter((x) => cardOf(s, x.inst).type === 'Minion');
+        if (!dead.length || c2?.cell === undefined) { log(s, `${d.name}: there is no dead minion.`, p); break; }
+        const pick = dead[Math.floor(rand(s) * dead.length)]; const cem = s.players[pick.q].cemetery; cem.splice(cem.indexOf(pick.inst), 1);
+        const id = `u${s.nextId++}`; const dc = cardOf(s, pick.inst);
+        s.units[id] = { id, inst: pick.inst, owner: p, c: c2.cell, r: 'surface', tapped: false, damage: 0, enteredTurn: s.turn, avatar: false, stealthLost: false, lance: dc.keywords.includes('Lance'), ...(dc.keywords.includes('Ward') ? { ward: true } : {}) };
+        log(s, `${d.name} summons ${dc.name} from the cemetery.`, p);
+        break;
+      }
       case 'noUntap': for (const v of victims) { v.noUntap = true; } if (victims.length) log(s, `${victims.map(nm).join(', ')} will not untap next time (${d.name}).`, p); break;
       case 'flood': if (c2?.cell !== undefined && s.sites[c2.cell]?.inst) { s.players[p].flooded = c2.cell; log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name}: it is a water site until ${pname(p)} floods another.`, p); } break;
       case 'rubble': if (c2?.cell !== undefined && !s.sites[c2.cell]) { s.sites[c2.cell] = { inst: null, owner: null }; log(s, `${d.name} fills the void with Rubble.`, p); } break;
@@ -649,7 +680,9 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
         break;
       }
       case 'mill': { const pl = s.players[p]; const deck = e.deck ?? 'spellbook'; const top = pl[deck].splice(0, n); pl.cemetery.push(...top); log(s, `${pname(p)} discards the top ${top.length} of the ${deck}: ${top.map((x) => cardOf(s, x).name).join(', ') || 'nothing'}.`, p); break; }
-      case 'discard': for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) for (let k = 0; k < n; k++) {
+      case 'discard':
+        if (!e.random && e.who === 'controller') { const h = s.players[p].hand; const pickI = c?.card && h.includes(c.card) ? c.card : h.find((x) => (e.deck === 'atlas' ? cardOf(s, x).type === 'Site' : e.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true)); if (pickI) { h.splice(h.indexOf(pickI), 1); s.players[p].cemetery.push(pickI); log(s, `${pname(p)} discards ${cardOf(s, pickI).name} (${d.name}).`, p); } break; }
+        for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) for (let k = 0; k < n; k++) {
         const h = s.players[q].hand; if (!h.length) break;
         const [x] = h.splice(Math.floor(rand(s) * h.length), 1); s.players[q].cemetery.push(x);
         log(s, `${pname(q)} discards ${cardOf(s, x).name} (${d.name}).`, p);
@@ -744,7 +777,7 @@ export function attackTargets(s: GameState, u: Unit, at: Loc): { unit?: string; 
     out.push({ unit: e.id });
   }
   const site = s.sites[at.c];
-  if (at.r === 'surface' && site && site.owner === other(u.owner)) out.push({ site: true });
+  if (at.r === 'surface' && site && site.owner === other(u.owner) && !has(s, u, "Can't attack sites")) out.push({ site: true });
   return out;
 }
 function defenders(s: GameState, attacker: Unit, at: Loc, target?: string): string[] {
@@ -755,7 +788,7 @@ function defenders(s: GameState, attacker: Unit, at: Loc, target?: string): stri
 function interceptors(s: GameState, mover: Unit): string[] {
   if (hasStealth(s, mover)) return [];
   const air = has(s, mover, 'Airborne');
-  return unitsAt(s, mover).filter((d) => d.owner !== mover.owner && !d.tapped && !isDisabled(s, d) && !has(s, d, "Can't intercept") && (!air || has(s, d, 'Airborne') || unitCard(s, d).ranged > 0)).map((d) => d.id);
+  return unitsAt(s, mover).filter((d) => d.owner !== mover.owner && !d.tapped && !isDisabled(s, d) && !has(s, d, "Can't intercept") && (!air || has(s, d, 'Airborne') || rangedOf(s, d) > 0)).map((d) => d.id);
 }
 /** Units the responding player may commit to the pending defend/intercept. */
 export function responders(s: GameState): string[] {
@@ -948,7 +981,7 @@ export function check(s: GameState, a: Action): Check {
     case 'shoot': {
       const u = s.units[a.unit];
       if (!u || u.owner !== p) return no('That is not your unit.');
-      if (!unitCard(s, u).ranged) return no(`${unitCard(s, u).name} is not Ranged.`, 'Ranged');
+      if (!rangedOf(s, u)) return no(`${unitCard(s, u).name} is not Ranged.`, 'Ranged');
       const can = canAct(s, u); if (!can.ok) return can;
       if (Math.abs(a.dx) + Math.abs(a.dy) !== 1) return no('Projectiles travel in a straight line along the grid.');
       if (!shotTarget(s, u, a.dx, a.dy)) return no('No unit would be hit in that direction within range.', 'Ranged');
@@ -961,7 +994,7 @@ export function check(s: GameState, a: Action): Check {
  *  first unit it reaches, ally or enemy. Stealthed minions are not hit. Ranged X: it stops after X steps. */
 function shotTarget(s: GameState, u: Unit, dx: number, dy: number): Unit | null {
   const [x, y] = xy(u.c);
-  for (let i = 0; i <= unitCard(s, u).ranged; i++) {
+  for (let i = 0; i <= rangedOf(s, u); i++) {
     const c = cell(x + dx * i, y + dy * i); if (c < 0) return null;
     const there = unitsAt(s, { c, r: u.r }).filter((e) => e.id !== u.id && !(i === 0 && e.owner === u.owner) && !(e.owner !== u.owner && hasStealth(s, e)) && !(e.owner === u.owner && hasStealth(s, e)));
     const hit = there.find((e) => e.owner !== u.owner) ?? there[0]; // the shooter chooses among several: an enemy first
@@ -1221,7 +1254,7 @@ export function legalActions(s: GameState): Action[] {
       for (const attack of attackTargets(s, u, end)) out.push({ t: 'move', unit: u.id, path, attack });
       if (path.length) out.push({ t: 'move', unit: u.id, path });
     }
-    if (unitCard(s, u).ranged) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (shotTarget(s, u, dx, dy)) out.push({ t: 'shoot', unit: u.id, dx, dy });
+    if (rangedOf(s, u)) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (shotTarget(s, u, dx, dy)) out.push({ t: 'shoot', unit: u.id, dx, dy });
   }
   out.push({ t: 'endTurn' });
   return out;

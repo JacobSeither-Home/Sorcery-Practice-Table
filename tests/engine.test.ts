@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
-import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, isWater, legalActions, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
+import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, has, isWater, legalActions, rangedOf, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
 import { chooseAction, determinize } from '../src/ai/ai';
 
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
@@ -743,5 +743,36 @@ describe('Beta Avatar abilities from their text', () => {
     expect(s.units[foe].tapped).toBe(true); expect(s.units[fish].tapped).toBe(false);
     s = apply(s, { t: 'endTurn' });
     expect(s.units[foe].tapped).toBe(true);                                 // skipped this untap
+  });
+});
+
+describe('short passive and end-of-turn lines', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); return s; };
+  it('"All other minions lose Airborne" takes Airborne away while it is in the realm', () => {
+    const s = board();
+    const baron = read('Minion', 'Test Baron', 'All other minions lose Airborne.', { attack: 2, defense: 2 });
+    const sprite = unit(s, 1, cell(2, 1), id('Wind Sprite'));
+    expect(has(s, s.units[sprite], 'Airborne')).toBe(true);
+    unit(s, 0, cell(4, 3), baron);
+    expect(has(s, s.units[sprite], 'Airborne')).toBe(false);
+  });
+  it('"Dies at the end of your turn."', () => {
+    let s = board();
+    const ig = read('Minion', 'Test Ignited', 'Dies at the end of your turn.', { attack: 3, defense: 3 });
+    const u = unit(s, 0, cell(2, 3), ig);
+    s = apply(s, { t: 'endTurn' });
+    expect(s.units[u]).toBeUndefined();
+  });
+  it('"Bearer has Ranged 3."', () => {
+    const s = board();
+    const bow = read('Artifact', 'Test Bow', 'Bearer has Ranged 3.');
+    const u = unit(s, 0, cell(2, 3), id('Ember Runner'));
+    s.inst['0bw'] = bow; s.perms.push({ id: 'mbw', inst: '0bw', owner: 0, c: cell(2, 3), kind: 'artifact', carrier: u });
+    expect(rangedOf(s, s.units[u])).toBe(3);
   });
 });

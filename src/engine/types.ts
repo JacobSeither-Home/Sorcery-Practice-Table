@@ -49,6 +49,10 @@ export type Op =
   | 'flood'
   /** the units do not untap the next time they would */
   | 'noUntap'
+  /** remove Ward marks from the units (and sites) it reaches */
+  | 'unward'
+  /** summon a random dead minion from any cemetery at a chosen location, under your control */
+  | 'raise'
   /** destroy the site at a chosen square (it leaves Rubble) */
   | 'destroySite'
   /** static damage prevention for the units it reaches ("takes no damage from …", "take 1 less damage") */
@@ -153,7 +157,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
+export interface Choice { /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
