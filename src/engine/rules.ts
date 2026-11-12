@@ -94,13 +94,26 @@ function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, s
     default: return false;
   }
 }
+/** "for each …" counts, measured from the card's own location. */
+function countFor(s: GameState, per: NonNullable<Effect['per']>, d: CardDef, p: PlayerId, at: Loc, self?: string): number {
+  const [x, y] = xy(at.c);
+  switch (per.kind) {
+    case 'sameNearby': return Object.values(s.units).filter((u) => u.id !== self && unitCard(s, u).name === d.name && u.r === at.r && nearby(at.c).includes(u.c)).length;
+    case 'adjacentSites': return [at.c, ...orthAdjacent(at.c)].filter((c) => s.sites[c]?.inst).length;
+    case 'nearbySites': return nearby(at.c).filter((c) => s.sites[c]?.inst && (!per.el || (per.el === 'water' ? isWater(s, c) : cardOf(s, s.sites[c]!.inst!).thresholds[per.el] > 0))).length;
+    case 'wards': return Object.values(s.units).filter((u) => u.ward).length + s.sites.filter((st) => st?.ward).length;
+    case 'deadSub': return s.players[p].cemetery.filter((i) => cardOf(s, i).type === 'Minion' && (!per.sub || cardOf(s, i).subtypes.includes(per.sub))).length;
+    case 'sameInCemetery': return s.players[p].cemetery.filter((i) => cardOf(s, i).name === d.name).length;
+    case 'voidsInRow': return [0, 1, 2, 3, 4].filter((cx) => !s.sites[cell(cx, y)]).length + 0 * x;
+  }
+}
 export function bonus(s: GameState, u: Unit): Bonus {
   const b: Bonus = { atk: 0, def: 0, kws: [] };
   for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
   const set = staticCards(s); if (!set.size) return b;
   const add = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
     for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer)) {
-      if (e.op === 'buff') { b.atk += e.atk ?? 0; b.def += e.def ?? 0; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
+      if (e.op === 'buff') { const k = e.per ? countFor(s, e.per, d, p, at, self) : 1; b.atk += (e.atk ?? 0) * k; b.def += (e.def ?? 0) * k; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
     }
   };
   for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !d.keywords.includes('Disabled')) add(d, v.owner, v, v.id); }

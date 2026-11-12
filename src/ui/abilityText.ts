@@ -52,7 +52,8 @@ export function describe(e: Effect): string {
     case 'bounce': return `Return ${who} to its owner's hand`;
     case 'tap': return `Tap ${who}`;
     case 'untap': return `Untap ${who}`;
-    case 'buff': return `${who[0].toUpperCase() + who.slice(1)}: ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power${e.until === 'turn' ? ' this turn' : ''}`;
+    case 'buff': if (e.per) return `${who[0].toUpperCase() + who.slice(1)}: +${e.atk ?? 0} power for each ${({ sameNearby: 'other copy nearby', adjacentSites: 'adjacent site', nearbySites: `nearby ${e.per.el ? e.per.el + ' ' : ''}site`, wards: 'Ward in the realm', deadSub: `dead ${e.per.sub ?? 'minion'} of yours`, sameInCemetery: 'copy in your cemetery', voidsInRow: 'void in its row' } as Record<string, string>)[e.per.kind]}`;
+      return `${who[0].toUpperCase() + who.slice(1)}: ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power${e.until === 'turn' ? ' this turn' : ''}`;
     case 'grant': if (e.keyword === 'Movement') return `${who[0].toUpperCase() + who.slice(1)} gets Movement +${e.n ?? 1}${e.until === 'turn' ? ' this turn' : ''}`;
       if (e.who === 'siteHere') return `This site ${e.keyword === 'Ward' ? 'gains a Ward' : 'is flooded (a water site)'}`;
       return `${who[0].toUpperCase() + who.slice(1)} gains ${e.keyword}${e.until === 'turn' ? ' this turn' : ''}`;

@@ -94,6 +94,8 @@ export interface Effect {
   shots?: number; pierce?: boolean;
   /** atTarget: only land or water sites ("target land site") */
   siteKind?: 'land' | 'water';
+  /** buff: multiply by a count ("+1 power for each adjacent site") */
+  per?: { kind: 'sameNearby' | 'adjacentSites' | 'wards' | 'deadSub' | 'sameInCemetery' | 'voidsInRow' | 'nearbySites'; sub?: string; el?: Element };
   /** prevent: damage removed (undefined = all of it), and which sources it applies to */
   less?: number; fromMinPower?: number; fromSub?: string[]; fromMagic?: boolean; fromElement?: string; fromSite?: string[];
   /** pay this much mana first; the effect does not happen if it cannot be paid */

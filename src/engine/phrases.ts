@@ -216,6 +216,20 @@ export const RULES: Rule[] = [
       if (on === 'static' && m[4]) return null;
       return [{ op: 'buff', ...v, atk: num(m[2]), def: m[3] ? num(m[3]) : num(m[2]), until: until(m[4], on) }];
     } },
+  { id: 'power-per', label: '… has +N power for each …', re: /^(.+?) (?:has|have) \+(\d+) power for each (.+?)\.$/i,
+    build: (m, on) => {
+      if (on !== 'static') return null;
+      const v = nounPhrase(m[1]); if (!v || (v.who !== 'self' && v.who !== 'ownAvatar' && v.who !== 'bearer')) return null;
+      const w = m[3].toLowerCase(); let per: Effect['per'] | null = null; let mm: RegExpMatchArray | null;
+      if (/^other this nearby$/.test(w)) per = { kind: 'sameNearby' };
+      else if (/^adjacent site$/.test(w)) per = { kind: 'adjacentSites' };
+      else if ((mm = w.match(/^nearby (?:(air|earth|fire|water) )?site$/))) per = { kind: 'nearbySites', ...(mm[1] ? { el: mm[1] as Element } : {}) };
+      else if (/^ward in the realm$/.test(w)) per = { kind: 'wards' };
+      else if ((mm = w.match(/^of your dead (\w+)$/))) { const sb = subOf(mm[1]); per = sb ? { kind: 'deadSub', sub: sb } : /^minions$/.test(mm[1]) ? { kind: 'deadSub' } : null; }
+      else if (/^this in your cemetery$/.test(w)) per = { kind: 'sameInCemetery' };
+      else if (/^void in (?:their|its|this's) row$/.test(w)) per = { kind: 'voidsInRow' };
+      return per ? [{ op: 'buff', ...v, atk: +m[2], def: +m[2], until: 'permanent', per }] : null;
+    } },
   { id: 'give-power', label: 'Give … +N power', re: new RegExp(`^give (.+?) ([+\\-−]\\d+) power${UNTIL}\\.$`, 'i'),
     build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'buff', ...v, atk: num(m[2]), def: num(m[2]), until: until(m[3], on) }] : null; } },
   { id: 'grant', label: '… gains / has a keyword', re: new RegExp(`^(.+?) (?:gets?|gains?|has|have) (${KW}(?:(?:, | and |, and )${KW})*)${UNTIL}\\.$`, 'i'),
@@ -246,6 +260,8 @@ export const RULES: Rule[] = [
     build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Movement', n: +m[2], until: until(m[3], on) }] : null; } },
   { id: 'site-flooded', label: 'This site is flooded', re: /^this site is flooded\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Flood', until: 'permanent' }] : null) },
   { id: 'reminder', label: 'Reminder sentence (nothing to do)', re: /^(?:it|this) is a water site\.$|^they'?re water sites\.$/i, build: () => [] },
+  // deck-building rules apply when the deck is built (Decks screen), not during play
+  { id: 'deckbuilding', label: 'Deck-building rule', re: /^your (?:spellbook|atlas|deck) (?:may include any number of|can'?t contain|must contain) .+\.$/i, build: () => [] },
   { id: 'prevent', label: 'Takes no / less damage (from …)', re: /^(.+?) takes? (no|(\d+) less) damage(?: from (.+?))?\.$/i,
     build: (m, on) => {
       if (on !== 'static') return null;
