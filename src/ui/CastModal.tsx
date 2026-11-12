@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, cellsFor, pickOptions, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, cardOf, casterOrigins, cellsFor, pickOptions, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, hoverProps, mainElement } from './CardFace';
@@ -51,7 +51,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
   const pl = useMemo(() => plan(s, req), [req]); // fixed when the pop-up opens; the state moves on under it
   const [choices, setChoices] = useState<Choice[]>([]);
   const [phase, setPhase] = useState<'choose' | 'casting'>('choose');
-  const [why, setWhy] = useState('');
+  const [why, setWhy] = useState(''); const [whyKw, setWhyKw] = useState<string | undefined>();
   useEffect(() => { if (!pl) close(); }, [pl]);
   // pick the only possible target and sensible defaults straight away
   useEffect(() => {
@@ -81,7 +81,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
   };
   const go = () => {
     const a = action(); if (!a) return;
-    const r = check(s, a); if (!r.ok) { setWhy(r.reason); toast(r.reason, 'error', r.keyword); return; }
+    const r = check(s, a); if (!r.ok) { setWhy(r.reason); setWhyKw(r.keyword); return; }
     setPhase('casting'); focus(null);
     setTimeout(() => {
       if (!act(a)) { setPhase('choose'); return; }
@@ -109,7 +109,8 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
           </ol>}
           {others.length > 0 && <div className="spell-other"><b>Its other abilities</b>{others.map((e, i) => <p key={i}><span className="trig">{TRIGGER_SHORT[e.on]}</span> {describe(e)}{e.op === 'manual' ? <em> (by hand)</em> : ''}</p>)}</div>}
           {manualLines.length > 0 && req.k === 'hand' && <HandTools g={g} lines={manualLines} p={pl.p} />}
-          {why && phase === 'choose' && <p className="spell-why" role="alert">{why}</p>}
+          {why && phase === 'choose' && <div className="spell-why" role="alert"><b>Not allowed:</b> {why}
+            {whyKw && (KEYWORD_HELP[whyKw] || RULE_TERMS[whyKw]) && <p className="toast-rule"><b>The rule — {whyKw}:</b> {(KEYWORD_HELP[whyKw] ?? RULE_TERMS[whyKw]).text} <a href={codexUrl(whyKw)} target="_blank" rel="noreferrer">Read it in the Codex ↗</a></p>}</div>}
           <HowItWorks card={d} />
 
           <div className="spell-actions">

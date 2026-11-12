@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import { KEYWORD_HELP, codexUrl } from '../engine';
+import { KEYWORD_HELP, RULE_TERMS, codexUrl } from '../engine';
 import { useStore } from '../store';
 import { useAuth } from '../cloud/cloud';
 import { SignIn } from './Auth';
@@ -33,9 +33,10 @@ export function App() {
         <ZoomCard />
         <div className="toasts" aria-live="assertive">
           <AnimatePresence>{toasts.map((t) => (
-            <motion.div key={t.id} className={`toast ${t.tone}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}>
-              {t.text}
-              {t.keyword && KEYWORD_HELP[t.keyword] && <> <a href={codexUrl(t.keyword)} target="_blank" rel="noreferrer">{t.keyword} in the Codex</a></>}
+            <motion.div key={t.id} className={`toast ${t.tone}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} role={t.tone === 'error' ? 'alert' : undefined}>
+              {t.tone === 'error' && <b className="toast-head">Not allowed <button className="iconbtn toast-x" onClick={() => useStore.setState((st) => ({ toasts: st.toasts.filter((x) => x.id !== t.id) }))} aria-label="Close">✕</button></b>}
+              <span>{t.text}</span>
+              {t.keyword && (KEYWORD_HELP[t.keyword] || RULE_TERMS[t.keyword]) && <span className="toast-rule"><b>The rule — {t.keyword}:</b> {(KEYWORD_HELP[t.keyword] ?? RULE_TERMS[t.keyword]).text} <a href={codexUrl(t.keyword)} target="_blank" rel="noreferrer">Read it in the Codex ↗</a></span>}
             </motion.div>
           ))}</AnimatePresence>
         </div>

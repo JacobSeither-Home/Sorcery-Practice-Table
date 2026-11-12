@@ -40,6 +40,16 @@ export const KEYWORD_HELP: Record<string, { text: string; enforced: boolean }> =
 
 /** Rule terms used in card text, with a one-line reminder and the Codex entry that explains them. */
 export const RULE_TERMS: Record<string, { id: string; text: string }> = {
+  Setup: { id: 'bc2036cd-69d3-4fab-b63b-dd094cf279c5', text: 'Each player draws 3 sites and 3 spells and may take one mulligan of up to 3 cards.' },
+  'Move and Attack': { id: 'd7f6af80-0923-4ab1-88bc-11b7c694d49b', text: 'Tap a unit to take its steps (1 plus Movement +X) and, at the end, attack an enemy unit or site there.' },
+  Site: { id: '5e633a96-c807-4915-be05-e83cacfcbfd6', text: 'Played with your Avatar\'s tap ability, one per turn: the first on your Avatar\'s square, later ones next to a site you control (not diagonally).' },
+  Avatar: { id: 'a43c193c-02d6-4389-b791-08d3b77bde11', text: 'Your Avatar taps to play or draw a site, is always a spellcaster, and its life is your life.' },
+  'Casting spells': { id: '43a73161-4f77-46b1-a23a-f916223a748c', text: 'On your turn, with enough mana and threshold: minions and artifacts go onto your own sites, auras anywhere, magic resolves and goes to the cemetery.' },
+  'Main phase': { id: 'cdd8d7be-ace7-457f-9ad6-28701ccb33d6', text: 'After you draw: play a site, cast spells, move and attack, use abilities — in any order.' },
+  'Start phase': { id: 'd74587ee-6256-4009-b144-9d46e9125822', text: 'Your cards untap, start-of-turn abilities happen, then you draw a spell or a site (the first player skips the first draw).' },
+  Path: { id: '2ba56532-3ac0-41e8-a73f-1005cbefe8db', text: 'The locations a unit moves through; it cannot visit the same location twice in one move.' },
+  'Range of motion': { id: 'baf60fbb-dcd9-4bb5-a2b4-158f8df5cbb1', text: 'Every location a unit could reach with its steps right now.' },
+  Winning: { id: '48bee2d2-6d32-466f-b4fe-6c3178cb6ba4', text: 'Deal a death blow to the enemy Avatar, or the opponent has to draw from an empty deck.' },
   Target: { id: '98943611-2a6f-4756-ad9b-a7d6598e9729', text: 'Only effects that say "target" target. You must choose a legal one in the same region as the caster or source, or the spell cannot be cast. Stealth and Ward protect against targets.' },
   Collection: { id: '78ce4090-a2e1-4893-97c0-6eaafd5c5937', text: 'Extra cards outside your decks (up to 10 in constructed play). In casual play a named card can always be taken from your collection.' },
   'Look at': { id: '0f71f26a-a091-4fb2-9dcc-bcfed14f282a', text: 'Only you see the cards; put them back in any order unless the card says otherwise.' },

@@ -100,7 +100,7 @@ export const useStore = create<Store>((set, get) => ({
   toast: (text, tone = 'info', keyword) => {
     const id = toastId++;
     set((s) => ({ toasts: [...s.toasts.slice(-2), { id, text, tone, keyword }] }));
-    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), (tone === 'error' ? 7000 : 3500) * Math.max(1, get().settings.pace ?? 1));
+    setTimeout(() => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), (tone === 'error' ? 12000 : 3500) * Math.max(1, get().settings.pace ?? 1));
   },
   saveApi: async (raw) => {
     const syncedAt = new Date().toISOString();

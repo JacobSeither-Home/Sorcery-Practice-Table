@@ -486,8 +486,8 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.optional && c?.skip) continue;
     if (e.who === 'target' && !e.ref) {
       const ok = targetsFor(s, p, d, i, origins, self);
-      if (!ok.length) return no(`${d.name} has no valid target in range.`);
-      if (!c?.target || !ok.includes(c.target)) return no('Choose a valid target: in range and region of a spellcaster you control, and not a stealthed enemy.', 'Stealth');
+      if (!ok.length) return no(`${d.name} has no valid target in range. A spell that says "target" needs a legal target when it is cast, in range and in the same region as the caster.`, 'Target');
+      if (!c?.target || !ok.includes(c.target)) return no('Choose a valid target: in range and in the same region as a spellcaster you control (or the card using the ability), and not a stealthed or otherwise protected enemy.', 'Target');
     }
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
@@ -936,8 +936,8 @@ export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   return out;
 }
 function canAct(s: GameState, u: Unit): Check {
-  if (u.tapped) return { ok: false, reason: `${unitCard(s, u).name} is tapped.` };
-  if (summoningSick(s, u)) return { ok: false, reason: `${unitCard(s, u).name} entered this turn and has summoning sickness (it cannot tap until your next turn).`, keyword: 'Charge' };
+  if (u.tapped) return { ok: false, reason: `${unitCard(s, u).name} is tapped. Tapped units cannot move, attack or use tap abilities until they untap at the start of your turn.`, keyword: 'Tap' };
+  if (summoningSick(s, u)) return { ok: false, reason: `${unitCard(s, u).name} entered this turn and has summoning sickness (it cannot tap until your next turn, unless it has Charge).`, keyword: 'Summoning Sickness' };
   if (isDisabled(s, u)) return { ok: false, reason: `${unitCard(s, u).name} is disabled and cannot take actions.`, keyword: 'Disabled' };
   return { ok: true };
 }
@@ -1031,7 +1031,7 @@ function siteCells(s: GameState, p: PlayerId): number[] {
   return cands.filter((c) => dist(c) === best);
 }
 function affordable(s: GameState, p: PlayerId, d: CardDef): Check {
-  if (s.players[p].mana < d.cost) return { ok: false, reason: `${d.name} costs ${d.cost} mana and you have ${s.players[p].mana}. Sites give 1 mana each at the start of your turn.` };
+  if (s.players[p].mana < d.cost) return { ok: false, reason: `${d.name} costs ${d.cost} mana and you have ${s.players[p].mana}. Sites give 1 mana each at the start of your turn.`, keyword: 'Mana' };
   const t = thresholdOf(s, p);
   for (const e of ELEMENTS) if (t[e] < d.thresholds[e]) return { ok: false, reason: `${d.name} needs ${d.thresholds[e]} ${e} threshold and your sites provide ${t[e]}. Threshold is counted from the element symbols on sites you control; it is not spent.`, keyword: 'Threshold' };
   return { ok: true };
@@ -1042,9 +1042,9 @@ export function check(s: GameState, a: Action): Check {
   if (s.phase === 'over') return no('The game is over.');
   const p = actor(s);
   const pl = s.players[p];
-  if (a.t === 'manual') return s.pending ? no('Resolve the pending defend or intercept first.') : { ok: true };
+  if (a.t === 'manual') return s.pending ? no('Resolve the pending defend or intercept first.', 'Defend') : { ok: true };
   if (!s.pending && s.queue?.length) {
-    if (a.t !== 'trigger') return no(`${pname(s.queue[0].by)} must first resolve ${cardOf(s, s.queue[0].inst).name}'s triggered ability.`);
+    if (a.t !== 'trigger') return no(`${pname(s.queue[0].by)} must first resolve ${cardOf(s, s.queue[0].inst).name}'s triggered ability.`, 'Triggered ability');
     if (a.skip) return { ok: true };
     const q = s.queue[0]; const d = cardOf(s, q.inst);
     const self = q.src && 'unit' in q.src ? q.src.unit : undefined;
@@ -1052,47 +1052,47 @@ export function check(s: GameState, a: Action): Check {
   }
   if (a.t === 'trigger') return no('There is no triggered ability waiting.');
   if (s.pending) {
-    if (a.t !== 'respond') return no(`${pname(s.pending.by)} must choose whether to ${s.pending.kind} first.`);
+    if (a.t !== 'respond') return no(`${pname(s.pending.by)} must choose whether to ${s.pending.kind} first.`, s.pending.kind === 'defend' ? 'Defend' : 'Intercept');
     const ok = responders(s);
-    for (const id of a.units) if (!ok.includes(id)) return no('That unit cannot respond: it must be untapped, not disabled, and able to reach the fight.');
+    for (const id of a.units) if (!ok.includes(id)) return no('That unit cannot respond: it must be untapped, not disabled, and able to reach the fight.', 'Defend');
     return { ok: true };
   }
   if (a.t === 'respond') return no('There is nothing to respond to.');
   if (s.phase === 'mulligan') {
-    if (a.t !== 'mulligan') return no('Finish the mulligan first.');
-    if (a.cards.length > 3) return no('A mulligan returns at most 3 cards.');
+    if (a.t !== 'mulligan') return no('Finish the mulligan first.', 'Setup');
+    if (a.cards.length > 3) return no('A mulligan returns at most 3 cards.', 'Setup');
     if (a.cards.some((c) => !pl.hand.includes(c))) return no('Those cards are not in your hand.');
     return { ok: true };
   }
   if (s.phase === 'draw') {
-    if (a.t !== 'draw') return no('Draw a card from your spellbook or atlas first.');
-    if (!pl[a.deck].length) return no(`Your ${a.deck} is empty.`);
+    if (a.t !== 'draw') return no('Draw a card from your spellbook or atlas first: every turn starts with a draw (except the first player\'s first turn).', 'Start phase');
+    if (!pl[a.deck].length) return no(`Your ${a.deck} is empty. Drawing from an empty deck loses the game, so choose the other one.`, 'Winning');
     return { ok: true };
   }
   const avatar = s.units[pl.avatar];
   switch (a.t) {
     case 'endTurn': return { ok: true };
     case 'drawSite':
-      if (avatar.tapped) return no('Your Avatar is tapped. Its ability (tap: play or draw a site) can be used once per turn.');
+      if (avatar.tapped) return no('Your Avatar is tapped. Its ability (tap: play or draw a site) can be used once per turn.', 'Avatar');
       if (!pl.atlas.length) return no('Your atlas is empty.');
       return { ok: true };
     case 'playSite': {
       if (!pl.hand.includes(a.inst)) return no('That card is not in your hand.');
       const d = cardOf(s, a.inst);
       if (d.type !== 'Site') return no(`${d.name} is not a site.`);
-      if (avatar.tapped) return no('Your Avatar is tapped. Playing a site taps your Avatar, so it is one site per turn.');
+      if (avatar.tapped) return no('Your Avatar is tapped. Playing a site taps your Avatar, so it is one site per turn.', 'Site');
       const corner = allows(d, 'Play to any corner') && [0, 4, 15, 19].includes(a.c) && (!s.sites[a.c] || !s.sites[a.c]!.inst);
-      if (!corner && !siteCells(s, p).includes(a.c)) return no(sitesOf(s, p).length ? 'A site must go on a void or rubble square next to a site you control (not diagonally).' : "Your first site goes on your Avatar's square.");
+      if (!corner && !siteCells(s, p).includes(a.c)) return no(sitesOf(s, p).length ? 'A site must go on a void or rubble square next to a site you control (not diagonally).' : "Your first site goes on your Avatar's square.", 'Site');
       return { ok: true };
     }
     case 'cast': {
       if (!pl.hand.includes(a.inst)) return no('That card is not in your hand.');
       const d = cardOf(s, a.inst);
-      if (d.type === 'Site') return no('Sites are played with your Avatar ability, not cast.');
+      if (d.type === 'Site') return no('Sites are played with your Avatar ability, not cast.', 'Site');
       if (d.type === 'Avatar') return no('Avatars are not cast.');
       const aff = affordable(s, p, d); if (!aff.ok) return aff;
       if (d.type === 'Minion' || d.type === 'Artifact') {
-        if (a.c === undefined || !(s.sites[a.c]?.owner === p || (d.type === 'Minion' && allows(d, 'Summon to any site') && s.sites[a.c]?.inst))) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control.`);
+        if (a.c === undefined || !(s.sites[a.c]?.owner === p || (d.type === 'Minion' && allows(d, 'Summon to any site') && s.sites[a.c]?.inst))) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control.`, 'Casting spells');
       } else if (d.type === 'Aura') {
         if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose where the aura goes.');
         if (xy(a.c)[0] > COLS - 2 || xy(a.c)[1] > ROWS - 2) return no('An aura sits where four squares meet (a 2×2 area); choose the top-left square of that area.', 'Aura');
@@ -1102,7 +1102,7 @@ export function check(s: GameState, a: Action): Check {
       const needsTarget = idx.some((i) => d.effects[i].who === 'target');
       if (d.type === 'Artifact' && !needsTarget && a.target) { // conjured straight into a unit's hands
         const b = s.units[a.target];
-        if (!b || b.owner !== p || b.c !== a.c) return no('An artifact can be handed to one of your own units on the site where it is conjured.');
+        if (!b || b.owner !== p || b.c !== a.c) return no('An artifact can be handed to one of your own units on the site where it is conjured.', 'Carry');
         return { ok: true };
       }
       return checkChoices(s, p, d, idx, choicesOf(d, idx, a.choices, a.target), d.type === 'Magic' ? casterOrigins(s, p) : [{ c: a.c!, r: 'surface' }]);
@@ -1116,10 +1116,10 @@ export function check(s: GameState, a: Action): Check {
       if (src.unit && isDisabled(s, src.unit)) return no(`${d.name} is disabled and its abilities do not work.`, 'Disabled');
       if (e.on === 'tap') {
         if (src.unit) { const can = canAct(s, src.unit); if (!can.ok) return can; }
-        else if (src.tapped) return no(`${d.name} is already tapped.`);
-      } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`);
+        else if (src.tapped) return no(`${d.name} is already tapped. A tap ability can be used again after it untaps at the start of your turn.`, 'Tap');
+      } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`, 'Activated ability');
       const cost = e.cost ?? 0;
-      if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`);
+      if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`, 'Mana');
       if (e.banishDead && !pl.cemetery.some((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0)) return no(`You have no dead ${e.banishDead} minions to banish.`);
       const idx = effectsOn(d, e.on, a.fx);
       return checkChoices(s, p, d, idx, a.choices ?? [], [src.loc], src.unit?.id);
@@ -1128,12 +1128,12 @@ export function check(s: GameState, a: Action): Check {
       const u = s.units[a.unit];
       if (!u || u.owner !== p) return no('That is not your unit.');
       const can = canAct(s, u); if (!can.ok) return can;
-      if (!a.path.length && !a.attack) return no('Choose a square to move to or something to attack.');
+      if (!a.path.length && !a.attack) return no('Choose a square to move to or something to attack.', 'Move and Attack');
       if (a.path.length > 1 + moveOf(s, u)) return no(`${unitCard(s, u).name} can take ${1 + moveOf(s, u)} step(s) per move.`, 'Movement');
       if (a.path.length && unitCard(s, u).keywords.includes('Immobile')) return no(`${unitCard(s, u).name} is Immobile and cannot take steps.`, 'Immobile');
       let from: Loc = { c: u.c, r: u.r }; const seen = new Set([locKey(from)]);
       for (const to of a.path) {
-        if (seen.has(locKey(to))) return no('A path cannot repeat a location.');
+        if (seen.has(locKey(to))) return no('A path cannot repeat a location.', 'Path');
         if (!stepOk(s, u, from, to)) {
           if (from.c !== to.c && !s.sites[to.c]) return no('That square is void. A unit entering the void is banished unless it has Voidwalk.', 'Voidwalk');
           if (to.r === 'under') return no('Only Burrowing (land) or Submerge (water) units can go below the surface.', isWater(s, to.c) ? 'Submerge' : 'Burrowing');
@@ -1143,12 +1143,12 @@ export function check(s: GameState, a: Action): Check {
       }
       if (a.attack) {
         const ts = attackTargets(s, u, from);
-        if (a.attack.site) { if (!ts.some((t) => t.site)) return no('There is no enemy site surface to attack at that location.'); }
+        if (a.attack.site) { if (!ts.some((t) => t.site)) return no('There is no enemy site surface to attack at that location.', 'Move and Attack'); }
         else if (!ts.some((t) => t.unit === a.attack!.unit)) {
           const e = a.attack.unit ? s.units[a.attack.unit] : undefined;
           if (e && has(s, e, 'Airborne')) return no('Airborne units can only be attacked by Airborne units.', 'Airborne');
           if (e && hasStealth(s, e)) return no(`${unitCard(s, e).name} has Stealth: it cannot be targeted by attacks until it interacts with the realm.`, 'Stealth');
-          return no('You can only attack an enemy at the location where the move ends.');
+          return no('You can only attack an enemy at the location where the move ends.', 'Move and Attack');
         }
       }
       return { ok: true };
@@ -1158,7 +1158,7 @@ export function check(s: GameState, a: Action): Check {
       if (!u || u.owner !== p) return no('That is not your unit.');
       if (!rangedOf(s, u)) return no(`${unitCard(s, u).name} is not Ranged.`, 'Ranged');
       const can = canAct(s, u); if (!can.ok) return can;
-      if (Math.abs(a.dx) + Math.abs(a.dy) !== 1) return no('Projectiles travel in a straight line along the grid.');
+      if (Math.abs(a.dx) + Math.abs(a.dy) !== 1) return no('Projectiles travel in a straight line along the grid.', 'Projectile');
       if (!shotTarget(s, u, a.dx, a.dy)) return no('No unit would be hit in that direction within range.', 'Ranged');
       return { ok: true };
     }
