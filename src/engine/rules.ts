@@ -28,7 +28,8 @@ export function isWater(s: GameState, c: number): boolean {
   const site = s.sites[c];
   if (!site || !site.inst) return false;
   const d = cardOf(s, site.inst);
-  return d.thresholds.water > 0 || d.keywords.includes('Flood'); // Codex "Flooded": a flooded site is a water site
+  if (d.thresholds.water > 0 || d.keywords.includes('Flood')) return true; // Codex "Flooded": a flooded site is a water site
+  return Object.values(s.units).some((u) => u.c === c && unitCard(s, u).effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Flood' && e.who === 'siteHere'));
 }
 export const isLand = (s: GameState, c: number) => !!s.sites[c] && !isWater(s, c);
 export function sitesOf(s: GameState, p: PlayerId): number[] {
@@ -123,6 +124,8 @@ export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u,
 export const summoningSick = (s: GameState, u: Unit) => !u.avatar && u.enteredTurn === s.turn && !has(s, u, 'Charge');
 export function unitsAt(s: GameState, l: Loc): Unit[] { return Object.values(s.units).filter((u) => u.c === l.c && u.r === l.r); }
 export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || staticCards(s).size ? bonus(s, u).atk : 0)); }
+/** Extra steps: Movement +X on the card plus any given this turn. */
+export const moveOf = (s: GameState, u: Unit) => unitCard(s, u).movement + (u.mods ?? []).reduce((n, m) => n + (m.move ?? 0), 0);
 export function defenseOf(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.defense + (u.mods?.length || staticCards(s).size ? bonus(s, u).def : 0)); }
 
 function rand(s: GameState): number {
@@ -277,7 +280,7 @@ function inRange(from: Loc, to: Loc, range: Effect['range']): boolean {
   return nearby(from.c).includes(to.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => (e.who === 'target' && !e.ref) || e.who === 'atTarget' || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => (e.who === 'target' && !e.ref) || e.op === 'scry' || e.op === 'teleport' || e.who === 'atTarget' || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -293,6 +296,16 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins: Loc[]): n
   const e = d.effects[i]; if (e?.who !== 'atTarget') return [];
   const out: number[] = [];
   for (let c = 0; c < CELLS; c++) if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c)) && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
+  return out;
+}
+/** Where a teleport effect may send unit `u`. */
+export function teleportCells(s: GameState, e: Effect, u: Unit | undefined): number[] {
+  if (!u) return [];
+  const out: number[] = [];
+  for (let c = 0; c < CELLS; c++) {
+    if (c === u.c) continue;
+    if (e.dest === 'site' ? !!s.sites[c]?.inst : nearby(u.c).includes(c) && (!!s.sites[c] || has(s, u, 'Voidwalk')) && !(u.avatar && !s.sites[c])) out.push(c);
+  }
   return out;
 }
 /** Directions a projectile from `from` would hit something (for the AI and the pop-up). */
@@ -362,6 +375,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
     if (e.who === 'atTarget') { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
+    if (e.op === 'teleport') { const u = c?.target ? s.units[c.target] : undefined; if (c?.cell === undefined || !teleportCells(s, e, u).includes(c.cell)) return no('Choose where it goes.'); }
   }
   return { ok: true };
 }
@@ -433,6 +447,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
     const e = d.effects[i]; const c = ch[i] ?? undefined;
     if (s.phase === 'over') return;
     if (e.optional && c?.skip) { log(s, `${pname(p)} chooses not to: ${e.text ?? ''}`, p); continue; }
+    if (e.pay) { if (s.players[p].mana < e.pay) { log(s, `${pname(p)} cannot pay ${e.pay} mana for ${d.name}.`, p); continue; } s.players[p].mana -= e.pay; log(s, `${pname(p)} pays ${e.pay} mana (${d.name}).`, p); }
     if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((x) => s.sites[x]!.inst && cardOf(s, s.sites[x]!.inst!).name === d.name).length !== 1) continue;
     const n = e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
     const all = Object.values(s.units);
@@ -533,10 +548,25 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
       case 'draw': {
         const deck = e.deck ?? c?.deck ?? 'spellbook';
         const who = e.who === 'opponent' ? other(p) : p;
+        if (e.fromBottom) { const pl = s.players[who]; const b = pl[deck].pop(); if (b) { pl.hand.push(b); log(s, `${pname(who)} draws the bottom card of the ${deck} (${d.name}).`, p); } break; }
         for (let k = 0; k < n; k++) if (!drawCard(s, who, deck)) { log(s, `${pname(who)} must draw from an empty deck and loses.`, who); win(s, other(who)); break; }
         if ((s.phase as string) !== 'over') log(s, `${pname(who)} draws ${n} from the ${deck} (${d.name}).`, p);
         break;
       }
+      case 'scry': {
+        const pl = s.players[p]; const deck = e.deck ?? 'spellbook';
+        if (!pl[deck].length) break;
+        if (c?.bottom) { pl[deck].push(pl[deck].shift()!); log(s, `${pname(p)} looks at the top of the ${deck} and puts it on the bottom.`, p); }
+        else log(s, `${pname(p)} looks at the top of the ${deck} and leaves it there.`, p);
+        break;
+      }
+      case 'sink': for (const v of victims) {
+        const st = s.sites[v.c]; if (!st?.inst || v.r === 'under') continue;
+        const water = isWater(s, v.c);
+        if (e.under && (e.under === 'water') !== water) continue;
+        v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
+      } break;
+      case 'teleport': for (const v of victims) { if (c?.cell === undefined) break; v.c = c.cell; v.r = 'surface'; log(s, `${nm(v)} teleports (${d.name}).`, p); if (!s.sites[v.c] && !v.avatar && !has(s, v, 'Voidwalk')) removeUnit(s, v, 'banish', 'the void'); } break;
       case 'mill': { const pl = s.players[p]; const deck = e.deck ?? 'spellbook'; const top = pl[deck].splice(0, n); pl.cemetery.push(...top); log(s, `${pname(p)} discards the top ${top.length} of the ${deck}: ${top.map((x) => cardOf(s, x).name).join(', ') || 'nothing'}.`, p); break; }
       case 'discard': for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) for (let k = 0; k < n; k++) {
         const h = s.players[q].hand; if (!h.length) break;
@@ -554,6 +584,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
         if (e.who === 'siteHere' && e.keyword === 'Ward') { const st = loc ? s.sites[loc.c] : null; if (st?.inst) { st.ward = true; log(s, `${d.name} wards the site.`, p); } break; }
         if (e.keyword === 'Ward') { for (const v of victims) { v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
         for (const v of victims) {
+          if (e.keyword === 'Movement') { (v.mods ??= []).push({ atk: 0, def: 0, move: e.n ?? 1, ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name }); log(s, `${nm(v)} gets Movement +${e.n ?? 1} (${d.name}).`, p); continue; }
           (v.mods ??= []).push({ atk: e.op === 'buff' ? e.atk ?? 0 : 0, def: e.op === 'buff' ? e.def ?? 0 : 0, ...(e.keyword ? { kw: e.keyword } : {}), ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name });
           if (e.keyword === 'Stealth') v.stealthLost = false;
           log(s, `${nm(v)} ${e.op === 'buff' ? `gets ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power` : `gains ${e.keyword}`}${e.until === 'turn' ? ' this turn' : e.until === 'next' ? ' until your next turn' : ''} (${d.name}).`, p);
@@ -594,7 +625,7 @@ export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const start: Loc = { c: u.c, r: u.r };
   out.set(locKey(start), []);
   if (has(s, u, 'Immobile') || unitCard(s, u).keywords.includes('Immobile')) return out;
-  const steps = 1 + unitCard(s, u).movement;
+  const steps = 1 + moveOf(s, u);
   let frontier: Loc[][] = [[]];
   for (let i = 0; i < steps; i++) {
     const next: Loc[][] = [];
@@ -799,7 +830,7 @@ export function check(s: GameState, a: Action): Check {
       if (!u || u.owner !== p) return no('That is not your unit.');
       const can = canAct(s, u); if (!can.ok) return can;
       if (!a.path.length && !a.attack) return no('Choose a square to move to or something to attack.');
-      if (a.path.length > 1 + unitCard(s, u).movement) return no(`${unitCard(s, u).name} can take ${1 + unitCard(s, u).movement} step(s) per move.`, 'Movement');
+      if (a.path.length > 1 + moveOf(s, u)) return no(`${unitCard(s, u).name} can take ${1 + moveOf(s, u)} step(s) per move.`, 'Movement');
       if (a.path.length && unitCard(s, u).keywords.includes('Immobile')) return no(`${unitCard(s, u).name} is Immobile and cannot take steps.`, 'Immobile');
       let from: Loc = { c: u.c, r: u.r }; const seen = new Set([locKey(from)]);
       for (const to of a.path) {
@@ -1017,6 +1048,7 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
       const cells = cellsFor(s, d, i, origins).map((c) => ({ c, v: Object.values(s.units).filter((u) => u.c === c).reduce((n, u) => n + (u.owner === p ? -1 : 1), 0) })).filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
       if (!cells.length) return []; base[i] = { ...(base[i] ?? {}), cell: cells[0].c };
     }
+    if (e.op === 'teleport') { const t = base[i]?.target ? s.units[base[i]!.target!] : undefined; const cl = teleportCells(s, e, t); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }
     if (e.op === 'shoot') { const dirs = origins.length ? shotDirs(s, p, origins[0]) : []; const dir = dirs.find(([dx, dy]) => projectileHit(s, p, origins[0], dx, dy, 9, self)?.owner !== p); if (!dir) return []; base[i] = { ...(base[i] ?? {}), dir }; }
   }
   if (spread < 0) return [base];

@@ -8,7 +8,7 @@
 //           own hand, and which cards have not been seen yet).
 // The AI only plays what the engine can resolve. A spell whose text is not automated would do
 // nothing for it, so those are left out of its options (see aiActions).
-import { type Action, type GameState, type PlayerId, type Unit, actor, apply, cardOf, clone, has, legalActions, other, sitesOf, unitCard, xy } from '../engine';
+import { type Action, type GameState, type PlayerId, type Unit, actor, apply, cardOf, clone, has, legalActions, moveOf, other, sitesOf, unitCard, xy } from '../engine';
 
 export type Difficulty = 'easy' | 'medium' | 'hard';
 
@@ -19,7 +19,7 @@ function steps(s: GameState, u: Unit, c: number): number {
   const dx = Math.abs(ax - bx), dy = Math.abs(ay - by);
   return has(s, u, 'Airborne') ? Math.max(dx, dy) : dx + dy;
 }
-const range = (s: GameState, u: Unit) => (unitCard(s, u).keywords.includes('Immobile') ? 0 : 1 + unitCard(s, u).movement);
+const range = (s: GameState, u: Unit) => (unitCard(s, u).keywords.includes('Immobile') ? 0 : 1 + moveOf(s, u));
 
 export function evaluate(s: GameState, me: PlayerId): number {
   if (s.winner !== null) return s.winner === me ? 10000 : -10000;

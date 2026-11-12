@@ -12,7 +12,7 @@
 import type { CardDef, CardType, Effect, Element, EventFilter, Trigger, Who } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
-const KEYWORD_LINE = new RegExp(`^(${KEYWORDS.join('|')})(\\s*\\+?\\s*\\d+)?$`, 'i');
+const KEYWORD_LINE = new RegExp(`^((?:air |earth |fire |water )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
 const GRANTABLE = KEYWORDS.filter((k) => !['Deathrite', 'Genesis', 'Flood', 'Movement', 'Ranged'].includes(k));
 
 export type Category =
@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards',
+  provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -109,7 +109,7 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   const steps = t.match(/ up to (two|three) steps away$/i); if (steps) { t = t.slice(0, steps.index); range = steps[1].toLowerCase() as Effect['range']; }
   if ((m = t.match(/^(nearby|adjacent)\s+/i))) { range = m[1].toLowerCase() as Effect['range']; t = t.slice(m[0].length); }
   // trailing location
-  const tail = t.match(/\s+(here|there|nearby|adjacent|atop this site|at (?:this|its) location|at its site|(?:at|atop|occupying) (?:target|a) (?:(nearby|adjacent) )?(?:location|site)(?: (nearby|adjacent))?(?: up to (two|three) steps away)?|atop target (?:(nearby|adjacent) )?site)$/i);
+  const tail = t.match(/\s+(here|there|nearby|adjacent|atop this site|at (?:this|its) location|at its site|(?:at|atop|occupying) (?:target|a) (?:(nearby|adjacent) )?(?:land |water )?(?:location|site)(?: (nearby|adjacent))?(?: up to (two|three) steps away)?|atop target (?:(nearby|adjacent) )?site)$/i);
   if (tail) {
     t = t.slice(0, tail.index);
     const w = tail[1].toLowerCase();
@@ -236,6 +236,15 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'mill', ...amount(m[1] ?? 'a'), who: 'controller', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook' }] },
   { id: 'avatars-discard', label: 'Each nearby Avatar discards a random card', re: /^each (nearby )?avatar discards a random (?:card|spell)\.$/i,
     build: (m) => [{ op: 'discard', n: 1, who: m[1] ? 'nearbyAvatars' : 'allAvatars' }] },
+  { id: 'draw-bottom', label: 'Draw your bottommost spell', re: /^draw your bottom(?:most)? (spell|site)\.$/i, build: (m) => [{ op: 'draw', n: 1, who: 'controller', deck: m[1].toLowerCase() === 'site' ? 'atlas' : 'spellbook', fromBottom: true }] },
+  { id: 'sink', label: 'Submerge / burrow …', re: /^(submerge|burrow) (.+?)(?:, if able)?\.$/i,
+    build: (m) => { const v = minionOnly(nounPhrase(m[2].replace(/ or artifacts?\b| and artifacts\b|,? minions and artifacts/gi, (x) => (/minions/i.test(x) ? ' minions' : '')), 'minion')); return v ? [{ op: 'sink', ...v, under: m[1].toLowerCase() === 'submerge' ? 'water' : 'land' }] : null; } },
+  { id: 'teleport', label: 'Teleport an ally …', re: /^(?:teleport (an? ally|an allied minion|target (?:allied )?minion|target ally) to (?:the surface of )?(?:target|a) site|(an? ally|an allied minion) teleports to a location (?:it'?s|it is) nearby)\.$/i,
+    build: (m) => { const v = nounPhrase(m[1] ?? m[2]); return v?.who === 'target' ? [{ op: 'teleport', ...v, dest: m[1] ? 'site' : 'nearby' }] : null; } },
+  { id: 'give-movement', label: 'Give … Movement +N', re: new RegExp(`^give (.+?) movement \\+(\\d+)${UNTIL}\\.$`, 'i'),
+    build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Movement', n: +m[2], until: until(m[3], on) }] : null; } },
+  { id: 'site-flooded', label: 'This site is flooded', re: /^this site is flooded\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Flood', until: 'permanent' }] : null) },
+  { id: 'reminder', label: 'Reminder sentence (nothing to do)', re: /^(?:it|this) is a water site\.$|^they'?re water sites\.$/i, build: () => [] },
   // restrictions on itself
   { id: 'cant', label: "Can't defend / intercept", re: /^(?:this )?can'?t (defend or intercept|defend|intercept|move to defend)\.$/i,
     build: (m, on) => (on === 'static' ? (/defend or intercept/i.test(m[1]) ? ["Can't defend", "Can't intercept"] : [m[1].toLowerCase() === 'defend' ? "Can't defend" : m[1].toLowerCase() === 'intercept' ? "Can't intercept" : "Can't move to defend"]).map((keyword) => ({ op: 'grant' as const, who: 'self' as const, keyword, until: 'permanent' as const })) : null) },
@@ -257,9 +266,15 @@ const strip = (t: string) => t.replace(/\r/g, '').replace(/\([^()]*\)/g, (p) => 
 const sentences = (body: string) => body.split(/(?<=[.!])\s+(?=[A-Z①-⑳(])/).map((x) => x.trim()).filter(Boolean).map((x) => (/[.!]$/.test(x) ? x : x + '.'));
 
 function matchSentence(sentence: string, on: Trigger, type: CardType, top = true): { got: Omit<Effect, 'on'>[]; rule: string } | null {
+  // "This shoot a projectile." (plural card names): the verb without its subject
+  const plural = sentence.match(/^this (shoot|strike|deal|draw|gain|heal|untap|tap|summon|kill|destroy|banish) (.+)$/i);
+  if (plural) return matchSentence(cap(plural[1]) + ' ' + plural[2], on, type, top);
+  // "You may pay ① to X." — X costs mana and is optional
+  const pay = sentence.match(new RegExp(`^(?:you may )?pay ${MANA} to (.+)$`, 'i'));
+  if (pay) { const r = matchSentence(cap(pay[2]), on, type, false); if (r) return { got: r.got.map((e, i) => ({ ...e, ...(i === 0 ? { pay: manaOf(pay[1]) } : {}), ...(/^you may/i.test(sentence) ? { optional: true } : {}) })), rule: 'pay+' + r.rule }; }
   // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
   if (/^(has|have|gains) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
-  if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This g' + sentence.slice(1), on, type, top);
+  if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
   // ", if it's a minion" after something given to a bearer changes nothing here
   if (/, if it'?s a minion\.$/i.test(sentence)) return matchSentence(sentence.replace(/, if it'?s a minion\.$/i, '.'), on, type, top);
   // "You may X." / "May X." / "This may X.": X is optional for the player
@@ -301,7 +316,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
   const lines = strip(rules).split('\n').map((l) => l.trim()).filter(Boolean);
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   lines.forEach((raw, lineNo) => {
-    const line = name ? raw.replace(new RegExp(`\\b${esc}\\b`, 'g'), 'this') : raw;
+    // the card's own name means "this" — unless the name is a word used as a verb ("Teleport an ally …")
+    const line = name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw;
     if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
     let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null;
     if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
@@ -334,7 +350,12 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         rl.effects.push({ on, op: 'shoot', who: 'controller', n: +pierce[1], pierce: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-pierce', auto: true, ...(cost ? { cost } : {}) });
         k++; continue;
       }
-      if (/^shoot a projectile\.$/i.test(sentence) && imp) {
+      const look = sentence.match(/^Look at your (?:next|top(?:most)?) (spell|site)\.$/i);
+      if (look && /^You may put it on the bottom of your (spellbook|atlas)\.$/i.test(ss[k + 1] ?? '')) {
+        rl.effects.push({ on, op: 'scry', n: 1, who: 'controller', deck: look[1].toLowerCase() === 'site' ? 'atlas' : 'spellbook', line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'scry', auto: true });
+        k++; continue;
+      }
+      if (/^(?:this )?shoots? a projectile\.$/i.test(sentence) && imp) {
         rl.effects.push({ on, op: 'shoot', who: 'controller', n: +imp[1], ...(imp[2] ? { splash: +imp[2] } : {}), line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-impact', auto: true, ...(cost ? { cost } : {}) });
         k++; continue;
       }

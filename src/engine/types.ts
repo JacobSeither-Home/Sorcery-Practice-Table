@@ -35,6 +35,12 @@ export type Op =
   | 'strike'
   /** put the top N cards of a deck into the cemetery ("Discard your top two spells") */
   | 'mill'
+  /** look at the top card of a deck; the player may put it on the bottom */
+  | 'scry'
+  /** move a unit below the surface: submerge at a water site, burrow at a land site */
+  | 'sink'
+  /** move a unit straight to a chosen location (Choice.cell) */
+  | 'teleport'
   /** a sentence the engine cannot carry out: the cast pop-up offers the hand tools for it */
   | 'manual';
 export type Who =
@@ -84,6 +90,14 @@ export interface Effect {
   random?: number;
   /** shoot: how many projectiles in the chosen direction (-1: X); pierce: hits every unit along the path */
   shots?: number; pierce?: boolean;
+  /** pay this much mana first; the effect does not happen if it cannot be paid */
+  pay?: number;
+  /** draw: from the bottom of the deck */
+  fromBottom?: boolean;
+  /** teleport: where to ("nearby" its own location, or any "site" surface) */
+  dest?: 'nearby' | 'site';
+  /** sink: which way under (Submerge = water sites, Burrowing = land sites, either when unset) */
+  under?: 'water' | 'land';
   /** only wounded units (damaged this turn) */
   wounded?: boolean;
   /** provide: elements given */
@@ -109,7 +123,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
+export interface Choice { target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -155,7 +169,7 @@ export interface Unit {
   /** power/defense changes and granted keywords from abilities; `turn` = expires at the end of that turn */
   mods?: Mod[];
 }
-export interface Mod { atk: number; def: number; kw?: string; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
+export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura'; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }

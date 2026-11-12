@@ -14,6 +14,7 @@ export const OP_LABEL: Record<Op, string> = {
   damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
+  scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport',
 };
 export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
@@ -43,7 +44,8 @@ export function describe(e: Effect): string {
     case 'damage': return `Deal ${n} damage to ${who}`;
     case 'heal': return e.who === 'controller' ? `Gain ${n} life` : `${who[0].toUpperCase() + who.slice(1)} heals ${n}`;
     case 'loseLife': return `${e.who === 'controller' ? 'You lose' : e.who === 'opponent' ? 'Your opponent loses' : 'Each Avatar loses'} ${n} life`;
-    case 'draw': return `Draw ${n} from ${e.deck === 'atlas' ? 'your atlas' : e.deck === 'spellbook' ? 'your spellbook' : 'a deck you choose'}`;
+    case 'draw': if (e.fromBottom) return `Draw the bottom card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}`;
+      return `Draw ${n} from ${e.deck === 'atlas' ? 'your atlas' : e.deck === 'spellbook' ? 'your spellbook' : 'a deck you choose'}`;
     case 'mana': return `Gain ${n} mana this turn${e.cond === 'onlyCopy' ? ' (only copy)' : ''}`;
     case 'destroy': return `Destroy ${who}`;
     case 'banish': return `Banish ${who}`;
@@ -51,12 +53,17 @@ export function describe(e: Effect): string {
     case 'tap': return `Tap ${who}`;
     case 'untap': return `Untap ${who}`;
     case 'buff': return `${who[0].toUpperCase() + who.slice(1)}: ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power${e.until === 'turn' ? ' this turn' : ''}`;
-    case 'grant': return `${who[0].toUpperCase() + who.slice(1)} gains ${e.keyword}${e.until === 'turn' ? ' this turn' : ''}`;
+    case 'grant': if (e.keyword === 'Movement') return `${who[0].toUpperCase() + who.slice(1)} gets Movement +${e.n ?? 1}${e.until === 'turn' ? ' this turn' : ''}`;
+      if (e.who === 'siteHere') return `This site ${e.keyword === 'Ward' ? 'gains a Ward' : 'is flooded (a water site)'}`;
+      return `${who[0].toUpperCase() + who.slice(1)} gains ${e.keyword}${e.until === 'turn' ? ' this turn' : ''}`;
     case 'discard': return `${e.who === 'controller' ? 'You discard' : 'Your opponent discards'} ${n} at random`;
     case 'provide': { const el = Object.entries(e.el ?? {}).map(([k, v]) => `${v} ${k}`).join(', '); return `Provides ${[el && `${el} threshold`, e.n ? `${e.n} mana` : ''].filter(Boolean).join(' and ')}${e.on === 'static' ? ' while in the realm' : ' this turn'}`; }
     case 'summon': return `Summon ${n === '1' ? 'a' : n} ${e.token} token${n === '1' ? '' : 's'} here`;
     case 'shoot': return e.pierce ? `Shoot a piercing projectile: ${n} damage to each unit it passes` : `Shoot ${e.shots && e.shots !== 1 ? (e.shots === -1 ? 'X projectiles' : `${e.shots} projectiles`) : 'a projectile'} for ${n} damage${e.shots && e.shots !== 1 ? ' each, in one direction' : ''}${e.splash ? ` (and ${e.splash} to each other unit where it hits)` : ''}`;
     case 'strike': return `Strike ${who}`;
+    case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
+    case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
+    case 'teleport': return `Teleport ${who} to ${e.dest === 'site' ? 'the surface of a site you choose' : 'a nearby location you choose'}`;
     case 'mill': return `Discard the top ${n} of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}`;
     case 'manual': return e.text ?? 'Resolve by hand';
   }

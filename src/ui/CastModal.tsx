@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, cellsFor, shotDirs, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, cellsFor, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, mainElement } from './CardFace';
@@ -142,6 +142,8 @@ function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: numbe
           const here = Object.values(s.units).filter((u) => u.c === cl); const on = c?.cell === cl;
           return <button key={cl} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ cell: cl })} onPointerEnter={() => here[0] && focus(here[0].id)} onPointerLeave={() => focus(null)}>{sq(cl)}<small> {here.length ? here.map((u) => unitCard(s, u).name).join(', ') : s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'empty'}</small></button>;
         })}</div> : <small className="none"> — no location in range</small>)}
+        {e.op === 'scry' && (() => { const top = s.players[pl.p][e.deck ?? 'spellbook'][0]; return top ? <span className="xpick"><span className="peek" data-tip="Only you see this">{cardOf(s, top).name}</span><button className={c?.bottom ? 'on' : ''} onClick={() => set({ bottom: !c?.bottom })}>{c?.bottom ? 'Goes to the bottom' : 'Put it on the bottom'}</button></span> : <small className="none"> — the deck is empty</small>; })()}
+        {e.op === 'teleport' && c?.target && (() => { const tc = teleportCells(s, e, s.units[c.target!]); return tc.length ? <div className="chips targets"><small>Where to:</small>{tc.map((cl) => <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })}>{sq(cl)}<small> {s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'void'}</small></button>)}</div> : <small className="none"> — nowhere to go</small>; })()}
         {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
         {e.who === 'target' && !e.ref && (targets.length ? <div className="chips targets">{targets.map((id) => {
           const u = s.units[id]; const on = c?.target === id;
