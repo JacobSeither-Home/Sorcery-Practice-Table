@@ -900,3 +900,33 @@ describe('movement from card text (Codex "Forced Movement", "Teleport")', () => 
     expect(s.units[runner].c).toBe(cell(3, 2));
   });
 });
+
+describe('auras occupy a 2×2 area (Codex "Casting Auras")', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 20; return s; };
+  it('an aura can be conjured anywhere, its static ability reaches the four squares, and it lasts N turns', () => {
+    let s = board();
+    const tangle = read('Aura', 'Test Tangle', 'Minions occupying affected sites lose Airborne.\nLasts 2 of your turns.', { cost: 1 });
+    const inArea = unit(s, 1, cell(3, 1), id('Wind Sprite')); const outside = unit(s, 1, cell(0, 0), id('Wind Sprite'));
+    expect(reason(s, { t: 'cast', inst: give(s, 0, tangle), c: cell(4, 1) })).toMatch(/2×2/);
+    s = apply(s, { t: 'cast', inst: give(s, 0, tangle), c: cell(2, 0) });   // covers C4 D4 C3 D3 → cells (2,0) (3,0) (2,1) (3,1)
+    expect(has(s, s.units[inArea], 'Airborne')).toBe(false);
+    expect(has(s, s.units[outside], 'Airborne')).toBe(true);
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' }); s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' });
+    expect(s.perms.some((m) => m.kind === 'aura')).toBe(true);              // one counter
+    s = apply(s, { t: 'endTurn' });
+    expect(s.perms.some((m) => m.kind === 'aura')).toBe(false);             // dispelled after its second turn
+  });
+  it('"here" on an aura means all four squares', () => {
+    let s = board();
+    const storm = read('Aura', 'Test Storm', 'At the end of your turn, deal 1 damage to each unit here.', { cost: 1 });
+    const a = unit(s, 1, cell(2, 0), id('Ember Runner')), b = unit(s, 1, cell(3, 1), id('Ember Runner'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, storm), c: cell(2, 0) });
+    s = apply(s, { t: 'endTurn' });
+    expect(s.units[a].damage + s.units[b].damage).toBe(2);                 // both squares of the area were hit (enemy damage clears at the end of their own turn)
+  });
+});

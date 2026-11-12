@@ -6,7 +6,7 @@ export type CardType = 'Avatar' | 'Minion' | 'Magic' | 'Aura' | 'Artifact' | 'Si
 export type Thresholds = Record<Element, number>;
 export type PlayerId = 0 | 1;
 export type Region = 'surface' | 'under';
-export interface Loc { c: number; r: Region }
+export interface Loc { c: number; r: Region; /** an aura's location: its 2×2 area */ aura?: boolean }
 
 /** When an ability happens.
  *  cast      — a magic spell resolves
@@ -49,6 +49,8 @@ export type Op =
   | 'flood'
   /** the units do not untap the next time they would */
   | 'noUntap'
+  /** "Lasts N of your turns": dispelled at the end of its controller's Nth turn */
+  | 'lasts'
   /** choose cards from a zone (Effect.pick) */
   | 'pick'
   /** remove Ward marks from the units (and sites) it reaches */
@@ -68,7 +70,9 @@ export type Who =
   /** units at a location the player chooses (Choice.cell), within `range` */
   | 'atTarget'
   /** the site this card is at: damage to it costs its controller life */
-  | 'siteHere';
+  | 'siteHere'
+  /** an aura's area (Codex "Casting Auras": the four squares around its intersection): the units atop them, or the sites */
+  | 'affected' | 'affectedSites';
 
 /** Data-driven ability. Most cards are data entries, not code. */
 export interface Effect {
@@ -221,7 +225,7 @@ export interface Unit {
 export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
-export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura'; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
+export interface Permanent { id: string; inst: string; owner: PlayerId; /** artifact: its square; aura: the top-left square of its 2×2 area */ c: number; kind: 'artifact' | 'aura'; /** "Lasts N of your turns": end-of-turn counters so far */ turns?: number; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
 
 export interface PlayerState {
   life: number;

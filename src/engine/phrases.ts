@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -106,10 +106,11 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   const q = m ? m[1].toLowerCase() : ''; if (m) t = t.slice(m[0].length);
   let other = q === 'another';
   if ((m = t.match(/^other\s+/i))) { other = true; t = t.slice(m[0].length); }
-  let range: Effect['range'] | undefined; let atTarget = false;
+  let range: Effect['range'] | undefined; let atTarget = false; let aff = false;
   const steps = t.match(/ up to (two|three) steps away$/i); if (steps) { t = t.slice(0, steps.index); range = steps[1].toLowerCase() as Effect['range']; }
   if ((m = t.match(/^(nearby|adjacent)\s+/i))) { range = m[1].toLowerCase() as Effect['range']; t = t.slice(m[0].length); }
   // trailing location
+  if ((m = t.match(/\s+(?:at|atop|occupying|in) affected (?:sites|locations|squares)$/i)) || (m = t.match(/^affected\s+/i))) { aff = true; t = m.index === 0 ? t.slice(m[0].length) : t.slice(0, m.index); }
   const tail = t.match(/\s+(here|there|nearby|adjacent|(?:occupying|atop) nearby sites|atop this site|at (?:this|its) location|at its site|(?:at|atop|occupying) (?:target|a) (?:(nearby|adjacent) )?(?:land |water )?(?:location|site)(?: (nearby|adjacent))?(?: up to (two|three) steps away)?|atop target (?:(nearby|adjacent) )?site)$/i);
   if (tail) {
     t = t.slice(0, tail.index);
@@ -141,6 +142,7 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   if (mode === 'minion' && kind === 'unit') kind = 'minion';
   const filters = { ...(weaker ? { weaker: true } : {}), ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
   const only: Effect['only'] = kind === 'avatar' ? 'avatar' : kind === 'minion' ? (side === 'enemy' ? 'enemyMinion' : side === 'ally' ? 'allyMinion' : 'minion') : side === 'enemy' ? 'enemy' : side === 'ally' ? 'ally' : undefined;
+  if (aff) return { who: 'affected', ...(only ? { only } : {}), ...filters };
   if (atTarget) return { who: 'atTarget', range: range ?? 'any', targets: /target/i.test(np), ...(only ? { only } : {}), ...filters };
   const chosen = q === 'target' || q === 'an' || q === 'a' || q === 'another' || q === 'one';
   if (chosen) return { who: 'target', range: range ?? 'any', targets: q === 'target', ...(only ? { only } : {}), ...filters };
@@ -404,6 +406,8 @@ export const RULES: Rule[] = [
     } },
   { id: 'lance-token', label: 'Acquire a Lance token', re: /^(?:this )?acquires? a lance(?: token)?\.$/i, build: () => [{ op: 'grant', who: 'self', keyword: 'Lance', until: 'permanent' }] },
   { id: 'first-strike-attacking', label: 'Strikes first while attacking', re: /^(?:this )?strikes first while attacking\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Strikes first while attacking', until: 'permanent' }] : null) },
+  { id: 'lasts', label: 'Lasts N of your turns', re: /^lasts (\w+) of your turns\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'lasts', who: 'self', n: WORDNUM[m[1].toLowerCase()] ?? +m[1] }] : null) },
+  { id: 'affected-flooded', label: 'Affected sites are flooded', re: /^affected (?:\w+ )?sites are flooded\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'affectedSites', keyword: 'Flood', until: 'permanent' }] : null) },
   { id: 'first-damage', label: 'Prevent the first damage each turn', re: /^the first time .+? would take damage each turn, prevent that damage\.$/i,
     build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Prevent first damage each turn', until: 'permanent' }] : null) },
   { id: 'destroy-site', label: 'Destroy a nearby site', re: /^destroy (?:a|target) (nearby |adjacent )?site\.$/i,
@@ -420,6 +424,8 @@ export const RULES: Rule[] = [
     build: (m) => { const k = KEYWORDS.find((x) => x.toLowerCase() === m[1].toLowerCase()); return k ? [{ op: 'tap', who: 'atTarget', refCell: true, only: 'minion', notKw: k }] : null; } },
   { id: 'lose-keyword', label: '… lose a keyword', re: new RegExp(`^(.+?) (?:permanently )?loses? (${KEYWORDS.join('|')})\\.$`, 'i'),
     build: (m, on) => { const v = nounPhrase(m[1]); const k = KEYWORDS.find((x) => x.toLowerCase() === m[2].toLowerCase()); return v && k && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses ' + k, until: 'permanent' }] : null; } },
+  { id: 'lose-and-are', label: '… lose X and are Y', re: new RegExp(`^(.+?) loses? (${KEYWORDS.join('|')}) and (?:are|is) (${KEYWORDS.join('|')})\\.$`, 'i'),
+    build: (m, on) => { const v = nounPhrase(m[1]); const a = KEYWORDS.find((x) => x.toLowerCase() === m[2].toLowerCase()), b = KEYWORDS.find((x) => x.toLowerCase() === m[3].toLowerCase()); return v && a && b && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses ' + a, until: 'permanent' }, { op: 'grant', ...v, keyword: b, until: 'permanent' }] : null; } },
   { id: 'are-keyword', label: '… are Spellcasters / are disabled', re: new RegExp(`^(.+?) (?:is|are) (?:an? )?(${KEYWORDS.join('|')}|spellcasters|disabled)\\.$`, 'i'),
     build: (m, on) => { const v = nounPhrase(m[1]); const w = m[2].toLowerCase().replace(/s$/, ''); const k = KEYWORDS.find((x) => x.toLowerCase() === w); return v && k && on === 'static' && v.who !== 'target' && v.who !== 'self' ? [{ op: 'grant', ...v, keyword: k, until: 'permanent' }] : null; } },
   { id: 'break-wards', label: 'Break nearby Wards', re: /^break (nearby|adjacent|all) wards\.$/i,
@@ -458,7 +464,7 @@ export const RULES: Rule[] = [
 ];
 
 /** Which ops make sense for each trigger. A static line can only change stats, keywords, prevention and what a card provides. */
-const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent'] };
+const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent', 'lasts'] };
 
 export interface ReadLine { text: string; on: Trigger | 'keywords'; effects: Effect[]; manual: string[] }
 export interface Reading { effects: Effect[]; lines: ReadLine[]; manual: string[] }

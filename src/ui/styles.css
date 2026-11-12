@@ -532,3 +532,7 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .incant .peek { font-family: var(--display); color: #fff3d6; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 6px; }
 .howto .fineprint { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .spell-card .incant .chip.on { background: color-mix(in srgb, var(--sp) 38%, #1a1630); color: #fff; border-color: var(--sp); box-shadow: 0 0 10px -2px var(--sp); } .spell-card .incant .chip.on small { color: #f3ead2; }
+/* an aura occupies the four squares around an intersection */
+.aura-area { position: absolute; left: calc(var(--gap) + (100% - 2 * var(--gap)) * var(--ax) / 5); top: calc(var(--gap) + (100% - 2 * var(--gap)) * var(--ay) / 4); width: calc((100% - 2 * var(--gap)) * 2 / 5); height: calc((100% - 2 * var(--gap)) / 2); border-radius: 18px; border: 2px dashed color-mix(in srgb, var(--brass) 70%, transparent); background: radial-gradient(circle at 50% 50%, #e0b45a22, transparent 70%); pointer-events: none; z-index: 3; box-shadow: inset 0 0 30px -10px var(--brass); }
+.aura-area.p1 { border-color: color-mix(in srgb, var(--p1) 70%, transparent); background: radial-gradient(circle at 50% 50%, #62d6e822, transparent 70%); }
+.aura-area .aura-name { position: absolute; left: 50%; top: 50%; translate: -50% -50%; pointer-events: auto; font: 600 11px var(--display); padding: 3px 8px; border-radius: 99px; background: #0b0a18dd; border: 1px solid var(--line); white-space: nowrap; }

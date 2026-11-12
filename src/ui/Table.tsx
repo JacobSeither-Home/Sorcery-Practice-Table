@@ -59,8 +59,10 @@ export function Table() {
   const q0 = s.queue?.[0];
   useEffect(() => { if (q0 && !s.pending && (hot || q0.by === g.local) && (!cast || cast.k === 'hand')) { if (!cast) setCast({ k: 'trigger', id: q0.id }); } }, [q0?.id, cast]);
   /** Play a card from hand: straight onto the table when it has no text, through the cast pop-up when it does. */
-  const play = (inst: string, c?: number, bearer?: string) => {
+  const play = (inst: string, c0?: number, bearer?: string) => {
     const d = cardOf(s, inst);
+    // an aura sits where four squares meet: a click on the last column or row means the area just inside it
+    const c = d.type === 'Aura' && c0 !== undefined ? cell(Math.min(xy(c0)[0], COLS - 2), Math.min(xy(c0)[1], 2)) : c0;
     if (d.effects.length || d.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst, ...(c !== undefined ? { c } : {}), ...(bearer ? { bearer } : {}) }); return; }
     const a: Action = { t: 'cast', inst, ...(c !== undefined ? { c } : {}), ...(bearer ? { target: bearer } : {}) };
     if (explain(a)) act(a); else setSel(null);
@@ -84,6 +86,7 @@ export function Table() {
       const needs = selCard.effects.some((e) => e.who === 'target' && e.on === (selCard.type === 'Magic' ? 'cast' : 'genesis'));
       if (selCard.type === 'Site') { if (!s.units[me.avatar].tapped) for (const c of playableSiteCells(s, who)) cells.set(c, 'place'); }
       else if (selCard.type === 'Magic') { if (needs) for (const id of validTargets(s, who, selCard)) units.add(id); }
+      else if (selCard.type === 'Aura') for (let c = 0; c < CELLS; c++) cells.set(c, 'place'); // auras can be conjured anywhere (Codex "Casting Auras")
       else for (const c of sitesOf(s, who)) cells.set(c, 'place');
     }
     if (selUnit) {
@@ -125,7 +128,7 @@ export function Table() {
     if (sel?.k === 'hand' && selCard) {
       if (selCard.type === 'Site') { if (explain({ t: 'playSite', inst: sel.inst, c })) act({ t: 'playSite', inst: sel.inst, c }); return; }
       if (selCard.type === 'Magic') { play(sel.inst); return; }
-      if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst: sel.inst, c }); return; }
+      if (selCard.type !== 'Aura' && s.sites[c]?.owner !== who) { explain({ t: 'cast', inst: sel.inst, c }); return; }
       play(sel.inst, c);
       return;
     }
@@ -183,7 +186,7 @@ export function Table() {
     if (d.type === 'Site') { const a: Action = { t: 'playSite', inst, c }; if (explain(a)) act(a); else setSel(null); return; }
     if (d.type === 'Magic') { play(inst); return; }
     if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && s.sites[c]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) { play(inst, c, unit); return; } // dropped on one of your units: it carries the artifact
-    if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst, c }); setSel(null); return; }
+    if (d.type !== 'Aura' && s.sites[c]?.owner !== who) { explain({ t: 'cast', inst, c }); setSel(null); return; }
     play(inst, c);
   }
   const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen
@@ -242,7 +245,7 @@ export function Table() {
                   <span className="coord">{'ABCDE'[x]}{4 - y}</span>
                   {([other(bottomPlayer), bottomPlayer] as PlayerId[]).map((p) => (
                     <div key={p} className={`side ${p === bottomPlayer ? 'near' : 'far'}`}>
-                      {s.perms.filter((m) => m.c === c && m.owner === p && !m.carrier).map((m) => {
+                      {s.perms.filter((m) => m.c === c && m.owner === p && !m.carrier && m.kind !== 'aura').map((m) => {
                         const pc = cardOf(s, m.inst); const hp = hoverProps(pc);
                         return <span key={m.id} className={`perm p${m.owner}`} {...hp} onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: destroy' : pc.name}>{m.kind === 'aura' ? '◌' : '◆'}</span>;
                       })}
@@ -258,6 +261,17 @@ export function Table() {
                   )}
                 </div>
               );
+            })}
+            {s.perms.filter((m) => m.kind === 'aura').map((m) => {
+              // the aura's 2×2 area, drawn over the four squares it occupies
+              const area = [m.c, m.c + 1, m.c + COLS, m.c + COLS + 1].map((c) => order.indexOf(c));
+              const xs = area.map((i) => i % COLS), ys = area.map((i) => Math.floor(i / COLS));
+              const pc = cardOf(s, m.inst); const left = Math.min(...xs), top = Math.min(...ys);
+              const lasts = pc.effects.find((e) => e.op === 'lasts')?.n;
+              return <div key={m.id} className={`aura-area p${m.owner}`} style={{ '--ax': left, '--ay': top } as React.CSSProperties} {...hoverProps(pc)}
+                onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: dispel' : `${pc.name}${lasts ? ` (${m.turns ?? 0} of ${lasts} turns)` : ''}`}>
+                <span className="aura-name">◌ {pc.name}{lasts ? ` · ${m.turns ?? 0}/${lasts}` : ''}</span>
+              </div>;
             })}
             {herald && herald.trails.length > 0 && (
               <svg key={herald.id} className={`trails mp${herald.p}`} viewBox={`0 0 ${COLS * 100} 400`} preserveAspectRatio="none" aria-hidden>

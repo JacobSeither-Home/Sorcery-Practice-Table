@@ -29,6 +29,7 @@ export function isWater(s: GameState, c: number): boolean {
   if (!site || !site.inst) return false;
   const d = cardOf(s, site.inst);
   if (d.thresholds.water > 0 || d.keywords.includes('Flood') || s.players?.some((pl) => pl?.flooded === c)) return true; // Codex "Flooded": a flooded site is a water site
+  if (s.perms?.some((m) => m.kind === 'aura' && auraArea(m.c).includes(c) && cardOf(s, m.inst).effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Flood' && e.who === 'affectedSites'))) return true;
   return Object.values(s.units).some((u) => u.c === c && unitCard(s, u).effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Flood' && e.who === 'siteHere'));
 }
 export const isLand = (s: GameState, c: number) => !!s.sites[c] && !isWater(s, c);
@@ -71,12 +72,21 @@ function staticCards(s: GameState): Set<string> {
   return set;
 }
 interface Bonus { atk: number; def: number; kws: string[] }
+/** The four squares an aura at top-left square `c` covers (Codex "Casting Auras"). */
+export function auraArea(c: number): number[] { const [x, y] = xy(c); return [cell(x, y), cell(x + 1, y), cell(x, y + 1), cell(x + 1, y + 1)].filter((n) => n >= 0); }
+const AURA_HERE: Partial<Record<Effect['who'], Effect['who']>> = { unitsHere: 'affected', minionsHere: 'affected', enemiesHere: 'affected', alliesHere: 'affected' };
 /** Does a static effect of a card (at `at`, controlled by `p`, on unit `self` if it is one) reach unit u? */
 function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, self?: string, bearer?: string): boolean {
   if (e.only === 'minion' && u.avatar) return false;
   if (e.other && u.id === self) return false;
   const here = u.c === at.c && u.r === at.r, near = u.r === at.r && nearby(at.c).includes(u.c);
+  const inArea = u.r === 'surface' && auraArea(at.c).includes(u.c);
+  if (at.aura && AURA_HERE[e.who]) { // Codex "Here": for an aura, its four locations
+    if (!inArea) return false;
+    if (e.who === 'enemiesHere') return u.owner !== p; if (e.who === 'alliesHere') return u.owner === p; return true;
+  }
   switch (e.who) {
+    case 'affected': return inArea;
     case 'self': return u.id === self;
     case 'bearer': return u.id === bearer;
     case 'ownAvatar': return u.avatar && u.owner === p;
@@ -117,7 +127,7 @@ export function bonus(s: GameState, u: Unit): Bonus {
     }
   };
   for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !d.keywords.includes('Disabled')) add(d, v.owner, v, v.id); }
-  for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) add(d, m.owner, { c: m.c, r: m.carrier ? s.units[m.carrier]?.r ?? 'surface' : 'surface' }, undefined, m.carrier); }
+  for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) add(d, m.owner, { c: m.c, r: m.carrier ? s.units[m.carrier]?.r ?? 'surface' : 'surface', ...(m.kind === 'aura' ? { aura: true } : {}) }, undefined, m.carrier); }
   for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface' }); } }
   return b;
 }
@@ -468,7 +478,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
 export function sourcesOf(s: GameState, p: PlayerId): { src: Source; inst: string; loc: Loc; unit?: Unit }[] {
   const out: { src: Source; inst: string; loc: Loc; unit?: Unit }[] = [];
   for (const u of Object.values(s.units)) if (u.owner === p) out.push({ src: { unit: u.id }, inst: u.inst, loc: { c: u.c, r: u.r }, unit: u });
-  for (const m of s.perms) if (m.owner === p) { const b = m.carrier ? s.units[m.carrier] : undefined; out.push({ src: { perm: m.id }, inst: m.inst, loc: b ? { c: b.c, r: b.r } : { c: m.c, r: 'surface' } }); }
+  for (const m of s.perms) if (m.owner === p) { const b = m.carrier ? s.units[m.carrier] : undefined; out.push({ src: { perm: m.id }, inst: m.inst, loc: b ? { c: b.c, r: b.r } : { c: m.c, r: 'surface', ...(m.kind === 'aura' ? { aura: true } : {}) } }); }
   for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner === p) out.push({ src: { site: c }, inst: st.inst, loc: { c, r: 'surface' } }); }
   return out;
 }
@@ -545,7 +555,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       : e.amount === 'banishedElement' ? s.players[p].banished ?? 0
       : e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
     const all = Object.values(s.units);
-    const here = (u: Unit) => !!loc && u.c === loc.c && u.r === loc.r;
+    const auraSrc = !!src && 'perm' in src && s.perms.find((m) => m.id === src.perm)?.kind === 'aura';
+    const here = (u: Unit) => !!loc && (auraSrc ? u.r === 'surface' && auraArea(loc.c).includes(u.c) : u.c === loc.c && u.r === loc.r);
     const near = (u: Unit) => !!loc && u.r === loc.r && nearby(loc.c).includes(u.c);
     let victims: Unit[] = [];
     switch (e.who) {
@@ -565,6 +576,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'enemiesHere': victims = all.filter((u) => here(u) && u.owner !== p); break;
       case 'alliesHere': victims = all.filter((u) => here(u) && u.owner === p); break;
       case 'unitsHere': case 'minionsHere': victims = all.filter(here); break;
+      case 'affected': victims = loc ? all.filter((u) => u.r === 'surface' && auraArea(loc!.c).includes(u.c)) : []; break;
       case 'enemiesNearby': victims = all.filter((u) => near(u) && u.owner !== p); break;
       case 'alliesNearby': victims = all.filter((u) => near(u) && u.owner === p); break;
       case 'unitsNearby': victims = all.filter(near); break;
@@ -1058,7 +1070,8 @@ export function check(s: GameState, a: Action): Check {
       if (d.type === 'Minion' || d.type === 'Artifact') {
         if (a.c === undefined || !(s.sites[a.c]?.owner === p || (d.type === 'Minion' && allows(d, 'Summon to any site') && s.sites[a.c]?.inst))) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control.`);
       } else if (d.type === 'Aura') {
-        if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose a square for the aura.');
+        if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose where the aura goes.');
+        if (xy(a.c)[0] > COLS - 2 || xy(a.c)[1] > ROWS - 2) return no('An aura sits where four squares meet (a 2×2 area); choose the top-left square of that area.', 'Aura');
       }
       const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
       const idx = effectsOn(d, on);
@@ -1263,6 +1276,12 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'endTurn': {
       fireAll(s, p, 'endTurn');
+      for (const m of [...s.perms]) { // Codex "Lasts 3 of Your Turns": a counter each end of turn, dispelled at N
+        if (m.owner !== p) continue;
+        const n = cardOf(s, m.inst).effects.find((e) => e.op === 'lasts')?.n; if (!n) continue;
+        m.turns = (m.turns ?? 0) + 1;
+        if (m.turns >= n) { s.perms.splice(s.perms.indexOf(m), 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); log(s, `${cardOf(s, m.inst).name} is dispelled (it lasted ${n} turns).`, p); }
+      }
       for (const u of Object.values(s.units)) { if (u.owner === p && !u.avatar) u.damage = 0; if (u.mods?.some((m) => m.turn !== undefined)) { u.mods = u.mods.filter((m) => m.turn === undefined); if (!u.mods.length) delete u.mods; } }
       pl.mana = 0;
       startTurn(s, other(p));
@@ -1377,7 +1396,8 @@ export function legalActions(s: GameState): Action[] {
     if (d.type === 'Magic') {
       for (const choices of choiceSets(s, p, d, effectsOn(d, 'cast'), casterOrigins(s, p))) out.push({ t: 'cast', inst, ...(choices.length ? { choices } : {}) });
     } else {
-      for (const c of mine) for (const choices of choiceSets(s, p, d, effectsOn(d, 'genesis'), [{ c, r: 'surface' }])) out.push({ t: 'cast', inst, c, ...(choices.length ? { choices } : {}) });
+      const places = d.type === 'Aura' ? [...Array(CELLS).keys()].filter((c) => xy(c)[0] <= COLS - 2 && xy(c)[1] <= ROWS - 2) : mine;
+      for (const c of places) for (const choices of choiceSets(s, p, d, effectsOn(d, 'genesis'), [{ c, r: 'surface', ...(d.type === 'Aura' ? { aura: true } : {}) }])) out.push({ t: 'cast', inst, c, ...(choices.length ? { choices } : {}) });
     }
   }
   // activated abilities (the AI leaves out ones that are only text to resolve by hand)
