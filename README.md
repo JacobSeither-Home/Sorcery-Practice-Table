@@ -23,12 +23,12 @@ npm run build      # static site in dist/
 
 ## Layout
 
-- `src/engine/` rules engine, no UI dependencies (`rules.ts`, `cards.ts`, `types.ts`)
+- `src/engine/` rules engine, no UI dependencies (`rules.ts`, `cards.ts`, `phrases.ts` card-text reader, `types.ts`)
 - `src/ai/` Easy / Medium / Hard opponent
 - `src/data/` card sync, art sync, decks, official precon lists
 - `src/net/` online play (moves only)
 - `src/feedback/` wishlist + problem reports
-- `src/ui/` React table
+- `src/ui/` React table; `CastModal.tsx` is the spell-casting pop-up for card abilities and the hand tools
 - `tests/` vitest; `tests/fixtures/practiceSet.ts` holds made-up cards used only by tests; `node tests/arena.mjs` pits the AI tiers against each other
 - `docs/HANDOFF.md` how the pieces fit, what is verified, and what is open
 - `docs/RULES_COVERAGE.md` what the engine enforces and what is simplified

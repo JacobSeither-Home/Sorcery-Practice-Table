@@ -23,7 +23,15 @@ The reader's page cut off before the Ward, Landbound and Voidwalk entries.
 
 ## Simplified or not automated
 
-- **Card text beyond keywords** is automated only for (a) effect entries added in Card library, and (b) a few sentences read straight from the text when that sentence is the card's whole text: "Deal N damage to target [nearby/adjacent] unit/minion", "Destroy/Kill target [nearby/adjacent] minion", "Draw a/N spell(s)/site(s)", "Gain N life", alone or after "Genesis →" / "Deathrite →". Checked against the API on 2026-11-10, nearly every one of the ~1,100 card texts is unique, so most cards (all 34 Avatars' extra abilities, most sites, artifacts and auras) are resolved with Manual tools. Manual actions are marked in the log.
+- **Card text** is read sentence by sentence (`src/engine/phrases.ts`). Each sentence that matches a known phrase becomes an effect the engine carries out; each sentence that does not is kept as a "by hand" entry, and the cast pop-up offers the hand tools for it after the rest resolves. Hand-entered effects in Card library replace what was read. What is read today:
+  - triggers: cast (magic), Genesis →, Deathrite →, Tap → (with an optional mana cost before it), "② → …" and "Once on your turn, … may …" (once per turn), "At the start / end of your turn, …", and plain sentences on permanents as always-on (static) abilities
+  - effects: deal N damage to a target / a group / an Avatar; "… takes N damage"; destroy / kill, banish, return to owner's hand; tap / untap; gain or heal life, lose life, opponent loses life; draw N spells / sites / cards (cards: the player picks the deck); gain mana (circled numbers), including the "only copy" towers; opponent discards at random; "+N power" (this turn, or always for static text); gaining keywords (this turn or always)
+  - targets: "target [nearby/adjacent] [enemy/allied] unit/minion/Avatar/ally/enemy [here/nearby/adjacent]"; groups: "each/all [other] [enemy/allied] units/minions/allies/enemies [here/nearby/adjacent]"; "this minion", "your Avatar", "bearer"
+  - X: the player picks the number in the pop-up (the AI uses 1)
+  - These phrase rules were written from the card text shapes in the tests and general Sorcery wording, not checked against the full live card list from this workspace. Settings → Card Sync and Card library → Rules coverage show, after a sync, exactly which sentences are still by hand, grouped by ability type and by how often each wording occurs.
+- **Unread sentences on the AI's cards** are logged as "not automated; resolve by hand". The AI does not play magic whose text is entirely by hand, and does not use activated abilities that are entirely by hand.
+- **Static abilities** read today only change power/defense and give keywords. Static mana, threshold, cost and movement rules stay by hand.
+- **Triggered abilities that need a choice** (a target, X, which deck) wait in a queue for their controller before anything else happens; ones with no choice resolve on their own.
 - **Ward** is displayed but not enforced (no definition was available from the source above).
 - **Flood** is not applied to sites.
 - **Auras** are placed on a square you control, not on an intersection, and have no area effect.
@@ -34,7 +42,8 @@ The reader's page cut off before the Ward, Landbound and Voidwalk entries.
 - **Empty deck**: the draw step only offers decks that still have cards; a player loses when both are empty at the draw step, or when an effect draws from an empty deck.
 - **Spellcaster element limits** ("only casts fire spells") are not enforced.
 - **Codex links** go to the Codex index. Per-keyword ids (`sorcerytcg.com/codex/<id>`) are not filled in: `src/engine/keywords.ts` has the table.
-- No undo.
+- Undo exists only against the AI and only for moves that revealed nothing (see `src/store.ts`).
+- Games against the AI and hot-seat games are saved after every move (this browser; the signed-in account too) and restored on reload. Online games are not.
 - The built-in decks are the four Beta precons. Many of their cards have text the engine does not automate.
 
 ## Not verified

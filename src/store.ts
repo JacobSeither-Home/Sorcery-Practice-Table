@@ -14,6 +14,8 @@ export interface Settings { artChoice: Record<string, string>; zoom: number; nam
   /** pause after each opponent (AI) action until the player taps Continue */ stepOpponent: boolean }
 export interface Toast { id: number; text: string; keyword?: string; tone: 'info' | 'error' }
 export interface Game { state: GameState; mode: Mode; difficulty: Difficulty; local: PlayerId; names: [string, string]; n: number }
+/** A game as saved after every move: the state with only the cards it uses. */
+export interface SavedGame { v: 1; savedAt: string; game: Omit<Game, 'state'> & { state: Omit<GameState, 'cards'> & { cards: Record<string, CardDef> } } }
 export interface Online { role: 'host' | 'guest'; code: string; status: 'waiting' | 'connected' | 'closed'; note: string }
 
 interface Store {
@@ -58,6 +60,10 @@ interface Store {
   join: (code: string, deck: DeckList) => void;
   leave: () => void;
   act: (a: Action) => boolean;
+  /** put a saved game back on the table (refresh, or a newer copy from the account) */
+  restoreGame: (saved: SavedGame) => void;
+  /** when the current game was last saved on this device */
+  savedAt: string | null;
 }
 
 let link: Link | null = null;
@@ -73,7 +79,7 @@ export const PACES = [{ v: 2.5, label: 'Very slow' }, { v: 1.6, label: 'Slow' },
 
 export const useStore = create<Store>((set, get) => ({
   ready: false, view: 'play', apiRaw: null, syncedAt: null, overlays: {}, custom: [], pool: buildPool(null, {}, []), decks: [], art: {}, artVariants: {}, artJob: null, artReport: null, artSyncedAt: null,
-  settings: DEFAULTS, game: null, online: null, aiThinking: false, aiWaiting: false, canUndo: false, toasts: [],
+  settings: DEFAULTS, game: null, online: null, savedAt: null, aiThinking: false, aiWaiting: false, canUndo: false, toasts: [],
   aiNext: () => { const r = aiGate; aiGate = null; useStore.setState({ aiWaiting: false }); r?.(); },
 
   init: async () => {
@@ -82,8 +88,11 @@ export const useStore = create<Store>((set, get) => ({
     ]);
     set({
       apiRaw: apiRaw ?? null, syncedAt: syncedAt ?? null, overlays: overlays ?? {}, custom: custom ?? [], decks: decks ?? [],
-      settings: { ...DEFAULTS, ...(settings ?? {}) }, pool: buildPool(apiRaw, overlays ?? {}, custom ?? []), ready: true,
+      settings: { ...DEFAULTS, ...(settings ?? {}) }, pool: buildPool(apiRaw, overlays ?? {}, custom ?? []),
     });
+    const saved = await db.get<SavedGame>(SAVE_KEY);
+    if (saved?.v === 1) { try { get().restoreGame(saved); get().toast(`Game restored where you left off (turn ${saved.game.state.turn}).`); } catch (e) { logError(`restore: ${(e as Error).message}`); } }
+    set({ ready: true });
     get().reloadArt();
     db.get<string>('art:syncedAt').then((v) => set({ artSyncedAt: v ?? null }));
   },
@@ -201,12 +210,50 @@ export const useStore = create<Store>((set, get) => ({
     driveAi();
     return true;
   },
+  restoreGame: (saved) => {
+    const pool = get().pool; const st = saved.game.state;
+    // the saved cards keep the game playable if the pool changed; current definitions win so rule fixes apply
+    const cards: Record<string, CardDef> = {};
+    for (const id of Object.keys(st.cards)) cards[id] = pool[id] ?? st.cards[id];
+    const state = { ...st, cards } as GameState;
+    get().aiNext(); undoStack = [];
+    restoring = true;
+    set({ game: { ...saved.game, state }, savedAt: saved.savedAt, view: 'play', canUndo: false });
+    restoring = false;
+    driveAi();
+  },
   undo: () => {
     const g = get().game; const prev = undoStack.pop();
     if (!g || g.mode !== 'ai' || !prev || aiBusy) { set({ canUndo: false }); return; }
     set({ game: { ...g, state: prev, n: g.n - 1 }, canUndo: undoStack.length > 0 });
   },
 }));
+
+// ---- saving the game after every move ----
+// Games against the AI and hot-seat games are saved to this browser after each move (and to the account
+// when signed in, see cloud.ts). Online games are not: the other table cannot be reconnected to.
+export const SAVE_KEY = 'game:current';
+let restoring = false; let saveTimer: ReturnType<typeof setTimeout> | undefined;
+export function serializeGame(g: Game): SavedGame {
+  const used = new Set(Object.values(g.state.inst));
+  const cards: Record<string, CardDef> = {};
+  for (const id of used) if (g.state.cards[id]) cards[id] = g.state.cards[id];
+  return { v: 1, savedAt: new Date().toISOString(), game: { ...g, state: { ...g.state, cards, log: g.state.log.slice(-200) } } };
+}
+/** The game as it should be saved right now, or null when nothing should be kept. */
+export function currentSave(): SavedGame | null {
+  const g = useStore.getState().game;
+  return g && g.mode !== 'online' && g.state.phase !== 'over' ? serializeGame(g) : null;
+}
+useStore.subscribe((s, p) => {
+  if (s.game === p.game || restoring) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const save = currentSave();
+    if (save) { db.set(SAVE_KEY, save); useStore.setState({ savedAt: save.savedAt }); }
+    else if (!useStore.getState().game || useStore.getState().game!.mode !== 'online') { db.del(SAVE_KEY); useStore.setState({ savedAt: null }); }
+  }, 150);
+});
 
 // ---- undo (one-player games only) ----
 // A move can be taken back only while it has revealed nothing: no card drawn, no shuffle or other

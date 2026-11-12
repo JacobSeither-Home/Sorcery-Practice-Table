@@ -2,8 +2,8 @@
 // Rules source: the Sorcery: Contested Realm rulebook as read on 2026-11-10 through a community
 // rulebook reader (not fetched from sorcerytcg.com). Known simplifications are listed in docs/RULES_COVERAGE.md.
 import {
-  type Action, type CardDef, type Check, type DeckList, type Effect, type GameState, type Loc, type ManualOp,
-  type PlayerId, type PlayerState, type Thresholds, type Unit, CELLS, COLS, ELEMENTS, ROWS,
+  type Action, type CardDef, type Check, type Choice, type DeckList, type Effect, type GameState, type Loc, type ManualOp,
+  type PlayerId, type PlayerState, type Queued, type Source, type Thresholds, type Trigger, type Unit, CELLS, COLS, ELEMENTS, ROWS,
 } from './types';
 
 // ---------- helpers ----------
@@ -39,18 +39,72 @@ export function thresholdOf(s: GameState, p: PlayerId): Thresholds {
   for (const c of sitesOf(s, p)) { const d = cardOf(s, s.sites[c]!.inst!); for (const e of ELEMENTS) t[e] += d.thresholds[e]; }
   return t;
 }
+// ---------- stat changes and granted keywords ----------
+// Two sources: `mods` on the unit (from spells and activated abilities, some only for this turn), and
+// static abilities of cards in the realm ("Other allies here have +1 power", "Bearer has Airborne").
+const staticCache = new WeakMap<object, Set<string>>();
+/** The index of cards with static abilities is kept per card table; call this after changing a table in place. */
+export function forgetStatics(cards: Record<string, CardDef>) { staticCache.delete(cards); }
+function staticCards(s: GameState): Set<string> {
+  let set = staticCache.get(s.cards);
+  if (!set) { set = new Set(Object.values(s.cards).filter((d) => d.effects.some((e) => e.on === 'static' && (e.op === 'buff' || e.op === 'grant'))).map((d) => d.id)); staticCache.set(s.cards, set); }
+  return set;
+}
+interface Bonus { atk: number; def: number; kws: string[] }
+/** Does a static effect of a card (at `at`, controlled by `p`, on unit `self` if it is one) reach unit u? */
+function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, self?: string, bearer?: string): boolean {
+  if (e.only === 'minion' && u.avatar) return false;
+  if (e.other && u.id === self) return false;
+  const here = u.c === at.c && u.r === at.r, near = u.r === at.r && nearby(at.c).includes(u.c);
+  switch (e.who) {
+    case 'self': return u.id === self;
+    case 'bearer': return u.id === bearer;
+    case 'ownAvatar': return u.avatar && u.owner === p;
+    case 'enemyAvatar': return u.avatar && u.owner !== p;
+    case 'allAvatars': return u.avatar;
+    case 'alliesHere': return here && u.owner === p;
+    case 'enemiesHere': return here && u.owner !== p;
+    case 'unitsHere': case 'minionsHere': return here;
+    case 'alliesNearby': return near && u.owner === p;
+    case 'enemiesNearby': return near && u.owner !== p;
+    case 'unitsNearby': return near;
+    case 'allyMinions': return !u.avatar && u.owner === p;
+    case 'enemyMinions': return !u.avatar && u.owner !== p;
+    case 'allMinions': return !u.avatar;
+    default: return false;
+  }
+}
+export function bonus(s: GameState, u: Unit): Bonus {
+  const b: Bonus = { atk: 0, def: 0, kws: [] };
+  for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
+  const set = staticCards(s); if (!set.size) return b;
+  const add = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
+    for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer)) {
+      if (e.op === 'buff') { b.atk += e.atk ?? 0; b.def += e.def ?? 0; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
+    }
+  };
+  for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !d.keywords.includes('Disabled')) add(d, v.owner, v, v.id); }
+  for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) add(d, m.owner, { c: m.c, r: m.carrier ? s.units[m.carrier]?.r ?? 'surface' : 'surface' }, undefined, m.carrier); }
+  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface' }); } }
+  return b;
+}
 export function isDisabled(s: GameState, u: Unit): boolean {
   const k = unitCard(s, u).keywords;
-  if (k.includes('Disabled')) return true;
+  if (k.includes('Disabled') || u.mods?.some((m) => m.kw === 'Disabled')) return true;
   if (k.includes('Waterbound') && !isWater(s, u.c)) return true;
   if (k.includes('Landbound') && !isLand(s, u.c)) return true;
   return false;
 }
-export function has(s: GameState, u: Unit, kw: string): boolean { return unitCard(s, u).keywords.includes(kw) && !isDisabled(s, u); }
+export function has(s: GameState, u: Unit, kw: string): boolean {
+  if (isDisabled(s, u)) return false;
+  if (unitCard(s, u).keywords.includes(kw) || u.mods?.some((m) => m.kw === kw)) return true;
+  return staticCards(s).size > 0 && bonus(s, u).kws.includes(kw);
+}
 export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u, 'Stealth');
 export const summoningSick = (s: GameState, u: Unit) => !u.avatar && u.enteredTurn === s.turn && !has(s, u, 'Charge');
 export function unitsAt(s: GameState, l: Loc): Unit[] { return Object.values(s.units).filter((u) => u.c === l.c && u.r === l.r); }
-export function power(s: GameState, u: Unit): number { return unitCard(s, u).attack; }
+export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || staticCards(s).size ? bonus(s, u).atk : 0)); }
+export function defenseOf(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.defense + (u.mods?.length || staticCards(s).size ? bonus(s, u).def : 0)); }
 
 function rand(s: GameState): number {
   let t = (s.rng += 0x6d2b79f5);
@@ -70,7 +124,7 @@ const pname = (p: PlayerId) => `P${p + 1}`;
 
 export function clone(s: GameState): GameState {
   const units: Record<string, Unit> = {};
-  for (const k in s.units) units[k] = { ...s.units[k] };
+  for (const k in s.units) { const u = s.units[k]; units[k] = u.mods ? { ...u, mods: u.mods.slice() } : { ...u }; }
   return {
     ...s,
     players: s.players.map((p) => ({ ...p, spellbook: p.spellbook.slice(), atlas: p.atlas.slice(), hand: p.hand.slice(), cemetery: p.cemetery.slice() })) as [PlayerState, PlayerState],
@@ -79,6 +133,8 @@ export function clone(s: GameState): GameState {
     perms: s.perms.map((p) => ({ ...p })),
     pending: s.pending ? { ...s.pending, loc: { ...s.pending.loc }, target: s.pending.target ? { ...s.pending.target } : null } : null,
     log: s.log.slice(),
+    ...(s.queue ? { queue: s.queue.map((q) => ({ ...q, fx: q.fx.slice() })) } : {}),
+    ...(s.used ? { used: { ...s.used } } : {}),
   };
 }
 
@@ -110,6 +166,7 @@ export function createGame(cards: Record<string, CardDef>, decks: [DeckList, Dec
 /** Whose decision it is right now. */
 export function actor(s: GameState): PlayerId {
   if (s.pending) return s.pending.by;
+  if (s.queue?.length) return s.queue[0].by;
   if (s.phase === 'mulligan') return s.players[s.first].mulliganDone ? other(s.first) : s.first;
   return s.active;
 }
@@ -117,12 +174,15 @@ export function actor(s: GameState): PlayerId {
 function startTurn(s: GameState, p: PlayerId) {
   s.turn++; s.active = p;
   for (const u of Object.values(s.units)) if (u.owner === p) u.tapped = false;
+  for (const m of s.perms) if (m.owner === p) m.tapped = false;
+  for (const st of s.sites) if (st?.owner === p) st.tapped = false;
   s.players[p].mana = sitesOf(s, p).length;
-  if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); return; }
+  if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); fireAll(s, p, 'startTurn'); return; }
   const pl = s.players[p];
   if (!pl.spellbook.length && !pl.atlas.length) { log(s, `${pname(p)} must draw from an empty deck and loses.`); win(s, other(p)); return; }
   s.phase = 'draw';
   log(s, `Turn ${s.turn} — ${pname(p)}.`);
+  fireAll(s, p, 'startTurn');
 }
 function win(s: GameState, p: PlayerId) { s.winner = p; s.phase = 'over'; s.pending = null; log(s, `${pname(p)} wins.`, null); }
 
@@ -156,14 +216,14 @@ function killUnit(s: GameState, u: Unit) {
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; } // what it carried stays where it fell
   delete s.units[u.id];
   log(s, `${d.name} dies.`, null);
-  runEffects(s, d, 'deathrite', u.owner, { c: u.c, r: u.r });
   s.players[Number(u.inst[0]) as PlayerId].cemetery.push(u.inst);
+  fire(s, u.inst, 'deathrite', u.owner, { c: u.c, r: u.r });
 }
 function damageUnit(s: GameState, u: Unit, n: number, lethal = false) {
   if (n <= 0 || !s.units[u.id]) return;
   if (u.avatar) { damageAvatar(s, u.owner, n); return; }
   u.damage += n;
-  if (lethal || u.damage >= unitCard(s, u).defense) killUnit(s, u);
+  if (lethal || u.damage >= defenseOf(s, u)) killUnit(s, u);
 }
 function drawCard(s: GameState, p: PlayerId, deck: 'spellbook' | 'atlas'): boolean {
   const pl = s.players[p];
@@ -179,45 +239,177 @@ function spellcasters(s: GameState, p: PlayerId): Unit[] {
 function inRange(from: Loc, to: Loc, range: Effect['range']): boolean {
   if (range === 'any' || !range) return true;
   if (from.r !== to.r) return false;
+  if (range === 'here') return from.c === to.c;
   if (range === 'adjacent') return from.c === to.c || orthAdjacent(from.c).includes(to.c);
   return nearby(from.c).includes(to.c);
 }
-/** Units a card's targeted effect may choose. `origin` is the unit's own location for genesis effects. */
-export function validTargets(s: GameState, p: PlayerId, d: CardDef, origin?: Loc): string[] {
-  const e = d.effects.find((x) => x.who === 'target');
-  if (!e) return [];
-  const origins = origin ? [origin] : spellcasters(s, p).map((u) => ({ c: u.c, r: u.r }));
+/** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
+export const needsChoice = (e: Effect) => e.who === 'target' || !!e.x || (e.op === 'draw' && !e.deck);
+/** Indices of a card's effects that happen on `on` (and, for activated abilities, come from the same line as effect `fx`). */
+export function effectsOn(d: CardDef, on: Trigger, fx?: number): number[] {
+  const line = fx === undefined ? undefined : d.effects[fx]?.line;
+  return d.effects.map((e, i) => [e, i] as const).filter(([e, i]) => e.on === on && (fx === undefined || (line === undefined ? i === fx : e.line === line))).map(([, i]) => i);
+}
+/** Units effect `i` of card `d` may target, measured from `origins` (spellcasters for magic, the source otherwise). */
+export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, origins: Loc[], self?: string): string[] {
+  const e = d.effects[i];
+  if (!e || e.who !== 'target') return [];
   return Object.values(s.units).filter((u) => {
     if (u.owner !== p && hasStealth(s, u)) return false;
-    if ((e.op === 'destroy' || e.only === 'minion') && u.avatar) return false;
+    if ((e.op === 'destroy' || e.op === 'banish' || e.op === 'bounce') && u.avatar) return false;
+    switch (e.only) {
+      case 'minion': if (u.avatar) return false; break;
+      case 'avatar': if (!u.avatar) return false; break;
+      case 'enemy': if (u.owner === p) return false; break;
+      case 'ally': if (u.owner !== p) return false; break;
+      case 'enemyMinion': if (u.avatar || u.owner === p) return false; break;
+      case 'allyMinion': if (u.avatar || u.owner !== p) return false; break;
+    }
+    if (e.other && u.id === self) return false;
     return origins.some((o) => inRange(o, u, e.range));
   }).map((u) => u.id);
 }
-function runEffects(s: GameState, d: CardDef, on: Effect['on'], p: PlayerId, loc: Loc | null, target?: string) {
-  for (const e of d.effects) {
-    if (e.on !== on || s.phase === 'over') continue;
-    if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((c) => s.sites[c]!.inst && cardOf(s, s.sites[c]!.inst!).name === d.name).length !== 1) continue;
-    const n = e.n ?? 1;
-    const victims: Unit[] = [];
-    if (e.who === 'target') { const t = target ? s.units[target] : undefined; if (t) victims.push(t); }
-    else if (e.who === 'enemyAvatar') victims.push(s.units[s.players[other(p)].avatar]);
-    else if (e.who === 'ownAvatar') victims.push(s.units[s.players[p].avatar]);
-    else if (e.who === 'enemiesHere' && loc) victims.push(...unitsAt(s, loc).filter((u) => u.owner !== p));
+/** Where targeted magic is measured from. */
+export const casterOrigins = (s: GameState, p: PlayerId): Loc[] => spellcasters(s, p).map((u) => ({ c: u.c, r: u.r }));
+/** Units a card's first targeted effect may choose (kept for callers that only need one target). */
+export function validTargets(s: GameState, p: PlayerId, d: CardDef, origin?: Loc): string[] {
+  const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
+  const i = d.effects.findIndex((x) => x.who === 'target' && x.on === on);
+  if (i < 0) return [];
+  return targetsFor(s, p, d, i, origin ? [origin] : casterOrigins(s, p));
+}
+/** Turn an action's old single `target` into per-effect choices. */
+function choicesOf(d: CardDef, idx: number[], choices?: (Choice | null)[], target?: string): (Choice | null)[] {
+  const out = (choices ?? []).slice();
+  if (target) { const i = idx.find((k) => d.effects[k].who === 'target'); if (i !== undefined && !out[i]?.target) out[i] = { ...(out[i] ?? {}), target }; }
+  return out;
+}
+/** Check the choices for effects `idx` of card `d`. */
+function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: (Choice | null)[], origins: Loc[], self?: string): Check {
+  for (const i of idx) {
+    const e = d.effects[i]; const c = ch[i] ?? undefined;
+    if (e.who === 'target') {
+      const ok = targetsFor(s, p, d, i, origins, self);
+      if (!ok.length) return no(`${d.name} has no valid target in range.`);
+      if (!c?.target || !ok.includes(c.target)) return no('Choose a valid target: in range and region of a spellcaster you control, and not a stealthed enemy.', 'Stealth');
+    }
+    if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
+  }
+  return { ok: true };
+}
+
+/** Everything in the realm a player controls that can carry abilities. */
+export function sourcesOf(s: GameState, p: PlayerId): { src: Source; inst: string; loc: Loc; unit?: Unit }[] {
+  const out: { src: Source; inst: string; loc: Loc; unit?: Unit }[] = [];
+  for (const u of Object.values(s.units)) if (u.owner === p) out.push({ src: { unit: u.id }, inst: u.inst, loc: { c: u.c, r: u.r }, unit: u });
+  for (const m of s.perms) if (m.owner === p) { const b = m.carrier ? s.units[m.carrier] : undefined; out.push({ src: { perm: m.id }, inst: m.inst, loc: b ? { c: b.c, r: b.r } : { c: m.c, r: 'surface' } }); }
+  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner === p) out.push({ src: { site: c }, inst: st.inst, loc: { c, r: 'surface' } }); }
+  return out;
+}
+export function sourceOf(s: GameState, src: Source): { inst: string; owner: PlayerId; loc: Loc; unit?: Unit; tapped: boolean } | null {
+  if ('unit' in src) { const u = s.units[src.unit]; return u ? { inst: u.inst, owner: u.owner, loc: { c: u.c, r: u.r }, unit: u, tapped: u.tapped } : null; }
+  if ('perm' in src) { const m = s.perms.find((x) => x.id === src.perm); if (!m) return null; const b = m.carrier ? s.units[m.carrier] : undefined; return { inst: m.inst, owner: m.owner, loc: b ? { c: b.c, r: b.r } : { c: m.c, r: 'surface' }, tapped: !!m.tapped }; }
+  const st = s.sites[src.site]; return st?.inst && st.owner !== null ? { inst: st.inst, owner: st.owner, loc: { c: src.site, r: 'surface' }, tapped: !!st.tapped } : null;
+}
+const srcKey = (src: Source) => ('unit' in src ? 'u' + src.unit : 'perm' in src ? 'm' + src.perm : 's' + src.site);
+const selfUnit = (s: GameState, src?: Source) => (src && 'unit' in src ? src.unit : undefined);
+const bearerOf = (s: GameState, src?: Source) => (src && 'perm' in src ? s.perms.find((m) => m.id === src.perm)?.carrier : undefined);
+
+/** A triggered ability: resolve it now when it needs no decision, otherwise queue it for its controller. */
+function fire(s: GameState, inst: string, on: Trigger, p: PlayerId, loc: Loc | null, src?: Source) {
+  const d = cardOf(s, inst); const idx = effectsOn(d, on);
+  if (!idx.length || s.phase === 'over') return;
+  if (idx.some((i) => needsChoice(d.effects[i]) || d.effects[i].op === 'manual')) {
+    (s.queue ??= []).push({ id: `q${s.nextId++}`, by: p, inst, fx: idx, loc, ...(src ? { src } : {}) });
+    log(s, `${d.name}: ${on === 'deathrite' ? 'Deathrite' : on === 'genesis' ? 'Genesis' : on === 'startTurn' ? 'start of turn' : 'end of turn'} ability waits for ${pname(p)}.`, p);
+    return;
+  }
+  resolve(s, d, idx, p, loc, [], src);
+}
+function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
+  for (const x of sourcesOf(s, p)) fire(s, x.inst, on, p, x.loc, x.src);
+}
+
+/** Carry out effects `idx` of card `d` for player `p`. `loc` is where the ability happens; `src` what it came from. */
+function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc | null, ch: (Choice | null)[], src?: Source) {
+  const self = selfUnit(s, src), bearer = bearerOf(s, src);
+  for (const i of idx) {
+    const e = d.effects[i]; const c = ch[i] ?? undefined;
+    if (s.phase === 'over') return;
+    if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((x) => s.sites[x]!.inst && cardOf(s, s.sites[x]!.inst!).name === d.name).length !== 1) continue;
+    const n = e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
+    const all = Object.values(s.units);
+    const here = (u: Unit) => !!loc && u.c === loc.c && u.r === loc.r;
+    const near = (u: Unit) => !!loc && u.r === loc.r && nearby(loc.c).includes(u.c);
+    let victims: Unit[] = [];
+    switch (e.who) {
+      case 'target': { const t = c?.target ? s.units[c.target] : undefined; if (t) victims = [t]; break; }
+      case 'enemyAvatar': victims = [s.units[s.players[other(p)].avatar]]; break;
+      case 'ownAvatar': victims = [s.units[s.players[p].avatar]]; break;
+      case 'allAvatars': victims = [s.units[s.players[p].avatar], s.units[s.players[other(p)].avatar]]; break;
+      case 'nearbyAvatars': victims = all.filter((u) => u.avatar && loc && nearby(loc.c).includes(u.c)); break;
+      case 'self': victims = self && s.units[self] ? [s.units[self]] : []; break;
+      case 'bearer': victims = bearer && s.units[bearer] ? [s.units[bearer]] : []; break;
+      case 'enemiesHere': victims = all.filter((u) => here(u) && u.owner !== p); break;
+      case 'alliesHere': victims = all.filter((u) => here(u) && u.owner === p); break;
+      case 'unitsHere': case 'minionsHere': victims = all.filter(here); break;
+      case 'enemiesNearby': victims = all.filter((u) => near(u) && u.owner !== p); break;
+      case 'alliesNearby': victims = all.filter((u) => near(u) && u.owner === p); break;
+      case 'unitsNearby': victims = all.filter(near); break;
+      case 'allMinions': victims = all.filter((u) => !u.avatar); break;
+      case 'enemyMinions': victims = all.filter((u) => !u.avatar && u.owner !== p); break;
+      case 'allyMinions': victims = all.filter((u) => !u.avatar && u.owner === p); break;
+    }
+    if (e.who !== 'target') { if (e.only === 'minion' || e.who === 'minionsHere') victims = victims.filter((u) => !u.avatar); if (e.other) victims = victims.filter((u) => u.id !== self); }
+    const players: PlayerId[] = e.who === 'opponent' ? [other(p)] : e.who === 'controller' ? [p] : e.who === 'allAvatars' ? [p, other(p)] : [];
+    const nm = (u: Unit) => unitCard(s, u).name;
     switch (e.op) {
-      case 'damage': for (const v of victims) { log(s, `${d.name} deals ${n} damage to ${unitCard(s, v).name}.`, p); damageUnit(s, v, n); } break;
-      case 'destroy': for (const v of victims) if (!v.avatar) killUnit(s, v); break;
+      case 'damage': for (const v of victims) { if (!s.units[v.id] && !v.avatar) continue; log(s, `${d.name} deals ${n} damage to ${nm(v)}.`, p); damageUnit(s, v, n); } break;
+      case 'destroy': for (const v of victims) if (!v.avatar && s.units[v.id]) { log(s, `${d.name} destroys ${nm(v)}.`, p); killUnit(s, v); } break;
+      case 'banish': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'banish', d.name); break;
+      case 'bounce': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'hand', d.name); break;
       case 'heal':
-        if (e.who === 'nearbyAvatars') { if (loc) for (const q of [0, 1] as PlayerId[]) if (nearby(loc.c).includes(s.units[s.players[q].avatar].c)) gainLife(s, q, n); }
-        else gainLife(s, e.who === 'enemyAvatar' ? other(p) : p, n);
+        if (e.who === 'controller' || e.who === 'opponent') for (const q of players) gainLife(s, q, n);
+        else for (const v of victims) if (v.avatar) gainLife(s, v.owner, n); else { v.damage = Math.max(0, v.damage - n); log(s, `${nm(v)} heals ${n}.`, p); }
         break;
-      case 'mana': s.players[p].mana += n; log(s, `${pname(p)} gains ${n} mana.`, p); break;
+      case 'loseLife': for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) loseLife(s, q, n); break;
+      case 'mana': s.players[p].mana += n; log(s, `${pname(p)} gains ${n} mana (${d.name}).`, p); break;
       case 'draw': {
-        for (let i = 0; i < n; i++) if (!drawCard(s, p, e.deck ?? 'spellbook')) { log(s, `${pname(p)} must draw from an empty deck and loses.`, p); win(s, other(p)); break; }
-        if ((s.phase as string) !== 'over') log(s, `${pname(p)} draws ${n} from the ${e.deck ?? 'spellbook'} (${d.name}).`, p);
+        const deck = e.deck ?? c?.deck ?? 'spellbook';
+        const who = e.who === 'opponent' ? other(p) : p;
+        for (let k = 0; k < n; k++) if (!drawCard(s, who, deck)) { log(s, `${pname(who)} must draw from an empty deck and loses.`, who); win(s, other(who)); break; }
+        if ((s.phase as string) !== 'over') log(s, `${pname(who)} draws ${n} from the ${deck} (${d.name}).`, p);
         break;
       }
+      case 'discard': for (const q of players) for (let k = 0; k < n; k++) {
+        const h = s.players[q].hand; if (!h.length) break;
+        const [x] = h.splice(Math.floor(rand(s) * h.length), 1); s.players[q].cemetery.push(x);
+        log(s, `${pname(q)} discards ${cardOf(s, x).name} (${d.name}).`, p);
+      } break;
+      case 'tap': case 'untap': {
+        const on = e.op === 'tap';
+        if (e.who === 'self' && src && 'site' in src && s.sites[src.site]) s.sites[src.site]!.tapped = on;
+        else if (e.who === 'self' && src && 'perm' in src) { const m = s.perms.find((x) => x.id === src.perm); if (m) m.tapped = on; }
+        for (const v of victims) { v.tapped = on; log(s, `${d.name} ${on ? 'taps' : 'untaps'} ${nm(v)}.`, p); }
+        break;
+      }
+      case 'buff': case 'grant':
+        for (const v of victims) {
+          (v.mods ??= []).push({ atk: e.op === 'buff' ? e.atk ?? 0 : 0, def: e.op === 'buff' ? e.def ?? 0 : 0, ...(e.keyword ? { kw: e.keyword } : {}), ...(e.until === 'turn' ? { turn: s.turn } : {}), from: d.name });
+          log(s, `${nm(v)} ${e.op === 'buff' ? `gets ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power` : `gains ${e.keyword}`}${e.until === 'turn' ? ' this turn' : ''} (${d.name}).`, p);
+          if (!v.avatar && v.damage >= defenseOf(s, v)) killUnit(s, v);
+        }
+        break;
+      case 'manual': s.log.push({ turn: s.turn, p, text: `${d.name}: “${e.text ?? ''}” — not automated; resolve by hand.`, manual: true }); break;
     }
   }
+}
+function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
+  for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; }
+  delete s.units[u.id];
+  const owner = Number(u.inst[0]) as PlayerId;
+  if (to === 'hand') { s.players[owner].hand.push(u.inst); log(s, `${unitCard(s, u).name} returns to ${pname(owner)}'s hand (${why}).`, null); }
+  else log(s, `${unitCard(s, u).name} is banished (${why}).`, null);
 }
 
 // ---------- movement ----------
@@ -311,7 +503,7 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
     const lethal = has(s, a, 'Lethal');
     let left = power(s, a) + (lance ? 1 : 0);
     const foes = enemyIds.map((id) => s.units[id]).filter(Boolean);
-    const need = (u: Unit) => (u.avatar ? Infinity : lethal ? 1 : Math.max(1, unitCard(s, u).defense - u.damage));
+    const need = (u: Unit) => (u.avatar ? Infinity : lethal ? 1 : Math.max(1, defenseOf(s, u) - u.damage));
     const order = [...foes].sort((x, y) => need(x) - need(y));
     const give = new Map<string, number>();
     for (const f of order) { const n = need(f); if (n <= left) { give.set(f.id, n); left -= n; } }
@@ -356,6 +548,14 @@ export function check(s: GameState, a: Action): Check {
   const p = actor(s);
   const pl = s.players[p];
   if (a.t === 'manual') return s.pending ? no('Resolve the pending defend or intercept first.') : { ok: true };
+  if (!s.pending && s.queue?.length) {
+    if (a.t !== 'trigger') return no(`${pname(s.queue[0].by)} must first resolve ${cardOf(s, s.queue[0].inst).name}'s triggered ability.`);
+    if (a.skip) return { ok: true };
+    const q = s.queue[0]; const d = cardOf(s, q.inst);
+    const self = q.src && 'unit' in q.src ? q.src.unit : undefined;
+    return checkChoices(s, q.by, d, q.fx, a.choices ?? [], q.loc ? [q.loc] : casterOrigins(s, q.by), self);
+  }
+  if (a.t === 'trigger') return no('There is no triggered ability waiting.');
   if (s.pending) {
     if (a.t !== 'respond') return no(`${pname(s.pending.by)} must choose whether to ${s.pending.kind} first.`);
     const ok = responders(s);
@@ -400,18 +600,30 @@ export function check(s: GameState, a: Action): Check {
       } else if (d.type === 'Aura') {
         if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose a square for the aura.');
       }
-      const needsTarget = d.effects.some((e) => e.who === 'target' && (d.type === 'Magic' ? e.on === 'cast' : e.on === 'genesis'));
+      const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
+      const idx = effectsOn(d, on);
+      const needsTarget = idx.some((i) => d.effects[i].who === 'target');
       if (d.type === 'Artifact' && !needsTarget && a.target) { // conjured straight into a unit's hands
         const b = s.units[a.target];
         if (!b || b.owner !== p || b.c !== a.c) return no('An artifact can be handed to one of your own units on the site where it is conjured.');
         return { ok: true };
       }
-      if (needsTarget) {
-        const ok = validTargets(s, p, d, d.type === 'Magic' ? undefined : { c: a.c!, r: 'surface' });
-        if (!ok.length) return no(`${d.name} has no valid target in range.`);
-        if (!a.target || !ok.includes(a.target)) return no('Choose a valid target: in range and region of a spellcaster you control, and not a stealthed enemy.', 'Stealth');
-      }
-      return { ok: true };
+      return checkChoices(s, p, d, idx, choicesOf(d, idx, a.choices, a.target), d.type === 'Magic' ? casterOrigins(s, p) : [{ c: a.c!, r: 'surface' }]);
+    }
+    case 'ability': {
+      const src = sourceOf(s, a.src);
+      if (!src || src.owner !== p) return no('That is not yours.');
+      const d = cardOf(s, src.inst); const e = d.effects[a.fx];
+      if (!e || (e.on !== 'tap' && e.on !== 'activated')) return no(`${d.name} has no ability to use there.`);
+      if (src.unit && isDisabled(s, src.unit)) return no(`${d.name} is disabled and its abilities do not work.`, 'Disabled');
+      if (e.on === 'tap') {
+        if (src.unit) { const can = canAct(s, src.unit); if (!can.ok) return can; }
+        else if (src.tapped) return no(`${d.name} is already tapped.`);
+      } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`);
+      const cost = e.cost ?? 0;
+      if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`);
+      const idx = effectsOn(d, e.on, a.fx);
+      return checkChoices(s, p, d, idx, a.choices ?? [], [src.loc], src.unit?.id);
     }
     case 'move': {
       const u = s.units[a.unit];
@@ -492,30 +704,54 @@ export function apply(state: GameState, a: Action): GameState {
       s.sites[a.c] = { inst: a.inst, owner: p };
       pl.mana += 1;
       log(s, `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`);
-      runEffects(s, cardOf(s, a.inst), 'genesis', p, { c: a.c, r: 'surface' });
+      fire(s, a.inst, 'genesis', p, { c: a.c, r: 'surface' }, { site: a.c });
       break;
     }
     case 'cast': {
       const d = cardOf(s, a.inst);
       pl.hand.splice(pl.hand.indexOf(a.inst), 1);
       pl.mana -= d.cost;
+      const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
+      const idx = effectsOn(d, on);
+      const ch = choicesOf(d, idx, a.choices, a.target);
+      const hand = d.effects.some((e) => e.op === 'manual') ? ' Part of its text is not automated; resolve it by hand.' : '';
       if (d.type === 'Minion') {
         const id = `u${s.nextId++}`;
         s.units[id] = { id, inst: a.inst, owner: p, c: a.c!, r: 'surface', tapped: false, damage: 0, enteredTurn: s.turn, avatar: false, stealthLost: false, lance: d.keywords.includes('Lance') };
-        log(s, `${pname(p)} summons ${d.name}.`);
-        runEffects(s, d, 'genesis', p, { c: a.c!, r: 'surface' }, a.target);
+        log(s, `${pname(p)} summons ${d.name}.${hand}`);
+        resolve(s, d, idx, p, { c: a.c!, r: 'surface' }, ch, { unit: id });
       } else if (d.type === 'Artifact' || d.type === 'Aura') {
-        const bearer = d.type === 'Artifact' && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis') ? a.target : undefined;
-        s.perms.push({ id: `m${s.nextId++}`, inst: a.inst, owner: p, c: a.c!, kind: d.type === 'Aura' ? 'aura' : 'artifact', ...(bearer ? { carrier: bearer } : {}) });
+        const bearer = d.type === 'Artifact' && !idx.some((i) => d.effects[i].who === 'target') ? a.target : undefined;
+        const mid = `m${s.nextId++}`;
+        s.perms.push({ id: mid, inst: a.inst, owner: p, c: a.c!, kind: d.type === 'Aura' ? 'aura' : 'artifact', ...(bearer ? { carrier: bearer } : {}) });
         if (bearer) log(s, `${unitCard(s, s.units[bearer]).name} takes up ${d.name}.`);
-        log(s, `${pname(p)} conjures ${d.name}.${d.effects.length ? '' : d.rules ? ' Its text is not automated; use the manual tools.' : ''}`);
-        runEffects(s, d, 'genesis', p, { c: a.c!, r: 'surface' }, a.target);
+        log(s, `${pname(p)} conjures ${d.name}.${hand}`);
+        resolve(s, d, idx, p, { c: a.c!, r: 'surface' }, ch, { perm: mid });
       } else {
-        log(s, `${pname(p)} casts ${d.name}.${d.effects.some((e) => e.on === 'cast') ? '' : ' Its text is not automated; resolve it with the manual tools.'}`);
+        log(s, `${pname(p)} casts ${d.name}.${hand}`);
         const caster = s.units[pl.avatar];
-        runEffects(s, d, 'cast', p, { c: caster.c, r: caster.r }, a.target);
+        resolve(s, d, idx, p, { c: caster.c, r: caster.r }, ch);
         pl.cemetery.push(a.inst);
       }
+      break;
+    }
+    case 'ability': {
+      const src = sourceOf(s, a.src)!; const d = cardOf(s, src.inst); const e = d.effects[a.fx];
+      if (e.on === 'tap') {
+        if (src.unit) s.units[src.unit.id].tapped = true;
+        else if ('perm' in a.src) { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); if (m) m.tapped = true; }
+        else if ('site' in a.src) s.sites[a.src.site]!.tapped = true;
+      } else (s.used ??= {})[`${srcKey(a.src)}:${e.line ?? a.fx}`] = s.turn;
+      if (e.cost) pl.mana -= e.cost;
+      log(s, `${pname(p)} uses ${d.name}${e.on === 'tap' ? ' (tap)' : ''}${e.cost ? `, paying ${e.cost} mana` : ''}.`);
+      resolve(s, d, effectsOn(d, e.on, a.fx), p, src.loc, a.choices ?? [], a.src);
+      break;
+    }
+    case 'trigger': {
+      const q = s.queue!.shift()!; const d = cardOf(s, q.inst);
+      if (a.skip) log(s, `${pname(q.by)} lets ${d.name}'s ability pass.`, q.by);
+      else resolve(s, d, q.fx, q.by, q.loc, a.choices ?? [], q.src);
+      if (!s.queue!.length) delete s.queue;
       break;
     }
     case 'move': {
@@ -544,7 +780,8 @@ export function apply(state: GameState, a: Action): GameState {
       break;
     }
     case 'endTurn': {
-      for (const u of Object.values(s.units)) if (u.owner === p && !u.avatar) u.damage = 0;
+      fireAll(s, p, 'endTurn');
+      for (const u of Object.values(s.units)) { if (u.owner === p && !u.avatar) u.damage = 0; if (u.mods?.some((m) => m.turn !== undefined)) { u.mods = u.mods.filter((m) => m.turn === undefined); if (!u.mods.length) delete u.mods; } }
       pl.mana = 0;
       startTurn(s, other(p));
       break;
@@ -581,11 +818,30 @@ function manual(s: GameState, a: ManualOp) {
     case 'carry': { const m = s.perms.find((x) => x.id === a.perm); const u = a.unit ? s.units[a.unit] : undefined;
       if (m && m.kind === 'artifact') { if (u && u.c === m.c) { m.carrier = u.id; m.owner = u.owner; say(`${unitCard(s, u).name} picks up ${cardOf(s, m.inst).name}.`); } else if (!a.unit) { delete m.carrier; say(`${cardOf(s, m.inst).name} is put down.`); } }
       break; }
+    case 'buff': { const u = s.units[a.unit]; if (u) { (u.mods ??= []).push({ atk: a.atk, def: a.def, ...(a.turn ? { turn: s.turn } : {}), from: 'manual' }); say(`${unitCard(s, u).name} ${a.atk >= 0 ? '+' : ''}${a.atk} power${a.turn ? ' this turn' : ''}.`); if (!u.avatar && u.damage >= defenseOf(s, u)) killUnit(s, u); } break; }
+    case 'grant': { const u = s.units[a.unit]; if (u) { (u.mods ??= []).push({ atk: 0, def: 0, kw: a.keyword, ...(a.turn ? { turn: s.turn } : {}), from: 'manual' }); say(`${unitCard(s, u).name} gains ${a.keyword}${a.turn ? ' this turn' : ''}.`); } break; }
+    case 'untap': { const u = s.units[a.unit]; if (u) { u.tapped = false; say(`untap ${unitCard(s, u).name}.`); } break; }
+    case 'banish': { const u = s.units[a.unit]; if (u && !u.avatar) { say(`banish ${unitCard(s, u).name}.`); removeUnit(s, u, 'banish', 'by hand'); } break; }
+    case 'bounce': { const u = s.units[a.unit]; if (u && !u.avatar) { say(`return ${unitCard(s, u).name} to its owner's hand.`); removeUnit(s, u, 'hand', 'by hand'); } break; }
+    case 'note': say(a.text.slice(0, 200)); break;
     case 'teleport': { const u = s.units[a.unit]; if (u && a.c >= 0 && a.c < CELLS) { u.c = a.c; u.r = 'surface'; say(`move ${unitCard(s, u).name}.`); } break; }
   }
 }
 
 // ---------- enumeration (AI + move highlighting) ----------
+/** Candidate choices for effects `idx`: every target for the first targeted effect, the first valid one for the rest. X is 1. */
+function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origins: Loc[], self?: string): Choice[][] {
+  const base: Choice[] = []; let spread = -1;
+  for (const i of idx) {
+    const e = d.effects[i];
+    if (e.who === 'target') { const t = targetsFor(s, p, d, i, origins, self); if (!t.length) return []; if (spread < 0) spread = i; base[i] = { target: t[0] }; }
+    if (e.x) base[i] = { ...(base[i] ?? {}), n: 1 };
+    if (e.op === 'draw' && !e.deck) base[i] = { ...(base[i] ?? {}), deck: 'spellbook' };
+  }
+  if (spread < 0) return [base];
+  return targetsFor(s, p, d, spread, origins, self).map((target) => { const c = base.slice(); c[spread] = { ...(c[spread] ?? {}), target }; return c; });
+}
+
 export function playableSiteCells(s: GameState, p: PlayerId): number[] { return siteCells(s, p); }
 
 export function legalActions(s: GameState): Action[] {
@@ -596,6 +852,13 @@ export function legalActions(s: GameState): Action[] {
     out.push({ t: 'respond', units: [] });
     for (const id of r) out.push({ t: 'respond', units: [id] });
     if (s.pending.kind === 'defend' && s.pending.target?.unit) for (const id of r) out.push({ t: 'respond', units: [id], removeOriginal: true });
+    return out;
+  }
+  if (s.queue?.length) {
+    const q = s.queue[0]; const d = cardOf(s, q.inst);
+    const self = q.src && 'unit' in q.src ? q.src.unit : undefined;
+    for (const choices of choiceSets(s, q.by, d, q.fx, q.loc ? [q.loc] : casterOrigins(s, q.by), self)) out.push({ t: 'trigger', choices });
+    out.push({ t: 'trigger', skip: true });
     return out;
   }
   if (s.phase === 'mulligan') return [{ t: 'mulligan', cards: [] }];
@@ -615,14 +878,21 @@ export function legalActions(s: GameState): Action[] {
     const d = cardOf(s, inst);
     if (d.type === 'Site' || d.type === 'Avatar' || seen.has(d.id) || !affordable(s, p, d).ok) continue; seen.add(d.id);
     if (d.type === 'Magic') {
-      if (d.effects.some((e) => e.who === 'target' && e.on === 'cast')) for (const target of validTargets(s, p, d)) out.push({ t: 'cast', inst, target });
-      else out.push({ t: 'cast', inst });
+      for (const choices of choiceSets(s, p, d, effectsOn(d, 'cast'), casterOrigins(s, p))) out.push({ t: 'cast', inst, ...(choices.length ? { choices } : {}) });
     } else {
-      for (const c of mine) {
-        if (d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) for (const target of validTargets(s, p, d, { c, r: 'surface' })) out.push({ t: 'cast', inst, c, target });
-        else out.push({ t: 'cast', inst, c });
-      }
+      for (const c of mine) for (const choices of choiceSets(s, p, d, effectsOn(d, 'genesis'), [{ c, r: 'surface' }])) out.push({ t: 'cast', inst, c, ...(choices.length ? { choices } : {}) });
     }
+  }
+  // activated abilities (the AI leaves out ones that are only text to resolve by hand)
+  for (const x of sourcesOf(s, p)) {
+    const d = cardOf(s, x.inst); const lines = new Set<string>();
+    d.effects.forEach((e, i) => {
+      if ((e.on !== 'tap' && e.on !== 'activated') || lines.has(`${e.on}:${e.line ?? i}`)) return;
+      lines.add(`${e.on}:${e.line ?? i}`);
+      const idx = effectsOn(d, e.on, i);
+      if (idx.every((k) => d.effects[k].op === 'manual')) return;
+      for (const choices of choiceSets(s, p, d, idx, [x.loc], x.unit?.id)) { const a: Action = { t: 'ability', src: x.src, fx: i, choices }; if (check(s, a).ok) out.push(a); }
+    });
   }
   for (const u of Object.values(s.units)) {
     if (u.owner !== p || !canAct(s, u).ok) continue;

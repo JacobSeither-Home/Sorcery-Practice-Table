@@ -56,7 +56,8 @@ export function aiActions(s: GameState): Action[] {
     if (a.t !== 'cast') return true;
     const d = cardOf(s, a.inst);
     if (d.type === 'Minion') return true;
-    return d.effects.some((e) => e.on === (d.type === 'Magic' ? 'cast' : 'genesis')); // text the engine can actually resolve
+    // text the engine can actually resolve: something it carries out on cast/entry, or an ability it can use later
+    return d.effects.some((e) => e.op !== 'manual' && (e.on === (d.type === 'Magic' ? 'cast' : 'genesis') || (d.type !== 'Magic' && e.on !== 'cast')));
   });
 }
 /** Resolve pending prompts with "no response" so a position can be scored. */

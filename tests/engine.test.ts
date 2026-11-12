@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
-import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, legalActions, makeCard, normalizeApiCards, reach, thresholdOf } from '../src/engine';
+import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, legalActions, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
 import { chooseAction, determinize } from '../src/ai/ai';
 
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
@@ -379,17 +379,23 @@ describe('official precon lists', () => {
 });
 
 describe('rules text and damage split', () => {
-  it('reads only whole-text, unambiguous sentences into effects', async () => {
+  it('reads each sentence it knows into an effect and leaves the rest for the hand tools', async () => {
     const { effectsFromText } = await import('../src/engine/cards');
+    const auto = (fx: { op: string }[]) => fx.filter((e) => e.op !== 'manual');
+    const hand = (fx: { op: string; text?: string }[]) => fx.filter((e) => e.op === 'manual').map((e) => e.text);
     expect(effectsFromText('Magic', 'Deal 4 damage to target nearby unit.')).toMatchObject([{ on: 'cast', op: 'damage', n: 4, who: 'target', range: 'nearby' }]);
     expect(effectsFromText('Magic', 'Deal 7 damage to target minion nearby.')).toMatchObject([{ op: 'damage', n: 7, range: 'nearby', only: 'minion' }]);
     expect(effectsFromText('Minion', 'Spellcaster\r\nGenesis → Draw a spell.')).toMatchObject([{ on: 'genesis', op: 'draw', n: 1, deck: 'spellbook' }]);
     expect(effectsFromText('Minion', 'Airborne, Ward\nGenesis → Kill target adjacent minion.')).toMatchObject([{ on: 'genesis', op: 'destroy', range: 'adjacent', only: 'minion' }]);
-    // anything with more to it is left alone
-    expect(effectsFromText('Magic', 'Deal 2 damage to target unit nearby. Any number of times, you may spend ② to additionally target a new unit.')).toEqual([]);
-    expect(effectsFromText('Magic', 'Deal 1 damage to target nearby minion and untap it.')).toEqual([]);
-    expect(effectsFromText('Minion', 'Genesis → Kill target adjacent Unique or Elite minion.')).toEqual([]);
-    expect(effectsFromText('Artifact', 'Once on your turn, bearer may deal 1 damage to target adjacent minion.')).toEqual([]);
+    // a known first sentence is automated; the sentence after it is left for the hand tools
+    const two = effectsFromText('Magic', 'Deal 2 damage to target unit nearby. Any number of times, you may spend ② to additionally target a new unit.');
+    expect(auto(two)).toMatchObject([{ op: 'damage', n: 2 }]);
+    expect(hand(two)).toEqual(['Any number of times, you may spend ② to additionally target a new unit.']);
+    // sentences with more to them are not guessed at
+    expect(auto(effectsFromText('Magic', 'Deal 1 damage to target nearby minion and untap it.'))).toEqual([]);
+    expect(auto(effectsFromText('Minion', 'Genesis → Kill target adjacent Unique or Elite minion.'))).toEqual([]);
+    // "Once on your turn, bearer may …" is an activated ability
+    expect(effectsFromText('Artifact', 'Once on your turn, bearer may deal 1 damage to target adjacent minion.')).toMatchObject([{ on: 'activated', op: 'damage', n: 1, range: 'adjacent', only: 'minion' }]);
     expect(effectsFromText('Minion', 'Airborne\nMovement +1')).toEqual([]);
     const r = normalizeApiCards([{ id: 'a', name: 'Bolt', slug: 'bolt', engine: { type: 'Magic', rules: 'Deal 3 damage to target nearby unit.', cost: 2, air: 1, keywords: [] }, printings: [] }], {});
     expect(r.cards[0].effects.length).toBe(1);
@@ -458,5 +464,78 @@ describe('carried artifacts', () => {
     expect(s.perms[0].carrier).toBeUndefined(); expect(s.perms[0].c).toBe(cell(2, 1)); // dropped where it fell
     s = apply(s, { t: 'manual', op: 'carry', perm: s.perms[0].id, unit: foe });
     expect(s.perms[0].carrier).toBe(foe); expect(s.perms[0].owner).toBe(1);
+  });
+});
+
+describe('card abilities read from text', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); return s; };
+
+  it('a tap ability is used when the player chooses, needs an untapped source, and taps it', () => {
+    let s = board();
+    const pinger = read('Minion', 'Test Pinger', 'Tap → Deal 1 damage to target nearby minion.', { attack: 1, defense: 1 });
+    const me = unit(s, 0, cell(2, 2), pinger);
+    const foe = unit(s, 1, cell(2, 1), id('Ember Runner'));
+    const fx = cards[pinger].effects.findIndex((e) => e.on === 'tap');
+    expect(legalActions(s).some((a) => a.t === 'ability')).toBe(true);
+    expect(reason(s, { t: 'ability', src: { unit: me }, fx, choices: [] })).toMatch(/valid target/);
+    const choices: { target?: string }[] = []; choices[fx] = { target: foe };
+    s = apply(s, { t: 'ability', src: { unit: me }, fx, choices });
+    expect(s.units[me].tapped).toBe(true); expect(s.units[foe].damage).toBe(1);
+    expect(reason(s, { t: 'ability', src: { unit: me }, fx, choices })).toMatch(/tapped/);
+  });
+  it('static "allies here have +1 power" changes power while the source is in the realm', () => {
+    const s = board();
+    const banner = read('Minion', 'Test Banner', 'Other allies here have +1 power.', { attack: 1, defense: 1 });
+    const runner = unit(s, 0, cell(2, 2), id('Ember Runner'));
+    const b = unit(s, 0, cell(2, 2), banner);
+    expect(power(s, s.units[runner])).toBe(cards[id('Ember Runner')].attack + 1);
+    expect(power(s, s.units[b])).toBe(1);                                    // "other": not itself
+    delete s.units[b];
+    expect(power(s, s.units[runner])).toBe(cards[id('Ember Runner')].attack);
+  });
+  it('a this-turn boost from a spell ends with the turn', () => {
+    let s = board(); s.players[0].mana = 9;
+    const pump = read('Magic', 'Test Pump', 'Target minion gets +2 power this turn.', { cost: 1 });
+    const runner = unit(s, 0, cell(2, 2), id('Ember Runner'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, pump), target: runner });
+    expect(power(s, s.units[runner])).toBe(cards[id('Ember Runner')].attack + 2);
+    s = apply(s, { t: 'endTurn' });
+    expect(power(s, s.units[runner])).toBe(cards[id('Ember Runner')].attack);
+  });
+  it('a Deathrite that needs a target waits in the queue for its controller', () => {
+    let s = board(); s.players[0].mana = 9; s.units[s.players[1].avatar].tapped = true;
+    const martyr = read('Minion', 'Test Martyr', 'Deathrite → Deal 2 damage to target minion.', { attack: 1, defense: 1 });
+    const m = unit(s, 1, cell(2, 1), martyr, { tapped: true });
+    const giant = unit(s, 0, cell(2, 2), id('Hill Giant'));
+    const other = unit(s, 0, cell(3, 3), id('Ember Runner'));
+    s = apply(s, { t: 'move', unit: giant, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: m } });
+    expect(s.units[m]).toBeUndefined();
+    expect(s.queue?.length).toBe(1); expect(actor(s)).toBe(1);
+    expect(reason(s, { t: 'endTurn' })).toMatch(/triggered ability/);
+    const fx = cards[martyr].effects.findIndex((e) => e.on === 'deathrite');
+    const choices: { target?: string }[] = []; choices[fx] = { target: other };
+    s = apply(s, { t: 'trigger', choices });
+    expect(s.queue).toBeUndefined(); expect(s.units[other]).toBeUndefined(); // 2 damage kills the 2/2 runner
+    expect(actor(s)).toBe(0);
+  });
+  it('start-of-turn abilities resolve on their own when they need no choice', () => {
+    let s = board(); s.players[0].life = 10;
+    const shrine = read('Aura', 'Test Shrine', 'At the start of your turn, gain 2 life.');
+    s.inst['0zz'] = shrine; s.perms.push({ id: 'mz', inst: '0zz', owner: 0, c: cell(2, 3), kind: 'aura' });
+    s = apply(s, { t: 'endTurn' }); s = apply(s, { t: 'draw', deck: 'spellbook' }); s = apply(s, { t: 'endTurn' });
+    expect(s.players[0].life).toBe(12);
+  });
+  it('text the reader does not know is logged for the hand tools, and the rest still happens', () => {
+    let s = board(); s.players[0].mana = 9;
+    const odd = read('Magic', 'Test Odd', 'Draw a spell. Swap two sites you control.', { cost: 1 });
+    const before = s.players[0].hand.length;
+    s = apply(s, { t: 'cast', inst: give(s, 0, odd) });
+    expect(s.players[0].hand.length).toBe(before + 1);                     // given card cast (-1), drew one (+1)
+    expect(s.log.some((l) => l.manual && /Swap two sites/.test(l.text))).toBe(true);
   });
 });

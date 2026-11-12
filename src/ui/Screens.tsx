@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { type CardDef, type CardType, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, makeCard } from '../engine';
+import { type CardDef, type CardType, type Coverage, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, KEYWORDS as KW_ALL, TRIGGERS, effectsFromText, makeCard } from '../engine';
+import { OP_LABEL, TRIGGER_LABEL, WHO_LABEL, whoFor } from './abilityText';
+import { claudePrompt, coverage, download as downloadFile, cardsCsv, coverageMarkdown, pickCardFolder, rememberedCardFolder, reportGaps, saveToCardFolder, supportsSaveFolder } from '../data/coverage';
 import type { Difficulty } from '../ai/ai';
 import { type Mode, allDecks, isBuiltIn, useStore } from '../store';
 import { resolveOfficial } from '../data/officialDecks';
@@ -9,7 +11,7 @@ import { artDb } from '../data/db';
 import { deckNotes, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
 import { CardFace, hoverProps } from './CardFace';
-import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, useAuth } from '../cloud/cloud';
+import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, uploadCatalog, useAuth } from '../cloud/cloud';
 import { Preview, TableOptions } from './Table';
 
 declare const __APP_VERSION__: string;
@@ -173,8 +175,7 @@ export function Decks() {
 }
 
 // ---------------------------------------------------------------- library
-const OPS: Effect['op'][] = ['damage', 'heal', 'draw', 'mana', 'destroy'];
-const WHO: Effect['who'][] = ['target', 'enemyAvatar', 'ownAvatar', 'enemiesHere', 'controller'];
+const OPS = Object.keys(OP_LABEL) as Effect['op'][];
 const KEYWORDS = Object.keys(KEYWORD_HELP).filter((k) => k !== 'Threshold');
 const blank = (): CardDef => makeCard({ name: '', type: 'Minion', cost: 1, attack: 1, defense: 1, source: 'custom' });
 
@@ -192,6 +193,7 @@ export function Library() {
         <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
         {bar}
         {!Object.values(pool).some((c) => c.source === 'api') && <p className="banner">No cards yet. Sorcery cards appear after a Card Sync in Settings.</p>}
+        <CoveragePanel pick={(cid) => { setId(cid); setDraft(null); }} />
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => <button key={c.id} className={`gridcard ${id === c.id ? 'on' : ''}`} onClick={() => { setId(c.id); setDraft(null); }} {...hoverProps(c)}><CardFace card={c} size="sm" />{c.effects.length > 0 && <span className="n" data-tip="Has automated effects">⚙</span>}</button>)}</div>
       </div>
       <aside className="builder-side">
@@ -220,27 +222,58 @@ export function Library() {
           <div className="row"><b>{card.name}</b>{card.source === 'custom' && <><button onClick={() => setDraft(card)}>Edit</button><button onClick={() => { if (confirm(`Delete ${card.name}?`)) { deleteCustom(card.id); setId(null); } }}>Delete</button></>}</div>
           <ArtChooser card={card} />
           <h3>Automated effects</h3>
-          <p className="note">Keywords run on their own. Effects cover simple card text so the table can resolve it for you. Anything else is resolved with Manual tools during play.</p>
+          <p className="note">Keywords run on their own. Each sentence of the card text the reader knows becomes an effect below; sentences it does not know are marked “by hand” and the cast pop-up offers the hand tools for them. Changes here apply to every copy of this card.</p>
           {(<>
             {card.effects.map((fx, i) => {
               const up = (p: Partial<Effect>) => setFx(card.effects.map((x, j) => (j === i ? { ...x, ...p } : x)));
               return (
-                <div key={i} className="fx">
-                  <select value={fx.on} onChange={(e) => up({ on: e.target.value as Effect['on'] })} aria-label="When"><option value="cast">When cast</option><option value="genesis">When it enters (Genesis)</option><option value="deathrite">When it dies (Deathrite)</option></select>
-                  <select value={fx.op} onChange={(e) => up({ op: e.target.value as Effect['op'] })} aria-label="Effect">{OPS.map((o) => <option key={o} value={o}>{{ damage: 'Deal damage', heal: 'Gain life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy' }[o]}</option>)}</select>
-                  {fx.op !== 'destroy' && <input type="number" min={1} value={fx.n ?? 1} onChange={(e) => up({ n: Math.max(1, num(e.target.value)) })} aria-label="Amount" />}
-                  {(fx.op === 'damage' || fx.op === 'destroy') && <select value={fx.who} onChange={(e) => up({ who: e.target.value as Effect['who'] })} aria-label="Applies to">{WHO.filter((w) => w !== 'controller').map((w) => <option key={w} value={w}>{{ target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy at its location', controller: '', nearbyAvatars: 'each nearby Avatar' }[w]}</option>)}</select>}
-                  {fx.who === 'target' && (fx.op === 'damage' || fx.op === 'destroy') && <select value={fx.range ?? 'any'} onChange={(e) => up({ range: e.target.value as Effect['range'] })} aria-label="Range"><option value="adjacent">adjacent</option><option value="nearby">nearby</option><option value="any">anywhere</option></select>}
-                  {fx.op === 'draw' && <select value={fx.deck ?? 'spellbook'} onChange={(e) => up({ deck: e.target.value as Effect['deck'] })} aria-label="Deck"><option value="spellbook">from spellbook</option><option value="atlas">from atlas</option></select>}
+                <div key={i} className={`fx ${fx.op === 'manual' ? 'by-hand' : ''}`}>
+                  {fx.text && <p className="fx-src">“{fx.text}”</p>}
+                  <select value={fx.on} onChange={(e) => up({ on: e.target.value as Effect['on'] })} aria-label="When">{TRIGGERS.map((t) => <option key={t} value={t}>{TRIGGER_LABEL[t]}</option>)}</select>
+                  <select value={fx.op} onChange={(e) => { const op = e.target.value as Effect['op']; up({ op, who: whoFor(op).includes(fx.who) ? fx.who : whoFor(op)[0], ...(op === 'grant' && !fx.keyword ? { keyword: 'Airborne' } : {}), ...(op === 'buff' && fx.atk === undefined ? { atk: 1, def: 1 } : {}) }); }} aria-label="Effect">{OPS.map((o) => <option key={o} value={o}>{OP_LABEL[o]}</option>)}</select>
+                  {['damage', 'heal', 'loseLife', 'draw', 'mana', 'discard'].includes(fx.op) && (fx.x ? <button onClick={() => up({ x: false, n: 1 })} data-tip="The player picks the number when it resolves">X</button> : <input type="number" min={1} value={fx.n ?? 1} onChange={(e) => up({ n: Math.max(1, num(e.target.value)) })} aria-label="Amount" />)}
+                  {fx.op === 'buff' && <input type="number" value={fx.atk ?? 0} onChange={(e) => up({ atk: parseInt(e.target.value || '0', 10) || 0, def: parseInt(e.target.value || '0', 10) || 0 })} aria-label="Power change" />}
+                  {fx.op === 'grant' && <select value={fx.keyword ?? 'Airborne'} onChange={(e) => up({ keyword: e.target.value })} aria-label="Keyword">{KW_ALL.map((k) => <option key={k}>{k}</option>)}</select>}
+                  {fx.op !== 'manual' && whoFor(fx.op).length > 1 && <select value={fx.who} onChange={(e) => up({ who: e.target.value as Effect['who'] })} aria-label="Applies to">{whoFor(fx.op).map((w) => <option key={w} value={w}>{WHO_LABEL[w]}</option>)}</select>}
+                  {fx.who === 'target' && <select value={fx.range ?? 'any'} onChange={(e) => up({ range: e.target.value as Effect['range'] })} aria-label="Range"><option value="here">here</option><option value="adjacent">adjacent</option><option value="nearby">nearby</option><option value="any">anywhere</option></select>}
+                  {fx.who === 'target' && <select value={fx.only ?? ''} onChange={(e) => up({ only: (e.target.value || undefined) as Effect['only'] })} aria-label="Which units"><option value="">any unit</option><option value="minion">minions</option><option value="enemy">enemies</option><option value="ally">allies</option><option value="enemyMinion">enemy minions</option><option value="allyMinion">allied minions</option><option value="avatar">Avatars</option></select>}
+                  {(fx.op === 'buff' || fx.op === 'grant') && fx.on !== 'static' && <select value={fx.until ?? 'permanent'} onChange={(e) => up({ until: e.target.value as Effect['until'] })} aria-label="How long"><option value="turn">this turn</option><option value="permanent">until it leaves</option></select>}
+                  {fx.op === 'draw' && <select value={fx.deck ?? ''} onChange={(e) => up({ deck: (e.target.value || undefined) as Effect['deck'] })} aria-label="Deck"><option value="spellbook">from spellbook</option><option value="atlas">from atlas</option><option value="">player chooses</option></select>}
+                  {(fx.on === 'tap' || fx.on === 'activated') && <input type="number" min={0} value={fx.cost ?? 0} onChange={(e) => up({ cost: num(e.target.value) || undefined })} aria-label="Mana cost" data-tip="Mana paid to use it" />}
                   <button onClick={() => setFx(card.effects.filter((_, j) => j !== i))} aria-label="Remove effect">×</button>
                 </div>
               );
             })}
-            <button onClick={() => setFx([...card.effects, { on: card.type === 'Magic' ? 'cast' : 'genesis', op: 'damage', n: 1, who: 'target', range: 'nearby' }])}>Add an effect</button>
+            <div className="row">
+              <button onClick={() => setFx([...card.effects, { on: card.type === 'Magic' ? 'cast' : 'genesis', op: 'damage', n: 1, who: 'target', range: 'nearby' }])}>Add an effect</button>
+              <button className="ghost" onClick={() => setFx(effectsFromText(card.type, card.rules, card.name))} data-tip="Throw away hand-made changes and read the card text again">Read from card text</button>
+            </div>
           </>)}
         </>) : <><Preview /><p className="note">Select a card to see it and set up automated effects, or add a card of your own.</p></>}
       </aside>
     </div>
+  );
+}
+
+const STATUS_LABEL: Record<Coverage, string> = { auto: 'Automated', plain: 'Keywords only', partial: 'Partly automated', manual: 'By hand' };
+/** What the rules engine does with each card, organized by ability type. */
+function CoveragePanel({ pick }: { pick: (id: string) => void }) {
+  const pool = useStore((s) => s.pool);
+  const rep = useMemo(() => coverage(pool), [pool]);
+  const [status, setStatus] = useState<Coverage | ''>(''); const [cat, setCat] = useState('');
+  if (!rep.total) return null;
+  const list = rep.cards.filter((c) => (!status || c.status === status) && (!cat || c.categories.includes(cat as never)));
+  return (
+    <details className="panel coverage">
+      <summary><b>Rules coverage</b> — {rep.counts.auto + rep.counts.plain} of {rep.total} cards fully automated, {rep.counts.partial} partly, {rep.counts.manual} by hand</summary>
+      <div className="chips">{(Object.keys(STATUS_LABEL) as Coverage[]).map((k) => <button key={k} className={status === k ? 'chip on' : 'chip'} onClick={() => setStatus(status === k ? '' : k)}>{STATUS_LABEL[k]} {rep.counts[k]}</button>)}</div>
+      <table className="covtable"><thead><tr><th>Ability type</th><th>Automated</th><th>By hand</th></tr></thead><tbody>
+        {rep.byCategory.map((c) => <tr key={c.category} className={cat === c.category ? 'on' : ''} onClick={() => setCat(cat === c.category ? '' : c.category)}><td>{c.category}</td><td>{c.auto}</td><td>{c.manual}</td></tr>)}
+      </tbody></table>
+      {rep.shapes.length > 0 && <details><summary>Most common sentences not automated yet ({rep.shapes.length})</summary><ol className="shapes">{rep.shapes.slice(0, 40).map((x) => <li key={x.shape}><b>{x.count}×</b> {x.shape} <small>{x.category} · {x.examples.join(', ')}</small></li>)}</ol></details>}
+      <p className="names">{list.slice(0, 300).map((c, i) => <span key={c.id}>{i > 0 && ', '}<button className="link" onClick={() => pick(c.id)} data-tip={c.manual.join(' ') || STATUS_LABEL[c.status]}>{c.name}</button></span>)}{list.length > 300 ? ` … and ${list.length - 300} more` : ''}</p>
+      <div className="row"><button className="ghost" onClick={() => { navigator.clipboard?.writeText(claudePrompt(rep, [], !LOCAL_ONLY && useAuth.getState().member)); useStore.getState().toast('Claude Code prompt copied.'); }}>Copy a Claude Code prompt for the open cards</button></div>
+    </details>
   );
 }
 
@@ -282,12 +315,39 @@ export function Settings() {
     setDiff({ d, raw });
     if (kept) toast(`Card pool saved: ${d.total.toLocaleString()} cards.`);
     else setErr('The cards are loaded for now, but this browser did not keep them, so they will be gone after a reload. Private windows and blocked site storage cause this.');
+    await afterSync(raw);
   };
   const sync = async () => {
     setBusy('cards'); setErr(''); setDiff(null);
     try { await stage(await fetchCards()); }
     catch (e) { setErr(`${(e as Error).message || 'The request did not complete.'} If the browser blocked the request, open ${CARDS_URL} in a tab, save the page as cards.json, and use "Import cards.json".`); }
     setBusy('');
+  };
+  // after every sync: coverage report, copy in the cards folder, card catalog on the account, wishlist entry for new gaps
+  const [post, setPost] = useState<{ open: number; fresh: number; catalog: boolean; folder: string | null; wish: boolean } | null>(null);
+  const [cardFolder, setCardFolder] = useState<string | null>(null);
+  useEffect(() => { rememberedCardFolder().then(setCardFolder); }, []);
+  const afterSync = async (raw: unknown) => {
+    const pool = useStore.getState().pool; const rep = coverage(pool); const cards = Object.values(pool).filter((c) => c.source === 'api');
+    const folder = await saveToCardFolder(raw, cards, rep, true).catch(() => null);
+    const catalog = await uploadCatalog(cards, rep).catch(() => false);
+    const gaps = await reportGaps(rep, await feedbackRemote(), auth.email ?? (settings.name || null), catalog);
+    setPost({ open: rep.counts.partial + rep.counts.manual, fresh: gaps.fresh, catalog, folder, wish: !!gaps.item });
+    if (gaps.item) { setItems(await loadLocal()); toast(`${gaps.fresh} card${gaps.fresh > 1 ? 's' : ''} need rules work. A wishlist entry with a Claude Code prompt was added.`); }
+  };
+  const saveFolderNow = async (choose: boolean) => {
+    setErr('');
+    try {
+      if (choose || !cardFolder) setCardFolder(await pickCardFolder());
+      const pool = useStore.getState().pool; const cards = Object.values(pool).filter((c) => c.source === 'api');
+      if (!apiRaw) { toast('Folder chosen. Cards are written there after the next Card Sync.'); return; }
+      const name = await saveToCardFolder(apiRaw, cards, coverage(pool), true);
+      toast(name ? `Saved cards.json, cards-text.csv and coverage.md to “${name}”.` : 'The browser did not allow writing to that folder.', name ? 'info' : 'error');
+    } catch (e) { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }
+  };
+  const downloadAll = () => {
+    if (!apiRaw) return; const pool = useStore.getState().pool; const cards = Object.values(pool).filter((c) => c.source === 'api'); const rep = coverage(pool);
+    downloadFile('cards.json', JSON.stringify(apiRaw, null, 1)); setTimeout(() => downloadFile('cards-text.csv', cardsCsv(cards, rep), 'text/csv'), 400); setTimeout(() => downloadFile('coverage.md', coverageMarkdown(rep, new Date().toISOString()), 'text/markdown'), 800);
   };
   const printings = useMemo(() => apiCards.reduce((n, c) => n + c.printings.length, 0), [apiCards]);
   const ago = (iso: string) => { const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} days ago`; };
@@ -345,6 +405,21 @@ export function Settings() {
           <button className="primary" disabled={!!busy} onClick={sync}>{busy === 'cards' ? 'Requesting…' : 'Sync cards'}</button>
           <label className="filebtn">Import cards.json<input type="file" accept=".json,application/json" onChange={async (e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; setErr(''); let raw: unknown; try { raw = JSON.parse(await f.text()); } catch { setErr('That file is not valid JSON.'); return; } await stage(raw); }} /></label>
         </div>
+        <div className="row folderrow">
+          <span className="note">{cardFolder ? <>Cards folder: <b>{cardFolder}</b>. Each sync writes cards.json, cards-text.csv (every card's text and how it is automated) and coverage.md there.</> : 'Optional: choose a folder on this computer and each sync also writes cards.json, cards-text.csv and coverage.md there, like the art folder.'}</span>
+          {supportsSaveFolder() ? <>
+            <button onClick={() => saveFolderNow(true)}>{cardFolder ? 'Change folder' : 'Choose cards folder'}</button>
+            {cardFolder && apiRaw ? <button onClick={() => saveFolderNow(false)}>Save to folder now</button> : null}
+          </> : <button disabled={!apiRaw} onClick={downloadAll} data-tip="This browser cannot write to a folder, so the files are downloaded instead">Download card files</button>}
+        </div>
+        {post && (
+          <p className={`note ${post.open ? 'warn' : ''}`}>
+            {post.open ? `${post.open} cards are not fully automated yet (their unread sentences are resolved by hand in the cast pop-up). ` : 'Every card is automated. '}
+            {post.wish ? `${post.fresh} of them are new since the last report: a wishlist entry with a Claude Code prompt was added below. ` : post.open ? 'None of them are new since the last report. ' : ''}
+            {post.catalog ? 'Card text was saved to your account’s card catalog. ' : ''}
+            {post.folder ? `Files written to “${post.folder}”.` : cardFolder ? 'The cards folder needs permission again: use “Save to folder now”.' : ''}
+          </p>
+        )}
         {diff && (
           <div className="report">
             <p>Saved. <b>{diff.d.total.toLocaleString()}</b> cards; compared with the previous copy, <b>{diff.d.added.length}</b> new, <b>{diff.d.changed.length}</b> changed, <b>{diff.d.removed.length}</b> removed.</p>

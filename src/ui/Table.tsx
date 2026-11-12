@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
-  actor, attackTargets, cardOf, cell, check, codexUrl, isDisabled, isWater, other, playableSiteCells, reach, responders,
+  actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, isDisabled, power, isWater, other, playableSiteCells, reach, responders,
   sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
@@ -10,6 +10,7 @@ import { type CardDef } from '../engine';
 import { PACES } from '../store';
 import { CardFace, Pips, hoverProps, mainElement, useHover, useInspect } from './CardFace';
 import { spring, usePace } from './pace';
+import { type CastReq, CastModal, abilityList } from './CastModal';
 
 type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string };
 interface Opt { label: string; hint?: string; action: Action }
@@ -39,6 +40,9 @@ export function Table() {
   const [seen, setSeen] = useState<PlayerId>(viewer);
   const [tableMenu, setTableMenu] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  const [cast, setCast] = useState<CastReq | null>(null);
+  const [focusUnit, setFocusUnit] = useState<string | null>(null);
+  const [abilOpen, setAbilOpen] = useState(false);
   const settings = useStore((st) => st.settings);
   const setSettings = useStore((st) => st.setSettings);
   const aiWaiting = useStore((st) => st.aiWaiting);
@@ -50,6 +54,17 @@ export function Table() {
 
   // clear transient UI whenever the game state moves on
   useEffect(() => { setSel(null); setMenu(null); setPicks([]); setRemoveOrig(false); setMull([]); }, [s]);
+  // a triggered ability waiting for this player opens the pop-up by itself
+  const q0 = s.queue?.[0];
+  useEffect(() => { if (q0 && !s.pending && (hot || q0.by === g.local) && (!cast || cast.k === 'hand')) { if (!cast) setCast({ k: 'trigger', id: q0.id }); } }, [q0?.id, cast]);
+  /** Play a card from hand: straight onto the table when it has no text, through the cast pop-up when it does. */
+  const play = (inst: string, c?: number, bearer?: string) => {
+    const d = cardOf(s, inst);
+    if (d.effects.length || d.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst, ...(c !== undefined ? { c } : {}), ...(bearer ? { bearer } : {}) }); return; }
+    const a: Action = { t: 'cast', inst, ...(c !== undefined ? { c } : {}), ...(bearer ? { target: bearer } : {}) };
+    if (explain(a)) act(a); else setSel(null);
+  };
+  const abilities = useMemo(() => (myInput && !s.pending && !s.queue?.length && s.phase === 'main' ? abilityList(s, who) : []), [s, myInput, who]);
   // hotseat: hide the hand while the device changes hands
   useEffect(() => { if (hot && !s.pending && s.phase !== 'over' && viewer !== seen) setCurtainFor(viewer); }, [hot, viewer, seen, s.pending, s.phase]);
 
@@ -68,8 +83,7 @@ export function Table() {
       const needs = selCard.effects.some((e) => e.who === 'target' && e.on === (selCard.type === 'Magic' ? 'cast' : 'genesis'));
       if (selCard.type === 'Site') { if (!s.units[me.avatar].tapped) for (const c of playableSiteCells(s, who)) cells.set(c, 'place'); }
       else if (selCard.type === 'Magic') { if (needs) for (const id of validTargets(s, who, selCard)) units.add(id); }
-      else if (sel.c === undefined) for (const c of sitesOf(s, who)) cells.set(c, 'place');
-      else if (needs) for (const id of validTargets(s, who, selCard, { c: sel.c, r: 'surface' })) units.add(id);
+      else for (const c of sitesOf(s, who)) cells.set(c, 'place');
     }
     if (selUnit) {
       for (const path of reach(s, selUnit).values()) {
@@ -109,10 +123,9 @@ export function Table() {
     setMenu(null);
     if (sel?.k === 'hand' && selCard) {
       if (selCard.type === 'Site') { if (explain({ t: 'playSite', inst: sel.inst, c })) act({ t: 'playSite', inst: sel.inst, c }); return; }
-      if (selCard.type === 'Magic') return;
-      const needs = selCard.effects.some((e) => e.who === 'target' && e.on === 'genesis');
-      if (needs && s.sites[c]?.owner === who) { setSel({ ...sel, c }); toast(`Now choose a target for ${selCard.name}.`); return; }
-      if (explain({ t: 'cast', inst: sel.inst, c })) act({ t: 'cast', inst: sel.inst, c });
+      if (selCard.type === 'Magic') { play(sel.inst); return; }
+      if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst: sel.inst, c }); return; }
+      play(sel.inst, c);
       return;
     }
     if (selUnit) {
@@ -125,13 +138,9 @@ export function Table() {
     e.stopPropagation();
     if (manual) { setMenu(null); setSel({ k: 'unit', id: u.id }); return; }
     if (!myInput || s.pending) return;
-    if (sel?.k === 'hand' && selCard && (selCard.type === 'Magic' || sel.c !== undefined)) {
-      const a: Action = { t: 'cast', inst: sel.inst, c: sel.c, target: u.id };
-      if (explain(a)) act(a); return;
-    }
-    if (sel?.k === 'hand' && selCard?.type === 'Artifact' && u.owner === who && sel.c === undefined && !selCard.effects.some((e) => e.who === 'target' && e.on === 'genesis')) {
-      const a: Action = { t: 'cast', inst: sel.inst, c: u.c, target: u.id }; // hand the artifact to this unit
-      if (explain(a)) act(a); return;
+    if (sel?.k === 'hand' && selCard?.type === 'Magic') { play(sel.inst); return; }
+    if (sel?.k === 'hand' && selCard?.type === 'Artifact' && u.owner === who && s.sites[u.c]?.owner === who && !selCard.effects.some((e) => e.who === 'target' && e.on === 'genesis')) {
+      play(sel.inst, u.c, u.id); return; // hand the artifact to this unit
     }
     if (sel?.k === 'hand') { clickCell(u.c); return; }
     if (u.owner === who && !(selUnit && selUnit.id !== u.id && hiCells.get(u.c) === 'hit')) {
@@ -147,6 +156,7 @@ export function Table() {
     if (dragged.current) return; // the click that ends a drag
     if (!myInput || s.pending || s.phase !== 'main') { if (s.phase === 'draw' && myInput) toast('Draw a card first: choose your spellbook or atlas.'); return; }
     setMenu(null);
+    if (cardOf(s, inst).type === 'Magic') { play(inst); return; } // magic goes straight to the cast pop-up
     setSel(sel?.k === 'hand' && sel.inst === inst ? null : { k: 'hand', inst });
   }
 
@@ -170,19 +180,10 @@ export function Table() {
     if (c === null) { setSel(null); return; } // let go outside the realm: back to hand
     const d = cardOf(s, inst);
     if (d.type === 'Site') { const a: Action = { t: 'playSite', inst, c }; if (explain(a)) act(a); else setSel(null); return; }
-    if (d.type === 'Magic') {
-      const needs = d.effects.some((e) => e.who === 'target' && e.on === 'cast');
-      if (needs && !unit) { toast(`Drop ${d.name} on the unit it should target.`); return; } // stays selected, targets keep glowing
-      const a: Action = needs ? { t: 'cast', inst, target: unit! } : { t: 'cast', inst };
-      if (explain(a)) act(a); else setSel(null); return;
-    }
-    if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) {
-      const a: Action = { t: 'cast', inst, c, target: unit }; // dropped on one of your units: it carries the artifact
-      if (explain(a)) act(a); else setSel(null); return;
-    }
-    if (d.effects.some((e) => e.who === 'target' && e.on === 'genesis') && s.sites[c]?.owner === who) { setSel({ k: 'hand', inst, c }); toast(`Now choose a target for ${d.name}.`); return; }
-    const a: Action = { t: 'cast', inst, c };
-    if (explain(a)) act(a); else setSel(null);
+    if (d.type === 'Magic') { play(inst); return; }
+    if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && s.sites[c]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) { play(inst, c, unit); return; } // dropped on one of your units: it carries the artifact
+    if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst, c }); setSel(null); return; }
+    play(inst, c);
   }
   const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen
 
@@ -190,7 +191,6 @@ export function Table() {
   const unitsByCell = useMemo(() => { const m = new Map<number, Unit[]>(); for (const u of Object.values(s.units)) { if (!m.has(u.c)) m.set(u.c, []); m.get(u.c)!.push(u); } return m; }, [s.units]);
   const pend = s.pending;
   const pendUnits = pend ? responders(s) : [];
-  const castNow = selCard && selCard.type === 'Magic' && !selCard.effects.some((e) => e.who === 'target' && e.on === 'cast');
 
   const cellPos = (c: number) => { const i = order.indexOf(c); return [((i % COLS) + 0.5) * 100, (Math.floor(i / COLS) + 0.5) * 100] as const; };
   const opp = other(viewer);
@@ -216,7 +216,7 @@ export function Table() {
           {herald ? <Herald h={herald} /> : <span className="hint">
             {s.phase === 'over' ? '' : !myInput ? (aiWaiting ? `${PNAME(g, who)} moved. Tap Continue for the next move.` : aiThinking ? `${PNAME(g, who)} is thinking…` : `Waiting for ${PNAME(g, who)}…`)
               : pend ? '' : s.phase === 'draw' ? 'Start of turn: draw one card from either deck.'
-              : drag ? 'Drag onto a glowing square and let go.' : selCard ? (selCard.type === 'Site' ? 'Choose a glowing square for this site.' : selCard.type === 'Magic' ? (castNow ? 'Cast it with the button below.' : 'Choose a glowing target.') : sel?.k === 'hand' && sel.c !== undefined ? 'Choose a glowing target.' : 'Choose one of your sites.')
+              : drag ? 'Drag onto a glowing square and let go.' : selCard ? (selCard.type === 'Site' ? 'Choose a glowing square for this site.' : selCard.type === 'Magic' ? 'Opening the spell…' : 'Choose one of your sites.')
               : selUnit ? 'Green squares: move. Red squares: something to attack.' : 'Drag a card onto the realm, or tap one of your units. Hold any card to read it.'}
           </span>}
           <button className="pacechip" onClick={openMenu} aria-label="Table options: pace and board size" data-tip="Animation pace, step-through, board size">
@@ -245,7 +245,7 @@ export function Table() {
                         const pc = cardOf(s, m.inst); const hp = hoverProps(pc);
                         return <span key={m.id} className={`perm p${m.owner}`} {...hp} onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: destroy' : pc.name}>{m.kind === 'aura' ? '◌' : '◆'}</span>;
                       })}
-                      {(unitsByCell.get(c) ?? []).filter((u) => u.owner === p).map((u) => <UnitToken key={u.id} s={s} u={u} pace={pace} selected={selUnit?.id === u.id} target={hiUnits.has(u.id)} dropping={drag?.unit === u.id && hiUnits.has(u.id)} onClick={(e) => clickUnit(u, e)} />)}
+                      {(unitsByCell.get(c) ?? []).filter((u) => u.owner === p).map((u) => <UnitToken key={u.id} s={s} u={u} pace={pace} selected={selUnit?.id === u.id} target={hiUnits.has(u.id) || focusUnit === u.id} dropping={drag?.unit === u.id && hiUnits.has(u.id)} onClick={(e) => clickUnit(u, e)} />)}
                     </div>
                   ))}
                   {drag?.c === c && hi === 'place' && <span className="drop-label">Release to play here</span>}
@@ -274,7 +274,8 @@ export function Table() {
             <button className="primary" disabled={!me.atlas.length} onClick={() => act({ t: 'draw', deck: 'atlas' })} data-tip="Sites give mana and threshold">Draw a site ({me.atlas.length})</button>
           </>)}
           {myInput && !pend && s.phase === 'main' && (<>
-            {castNow && sel?.k === 'hand' && <button className="primary" onClick={() => { const a: Action = { t: 'cast', inst: sel.inst }; if (explain(a)) act(a); }}>Cast {selCard!.name}</button>}
+            {selUnit && selUnit.owner === who && abilities.filter((x) => 'unit' in x.src && x.src.unit === selUnit.id).map((x) => <button key={x.fx} className="ability" disabled={!x.ok} data-tip={x.ok ? x.label : x.why} onClick={() => setCast({ k: 'ability', src: x.src, fx: x.fx })}>✦ {x.on === 'tap' ? 'Tap: ' : ''}{x.label.length > 34 ? x.label.slice(0, 32) + '…' : x.label}</button>)}
+            {abilities.length > 0 && <button className="ability" onClick={() => setAbilOpen(true)} data-tip="Abilities of your units, sites and artifacts that you use when you choose">✦ Abilities ({abilities.filter((x) => x.ok).length})</button>}
             <button disabled={s.units[me.avatar].tapped || !me.atlas.length} onClick={() => act({ t: 'drawSite' })} data-tip="Avatar ability: tap to draw a site instead of playing one">Tap Avatar: draw a site</button>
             {g.mode === 'ai' && <button disabled={!canUndo} onClick={undo} data-tip={canUndo ? 'Take back your last move' : 'Nothing to take back. Moves that draw a card, pass the turn, or that the opponent has answered cannot be undone.'}>Undo</button>}
             <button className="end" onClick={() => act({ t: 'endTurn' })} data-tip="Damage on your minions clears and unspent mana is lost">End turn</button>
@@ -345,6 +346,16 @@ export function Table() {
             </motion.div>
           </motion.div>
         )}
+        {abilOpen && (
+          <motion.div className="sheet-veil" key="abil" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setAbilOpen(false)}>
+            <motion.div className="sheet" initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }} transition={spring(pace, 420, 34)} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Abilities">
+              <header><h2>Abilities</h2><button className="iconbtn" onClick={() => setAbilOpen(false)} aria-label="Close">✕</button></header>
+              <p className="note">Abilities you use when you choose. Tap abilities tap the card; the others can be used once per turn.</p>
+              {abilities.map((x, i) => <button key={i} className="abil-row" disabled={!x.ok} onClick={() => { setAbilOpen(false); setCast({ k: 'ability', src: x.src, fx: x.fx }); }}><b>{x.name}</b> <span>{x.on === 'tap' ? 'Tap → ' : ''}{x.label}</span>{!x.ok && <small>{x.why}</small>}</button>)}
+            </motion.div>
+          </motion.div>
+        )}
+        {cast && <CastModal key={JSON.stringify(cast)} g={g} req={cast} close={(next) => { setCast(next ?? null); setFocusUnit(null); }} focus={setFocusUnit} />}
         {logOpen && (
           <motion.div className="sheet-veil" key="log" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setLogOpen(false)}>
             <motion.div className="sheet tall" initial={{ y: 40 }} animate={{ y: 0 }} exit={{ y: 40 }} transition={spring(pace, 420, 34)} onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Game log">
@@ -429,14 +440,16 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
   const d = unitCard(s, u);
   const carried = s.perms.filter((m) => m.carrier === u.id);
   const art = useStore((st) => st.art[d.id]);
-  const life = u.avatar ? s.players[u.owner].life : d.defense - u.damage;
+  const atk = power(s, u); const def = defenseOf(s, u); const boosted = atk !== d.attack || !!u.mods?.length;
+  const life = u.avatar ? s.players[u.owner].life : def - u.damage;
   return (
     <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${u.r === 'under' ? 'under' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
       animate={{ rotate: u.tapped ? 90 : 0, scale: selected ? 1.12 : 1 }} transition={spring(pace)} onClick={onClick} {...hoverProps(d)}
       data-unit={u.id} aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
       <span className="unit-face">{art ? <img src={art} alt="" draggable={false} /> : <span className="unit-name">{d.name}</span>}</span>
       {u.avatar ? <span className="aura-ring" aria-hidden /> : null}
-      {!u.avatar && <motion.span key={u.damage + ':' + life} className={`badge ${u.damage ? 'hurt' : ''}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{d.attack === d.defense && !u.damage ? d.attack : `${d.attack}/${life}`}</motion.span>}
+      {!u.avatar && <motion.span key={u.damage + ':' + life + ':' + atk} className={`badge ${u.damage ? 'hurt' : ''} ${atk > d.attack ? 'up' : atk < d.attack ? 'down' : ''}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{atk === def && !u.damage ? atk : `${atk}/${life}`}</motion.span>}
+      {boosted && <span className="mods" data-tip={[...(u.mods ?? []).map((m) => `${m.kw ? m.kw : `${m.atk >= 0 ? '+' : ''}${m.atk} power`}${m.turn !== undefined ? ' this turn' : ''} (${m.from})`), atk !== d.attack + (u.mods ?? []).reduce((n, m) => n + m.atk, 0) ? 'boosted by a card nearby' : ''].filter(Boolean).join(', ')}>✦</span>}
       {carried.length > 0 && <span className="attached">{carried.map((m) => { const ac = cardOf(s, m.inst); return <AttachTab key={m.id} card={ac} />; })}</span>}
       {u.r === 'under' && <span className="under-tag">below</span>}
       {summoningSick(s, u) && <span className="sick" data-tip="Entered this turn">z</span>}

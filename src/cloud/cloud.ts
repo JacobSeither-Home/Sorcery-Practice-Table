@@ -3,10 +3,10 @@
 // rules that require a signed-in account on the access list (see supabase/migrations).
 import { createClient } from '@supabase/supabase-js';
 import { create } from 'zustand';
-import type { CardDef, DeckList, Effect } from '../engine';
+import type { CardDef, CoverageReport, DeckList, Effect } from '../engine';
 import { db } from '../data/db';
 import type { Remote } from '../feedback/feedback';
-import { type Settings, buildPool, useStore } from '../store';
+import { SAVE_KEY, type SavedGame, type Settings, buildPool, currentSave, useStore } from '../store';
 
 export const SUPABASE_URL = 'https://yhiqsucfqjassftcaytu.supabase.co';
 export const SUPABASE_KEY = 'sb_publishable_NWY7fmSHafnRX88xEQyl9g_OdBGF5OL';
@@ -27,7 +27,7 @@ interface Auth {
   claim: () => Promise<void>;
   loadAccess: () => Promise<void>;
 }
-interface Blob { settings?: Partial<Settings>; decks?: DeckList[]; custom?: CardDef[]; overlays?: Record<string, Effect[]> }
+interface Blob { settings?: Partial<Settings>; decks?: DeckList[]; custom?: CardDef[]; overlays?: Record<string, Effect[]>; game?: SavedGame | null }
 
 let applying = false; let timer: ReturnType<typeof setTimeout> | undefined; let started = false;
 
@@ -43,7 +43,7 @@ export const useAuth = create<Auth>((set, get) => ({
     });
     useStore.subscribe((s, p) => {
       if (applying || !get().member || !get().userId) return;
-      if (s.decks === p.decks && s.custom === p.custom && s.overlays === p.overlays && s.settings === p.settings) return;
+      if (s.decks === p.decks && s.custom === p.custom && s.overlays === p.overlays && s.settings === p.settings && s.game === p.game) return;
       clearTimeout(timer); set({ sync: 'saving' }); timer = setTimeout(push, 1200);
     });
   },
@@ -68,7 +68,7 @@ export const useAuth = create<Auth>((set, get) => ({
   },
 }));
 
-function snapshot(): Blob { const s = useStore.getState(); return { settings: s.settings, decks: s.decks, custom: s.custom, overlays: s.overlays }; }
+function snapshot(): Blob { const s = useStore.getState(); return { settings: s.settings, decks: s.decks, custom: s.custom, overlays: s.overlays, game: s.game?.mode === 'online' ? undefined : currentSave() }; }
 async function push() {
   const { userId } = useAuth.getState(); if (!userId) return;
   const { error } = await supabase.from('user_data').upsert({ user_id: userId, data: snapshot() });
@@ -86,9 +86,29 @@ async function pull() {
     const settings = { ...s.settings, ...(b.settings ?? {}) }, decks = b.decks ?? s.decks, custom = b.custom ?? s.custom, overlays = b.overlays ?? s.overlays;
     await Promise.all([db.set('settings', settings), db.set('decks', decks), db.set('custom', custom), db.set('overlays', overlays)]);
     useStore.setState({ settings, decks, custom, overlays, pool: buildPool(s.apiRaw, overlays, custom) });
+    // the game in progress: whichever copy was saved last wins (this device or another one)
+    const local = await db.get<SavedGame>(SAVE_KEY);
+    if (b.game?.v === 1 && (!local || b.game.savedAt > local.savedAt) && useStore.getState().game?.mode !== 'online') { await db.set(SAVE_KEY, b.game); useStore.getState().restoreGame(b.game); }
     useAuth.setState({ sync: 'saved' });
     useStore.getState().reloadArt(); // art choices come from the account, images from this device
   } finally { applying = false; }
+}
+
+/** Card Sync writes the card text and its automation status to public.card_catalog, so a Claude Code
+ *  session can read every card without reaching the card API itself. Members only. */
+export async function uploadCatalog(cards: CardDef[], rep: CoverageReport): Promise<boolean> {
+  if (LOCAL_ONLY || !useAuth.getState().member) return false;
+  const by = new Map(rep.cards.map((c) => [c.id, c]));
+  const at = new Date().toISOString(); const who = useAuth.getState().email;
+  const rows = cards.map((c) => { const k = by.get(c.id); return {
+    id: c.id, name: c.name, type: c.type, rules: c.rules, keywords: c.keywords, subtypes: c.subtypes, cost: c.cost, attack: c.attack, defense: c.defense, life: c.life,
+    thresholds: c.thresholds, sets: k?.sets ?? [], status: k?.status ?? 'manual', unmatched: k?.manual ?? [], categories: k?.categories ?? [], synced_at: at, synced_by: who,
+  }; });
+  for (let i = 0; i < rows.length; i += 250) {
+    const { error } = await supabase.from('card_catalog').upsert(rows.slice(i, i + 250));
+    if (error) return false;
+  }
+  return true;
 }
 
 export async function feedbackRemote(): Promise<Remote | null> {
