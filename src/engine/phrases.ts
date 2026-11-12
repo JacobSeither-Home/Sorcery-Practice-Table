@@ -446,6 +446,25 @@ export const RULES: Rule[] = [
     build: (m) => { const k = KEYWORDS.find((x) => x.toLowerCase() === m[1].toLowerCase()); return k ? [{ op: 'tap', who: 'atTarget', refCell: true, only: 'minion', notKw: k }] : null; } },
   { id: 'lose-keyword', label: '… lose a keyword', re: new RegExp(`^(.+?) (?:permanently )?loses? (${KEYWORDS.join('|')})\\.$`, 'i'),
     build: (m, on) => { const v = nounPhrase(m[1]); const k = KEYWORDS.find((x) => x.toLowerCase() === m[2].toLowerCase()); return v && k && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses ' + k, until: 'permanent' }] : null; } },
+  { id: 'protection', label: "… can't be targeted / damaged / attacked / moved / destroyed", re: /^(.+?) can'?t be ((?:targeted|damaged|attacked|intercepted|moved by force|moved|destroyed|banished|immobilized|disabled|modified)(?:(?:, | or |, or )(?:targeted|damaged|attacked|intercepted|moved by force|moved|destroyed|banished|immobilized|disabled|modified))*)( by magic)?\.$/i,
+    build: (m, on) => {
+      if (on !== 'static') return null;
+      const t = m[1].toLowerCase(); const siteToo = /^this site and minions here$/.test(t);
+      const v = siteToo ? { who: 'self' as const } : nounPhrase(m[1]); if (!v || v.who === 'target') return null;
+      const out: Omit<Effect, 'on'>[] = [];
+      for (const w0 of m[2].split(/, or |, | or /)) {
+        const w = w0.trim().toLowerCase(); const magic = !!m[3];
+        const kw = w === 'targeted' ? (magic ? "Can't be targeted by magic" : null) : w === 'damaged' ? (magic ? "Can't be damaged by magic" : 'Immune to damage') : w === 'attacked' ? "Can't be attacked"
+          : w === 'moved by force' || w === 'moved' ? "Can't be moved by force" : w === 'destroyed' ? "Can't be destroyed" : w === 'banished' ? "Can't be banished" : null; // intercepted, modified, immobilized, disabled: not enforced yet, so the sentence stays by hand
+        if (kw === null) return null;
+        out.push({ op: 'grant', ...v, keyword: siteToo ? 'Protects this site from attacks' : kw, until: 'permanent' });
+      }
+      return out;
+    } },
+  { id: 'immune', label: 'Immune to fire damage / Lethal', re: /^(?:this is |(.+?) (?:are|is) )?immune to (fire|water|air|earth) damage\.$|^(?:this is |(.+?) (?:are|is) )?immune to (lethal|damage|death blows)\.$/i,
+    build: (m, on) => { if (on !== 'static') return null; const who = m[1] ?? m[3]; const v = who ? nounPhrase(who) : { who: 'self' as const }; if (!v || v.who === 'target') return null; const kw = m[2] ? `Immune to ${m[2].toLowerCase()} damage` : /lethal/i.test(m[4]) ? 'Immune to Lethal' : /damage/i.test(m[4]) ? 'Immune to damage' : null; return kw ? [{ op: 'grant', ...v, keyword: kw, until: 'permanent' }] : null; } },
+  { id: 'cant-act', label: "… can't untap / attack / defend", re: /^(.+?) can'?t (untap|attack|attack or defend|defend)\.$/i,
+    build: (m, on) => { const v = nounPhrase(m[1]); if (!v || on !== 'static' || v.who === 'target') return null; const w = m[2].toLowerCase(); return (w === 'attack or defend' ? ["Can't attack", "Can't defend"] : [w === 'untap' ? "Can't untap" : w === 'attack' ? "Can't attack" : "Can't defend"]).map((keyword) => ({ op: 'grant' as const, ...v, keyword, until: 'permanent' as const })); } },
   { id: 'lose-and-are', label: '… lose X and are Y', re: new RegExp(`^(.+?) loses? (${KEYWORDS.join('|')}) and (?:are|is) (${KEYWORDS.join('|')})\\.$`, 'i'),
     build: (m, on) => { const v = nounPhrase(m[1]); const a = KEYWORDS.find((x) => x.toLowerCase() === m[2].toLowerCase()), b = KEYWORDS.find((x) => x.toLowerCase() === m[3].toLowerCase()); return v && a && b && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses ' + a, until: 'permanent' }, { op: 'grant', ...v, keyword: b, until: 'permanent' }] : null; } },
   { id: 'are-keyword', label: '… are Spellcasters / are disabled', re: new RegExp(`^(.+?) (?:is|are) (?:an? )?(${KEYWORDS.join('|')}|spellcasters|disabled)\\.$`, 'i'),
@@ -526,6 +545,7 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   if ((w = sentence.match(/^(?:when it arrives|upon arrival|on arrival), (.+)$/i))) return matchSentence(cap(w[1]), on, type, top);
   if ((w = sentence.match(/^(.+?) (?:on arrival|upon arrival|when it arrives|if (?:it is|it's) untapped|if able)\.$/i))) return matchSentence(w[1] + '.', on, type, top);
   // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
+  if (/^can'?t (be |untap|attack|defend)|^is immune/i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^(has|have|gains|takes) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
   // ", if it's a minion" after something given to a bearer changes nothing here
@@ -592,7 +612,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     raw = raw.replace(/^(?:\([AEFW]\))+\s*[—–-]\s*/, '');
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
     const parts = line.replace(/\.$/, '').split(/,\s*/);
-    const PASSIVE: Record<string, string> = { "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend" };
+    const PASSIVE: Record<string, string> = { "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend", "can't attack or defend": "Can't attack", "immune to fire damage": 'Immune to fire damage' };
     const readable = (x: string) => !KEYWORD_LINE.test(x.trim()) && !PASSIVE[x.trim().toLowerCase().replace('’', "'")] && !!matchSentence(cap(x.trim()) + '.', 'static', type);
     if (parts.length > 1 && type !== 'Magic' && parts.every((x) => KEYWORD_LINE.test(x.trim()) || readable(x)) && parts.some(readable)) {
       const fx = parts.filter(readable).flatMap((x) => matchSentence(cap(x.trim()) + '.', 'static', type)!.got.map((e) => ({ ...e, on: 'static' as const, line: lineNo, text: x.trim(), rule: 'keyword-line', auto: true })));

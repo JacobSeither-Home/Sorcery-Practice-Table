@@ -259,7 +259,7 @@ export function actor(s: GameState): PlayerId {
 
 function startTurn(s: GameState, p: PlayerId) {
   s.turn++; s.active = p;
-  for (const u of Object.values(s.units)) if (u.owner === p) { if (u.noUntap) { delete u.noUntap; log(s, `${unitCard(s, u).name} does not untap this time.`, p); } else u.tapped = false; }
+  for (const u of Object.values(s.units)) if (u.owner === p) { if (u.tapped && has(s, u, "Can't untap")) { log(s, `${unitCard(s, u).name} can't untap.`, p); continue; } if (u.noUntap) { delete u.noUntap; log(s, `${unitCard(s, u).name} does not untap this time.`, p); } else u.tapped = false; }
   for (const m of s.perms) if (m.owner === p) m.tapped = false;
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
@@ -307,6 +307,7 @@ function breakWard(s: GameState, u: Unit, why: string) { u.ward = false; log(s, 
 function killUnit(s: GameState, u: Unit, force = false) {
   if (!s.units[u.id] || u.avatar) return;
   if (!force && warded(s, u)) { breakWard(s, u, 'instead of being destroyed'); return; }
+  if (!force && has(s, u, "Can't be destroyed")) { log(s, `${unitCard(s, u).name} can't be destroyed.`, null); return; }
   const d = unitCard(s, u);
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; } // what it carried stays where it fell
   delete s.units[u.id];
@@ -345,7 +346,9 @@ function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: Dm
   const killer = from?.unit;
   if (n0 <= 0 || !s.units[u.id]) return;
   if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
-  const n = afterPrevention(s, u, n0, from);
+  let n = afterPrevention(s, u, n0, from);
+  if (has(s, u, 'Immune to damage') || (from?.card?.type === 'Magic' && !from.unit && has(s, u, "Can't be damaged by magic"))) n = 0;
+  else { const src = from?.unit ? unitCard(s, from.unit) : from?.card; const el = ELEMENTS.find((x) => has(s, u, `Immune to ${x} damage`)); if (el && src && src.thresholds[el] > 0) n = 0; }
   if (n <= 0) { log(s, `${unitCard(s, u).name} takes no damage.`, null); return; }
   if (!u.avatar && has(s, u, 'Prevent first damage each turn') && u.shieldTurn !== s.turn) { u.shieldTurn = s.turn; log(s, `${unitCard(s, u).name} prevents the first damage it takes this turn.`, null); return; }
   if (u.mods?.some((m) => m.hurt)) { u.mods = u.mods.filter((m) => !m.hurt); log(s, `${unitCard(s, u).name} wakes up.`, null); }
@@ -452,6 +455,7 @@ export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, ori
   const targeted = e.targets !== false;
   return Object.values(s.units).filter((u) => {
     if (targeted && u.owner !== p && hasStealth(s, u)) return false; // Codex "Stealth": cannot be targeted by the opponent
+    if (targeted && d.type === 'Magic' && has(s, u, "Can't be targeted by magic")) return false;
     if ((e.op === 'destroy' || e.op === 'banish' || e.op === 'bounce') && u.avatar) return false;
     switch (e.only) {
       case 'minion': if (u.avatar) return false; break;
@@ -697,7 +701,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         break;
       }
       case 'destroy': for (const v of victims) if (!v.avatar && s.units[v.id]) { log(s, `${d.name} destroys ${nm(v)}.`, p); killUnit(s, v); } break;
-      case 'banish': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'banish', d.name); break;
+      case 'banish': for (const v of victims) if (!v.avatar && s.units[v.id] && !has(s, v, "Can't be banished")) removeUnit(s, v, 'banish', d.name); break;
       case 'bounce': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'hand', d.name); break;
       case 'heal':
         if (e.who === 'siteController') { const sc = loc ? s.sites[loc.c]?.owner : undefined; if (sc != null) gainLife(s, sc, n); }
@@ -745,6 +749,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
           else if (e.dest === 'toward' || e.dest === 'away') { const opts = teleportCells(s, e, v, loc); to = c2?.cell !== undefined && opts.includes(c2.cell) ? c2.cell : opts[0]; }
           else to = c2?.cell;
           if (to === undefined || to === v.c) continue;
+          if (e.move !== 'step' && has(s, v, "Can't be moved by force")) { log(s, `${nm(v)} can't be moved by force.`, p); continue; }
           if (e.move === 'step' && !teleportCells(s, { ...e, dest: e.dest === 'toward' || e.dest === 'away' ? e.dest : 'adjacent' }, v, loc).includes(to) && e.dest !== 'here') { log(s, `${nm(v)} cannot take that step.`, p); continue; }
           v.c = to; v.r = 'surface';
           if (v.id === self) loc = { c: to, r: 'surface' }; // what follows on the line happens where it arrived
@@ -983,14 +988,17 @@ function canAct(s: GameState, u: Unit): Check {
 }
 export function attackTargets(s: GameState, u: Unit, at: Loc): { unit?: string; site?: boolean }[] {
   const out: { unit?: string; site?: boolean }[] = [];
+  if (has(s, u, "Can't attack")) return out;
+  const siteSafe = !!s.sites[at.c]?.inst && Object.values(s.units).some((x) => x.c === at.c && has(s, x, 'Protects this site from attacks'));
   for (const e of unitsAt(s, at)) {
     if (e.owner === u.owner) continue;
     if (hasStealth(s, e)) continue; // Codex "Stealth": attacks cannot target it
+    if (has(s, e, "Can't be attacked") || siteSafe) continue;
     if (has(s, e, 'Airborne') && !has(s, u, 'Airborne')) continue;
     out.push({ unit: e.id });
   }
   const site = s.sites[at.c];
-  if (at.r === 'surface' && site && site.owner === other(u.owner) && !has(s, u, "Can't attack sites")) out.push({ site: true });
+  if (at.r === 'surface' && site && site.owner === other(u.owner) && !has(s, u, "Can't attack sites") && !siteSafe && !(site.inst && cardOf(s, site.inst).effects.some((e) => e.on === 'static' && e.keyword === "Can't be attacked"))) out.push({ site: true });
   return out;
 }
 function defenders(s: GameState, attacker: Unit, at: Loc, target?: string): string[] {
@@ -1051,7 +1059,7 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
       if (wardHit.has(x.to.id)) { log(s, `${unitCard(s, x.from).name}'s strike on ${unitCard(s, x.to).name} is prevented.`, x.from.owner); continue; }
       if (warded(s, x.to) && x.dmg > 0) wardHit.add(x.to.id);
       log(s, `${unitCard(s, x.from).name} strikes ${unitCard(s, x.to).name} for ${x.dmg}.`, x.from.owner);
-      damageUnit(s, x.to, x.dmg, x.lethal && !x.to.avatar, { unit: x.from });
+      damageUnit(s, x.to, x.dmg, x.lethal && !x.to.avatar && !has(s, x.to, 'Immune to Lethal'), { unit: x.from });
       if ((s.phase as string) === 'over') return;
     }
   }

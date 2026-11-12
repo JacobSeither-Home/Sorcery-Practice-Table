@@ -1036,3 +1036,34 @@ describe('site rules, control, tokens to many places, each-turn triggers', () =>
     expect(s.players[1].life).toBe(18);
   });
 });
+
+describe('protections and restrictions', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 20; return s; };
+  it('"Can\'t be targeted or damaged by magic"', () => {
+    const s = board();
+    const mut = read('Minion', 'Test Mutation', "Can't be targeted or damaged by magic.", { attack: 2, defense: 2 });
+    const u = unit(s, 1, cell(2, 2), mut);
+    expect(reason(s, { t: 'cast', inst: give(s, 0, id('Firebolt')), target: u })).toMatch(/valid target/);
+  });
+  it('"Other minions can\'t untap"', () => {
+    let s = board();
+    const rhitta = read('Minion', 'Test Rhitta', "Other minions can't untap.", { attack: 2, defense: 2 });
+    unit(s, 1, cell(0, 0), rhitta);
+    const r = unit(s, 0, cell(2, 3), id('Ember Runner'), { tapped: true });
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' }); s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' });
+    expect(s.units[r].tapped).toBe(true);
+  });
+  it('"Can\'t be moved by force"', () => {
+    let s = board();
+    const dreig = read('Minion', 'Test Dreig', "Can't be moved by force.", { attack: 2, defense: 2 });
+    const pull = read('Magic', 'Test Pull 2', "Teleport target minion to the caster's location.", { cost: 1 });
+    const u = unit(s, 1, cell(0, 0), dreig);
+    s = apply(s, { t: 'cast', inst: give(s, 0, pull), target: u });
+    expect(s.units[u].c).toBe(cell(0, 0));
+  });
+});
