@@ -14,7 +14,7 @@ export const OP_LABEL: Record<Op, string> = {
   damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
-  scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
+  destroySite: 'Destroy a site', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
 };
 export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
@@ -55,6 +55,8 @@ export function describe(e: Effect): string {
     case 'buff': if (e.per) return `${who[0].toUpperCase() + who.slice(1)}: +${e.atk ?? 0} power for each ${({ sameNearby: 'other copy nearby', adjacentSites: 'adjacent site', nearbySites: `nearby ${e.per.el ? e.per.el + ' ' : ''}site`, wards: 'Ward in the realm', deadSub: `dead ${e.per.sub ?? 'minion'} of yours`, sameInCemetery: 'copy in your cemetery', voidsInRow: 'void in its row' } as Record<string, string>)[e.per.kind]}`;
       return `${who[0].toUpperCase() + who.slice(1)}: ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power${e.until === 'turn' ? ' this turn' : ''}`;
     case 'grant': if (e.keyword === 'Movement') return `${who[0].toUpperCase() + who.slice(1)} gets Movement +${e.n ?? 1}${e.until === 'turn' ? ' this turn' : ''}`;
+      if (e.until === 'hurt') return `${who[0].toUpperCase() + who.slice(1)} falls asleep: disabled until it takes damage`;
+      if (e.keyword && /^(Doesn|Summon to|Play to|Prevent first|Heals from|Loses Stealth|Can)/.test(e.keyword)) return `${who[0].toUpperCase() + who.slice(1)}: ${e.keyword.toLowerCase()}`;
       if (e.who === 'siteHere') return `This site ${e.keyword === 'Ward' ? 'gains a Ward' : 'is flooded (a water site)'}`;
       return `${who[0].toUpperCase() + who.slice(1)} gains ${e.keyword}${e.until === 'turn' ? ' this turn' : ''}`;
     case 'discard': return `${e.who === 'controller' ? 'You discard' : 'Your opponent discards'} ${n} at random`;
@@ -63,6 +65,7 @@ export function describe(e: Effect): string {
     case 'shoot': return e.pierce ? `Shoot a piercing projectile: ${n} damage to each unit it passes` : `Shoot ${e.shots && e.shots !== 1 ? (e.shots === -1 ? 'X projectiles' : `${e.shots} projectiles`) : 'a projectile'} for ${n} damage${e.shots && e.shots !== 1 ? ' each, in one direction' : ''}${e.splash ? ` (and ${e.splash} to each other unit where it hits)` : ''}`;
     case 'strike': return `Strike ${who}`;
     case 'prevent': return `${who[0].toUpperCase() + who.slice(1)} take${e.who === 'self' ? 's' : ''} ${e.less === undefined ? 'no' : `${e.less} less`} damage${e.fromMinPower !== undefined ? ` from units with ${e.fromMinPower} or more power` : ''}${e.fromElement ? ` from ${e.fromElement} spells` : e.fromMagic ? ' from magic' : ''}${e.fromSub ? ` from ${e.fromSub.join(', ')}` : ''}${e.fromSite ? ` from ${e.fromSite.join(', ')} sites` : ''}`;
+    case 'destroySite': return `Destroy a site you choose${RANGE[e.range ?? 'any']} (it leaves Rubble)`;
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
     case 'teleport': return `Teleport ${who} to ${e.dest === 'site' ? 'the surface of a site you choose' : 'a nearby location you choose'}`;

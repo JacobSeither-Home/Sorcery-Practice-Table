@@ -133,7 +133,9 @@ export function has(s: GameState, u: Unit, kw: string): boolean {
   if (unitCard(s, u).keywords.includes(kw) || u.mods?.some((m) => m.kw === kw)) return true;
   return staticCards(s).size > 0 && bonus(s, u).kws.includes(kw);
 }
-export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u, 'Stealth');
+export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u, 'Stealth') && !(staticCards(s).size > 0 && bonus(s, u).kws.includes('Loses Stealth'));
+/** A card in hand that may be put somewhere unusual ("May be summoned to any site", "You may play this site to any corner"). */
+const allows = (d: CardDef, what: string) => d.effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === what);
 export const summoningSick = (s: GameState, u: Unit) => !u.avatar && u.enteredTurn === s.turn && !has(s, u, 'Charge');
 export function unitsAt(s: GameState, l: Loc): Unit[] { return Object.values(s.units).filter((u) => u.c === l.c && u.r === l.r); }
 export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || staticCards(s).size ? bonus(s, u).atk : 0)); }
@@ -294,10 +296,13 @@ function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: Dm
   if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
   const n = afterPrevention(s, u, n0, from);
   if (n <= 0) { log(s, `${unitCard(s, u).name} takes no damage.`, null); return; }
+  if (!u.avatar && has(s, u, 'Prevent first damage each turn') && u.shieldTurn !== s.turn) { u.shieldTurn = s.turn; log(s, `${unitCard(s, u).name} prevents the first damage it takes this turn.`, null); return; }
+  if (u.mods?.some((m) => m.hurt)) { u.mods = u.mods.filter((m) => !m.hurt); log(s, `${unitCard(s, u).name} wakes up.`, null); }
   if (n < n0) log(s, `${unitCard(s, u).name} takes ${n} instead of ${n0}.`, null);
   if (u.avatar) { damageAvatar(s, u.owner, n); return; }
   u.damage += n;
   const dies = lethal || u.damage >= defenseOf(s, u);
+  if (!dies && has(s, u, 'Heals from damage that does not kill it')) { u.damage = 0; log(s, `${unitCard(s, u).name} heals at once.`, null); }
   react(s, 'damaged', u);
   if (dies && s.units[u.id]) killUnit(s, u, true);
 }
@@ -338,6 +343,7 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins: Loc[]): n
   const out: number[] = [];
   for (let c = 0; c < CELLS; c++) {
     if (e.siteKind && (!s.sites[c]?.inst || (e.siteKind === 'water') !== isWater(s, c))) continue;
+    if (e.op === 'destroySite' && !s.sites[c]?.inst) continue;
     if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c)) && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
   }
   const busy = (c: number) => Object.values(s.units).some((u) => u.c === c) ? 0 : 1;
@@ -612,6 +618,14 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
       case 'teleport': for (const v of victims) { if (c?.cell === undefined) break; v.c = c.cell; v.r = 'surface'; log(s, `${nm(v)} teleports (${d.name}).`, p); if (!s.sites[v.c] && !v.avatar && !has(s, v, 'Voidwalk')) removeUnit(s, v, 'banish', 'the void'); } break;
+      case 'destroySite': {
+        const st = c?.cell !== undefined ? s.sites[c.cell] : null;
+        if (!st?.inst) break;
+        if (st.ward) { st.ward = false; log(s, `The site's Ward breaks instead (${d.name}).`, p); break; }
+        s.players[Number(st.inst[0]) as PlayerId].cemetery.push(st.inst); log(s, `${d.name} destroys ${cardOf(s, st.inst).name}; it leaves Rubble.`, p);
+        s.sites[c!.cell!] = { inst: null, owner: null };
+        break;
+      }
       case 'mill': { const pl = s.players[p]; const deck = e.deck ?? 'spellbook'; const top = pl[deck].splice(0, n); pl.cemetery.push(...top); log(s, `${pname(p)} discards the top ${top.length} of the ${deck}: ${top.map((x) => cardOf(s, x).name).join(', ') || 'nothing'}.`, p); break; }
       case 'discard': for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) for (let k = 0; k < n; k++) {
         const h = s.players[q].hand; if (!h.length) break;
@@ -630,7 +644,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
         if (e.keyword === 'Ward') { for (const v of victims) { v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
         for (const v of victims) {
           if (e.keyword === 'Movement') { (v.mods ??= []).push({ atk: 0, def: 0, move: e.n ?? 1, ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name }); log(s, `${nm(v)} gets Movement +${e.n ?? 1} (${d.name}).`, p); continue; }
-          (v.mods ??= []).push({ atk: e.op === 'buff' ? e.atk ?? 0 : 0, def: e.op === 'buff' ? e.def ?? 0 : 0, ...(e.keyword ? { kw: e.keyword } : {}), ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name });
+          (v.mods ??= []).push({ atk: e.op === 'buff' ? e.atk ?? 0 : 0, def: e.op === 'buff' ? e.def ?? 0 : 0, ...(e.keyword ? { kw: e.keyword } : {}), ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : e.until === 'hurt' ? { hurt: true } : {}), from: d.name });
           if (e.keyword === 'Stealth') v.stealthLost = false;
           log(s, `${nm(v)} ${e.op === 'buff' ? `gets ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power` : `gains ${e.keyword}`}${e.until === 'turn' ? ' this turn' : e.until === 'next' ? ' until your next turn' : ''} (${d.name}).`, p);
           if (!v.avatar && v.damage >= defenseOf(s, v)) killUnit(s, v);
@@ -639,6 +653,14 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
       case 'manual': s.log.push({ turn: s.turn, p, text: `${d.name}: “${e.text ?? ''}” — not automated; resolve by hand.`, manual: true }); break;
     }
   }
+}
+/** Codex "Sacrifice": the card is destroyed and nothing prevents it. A sacrificed site leaves Rubble. */
+function sacrifice(s: GameState, src: Source) {
+  if ('unit' in src) { const u = s.units[src.unit]; if (u && !u.avatar) { log(s, `${unitCard(s, u).name} is sacrificed.`, u.owner); killUnit(s, u, true); } return; }
+  if ('perm' in src) { const i = s.perms.findIndex((m) => m.id === src.perm); if (i >= 0) { const [m] = s.perms.splice(i, 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); log(s, `${cardOf(s, m.inst).name} is sacrificed.`, m.owner); } return; }
+  const st = s.sites[src.site]; if (!st?.inst) return;
+  s.players[Number(st.inst[0]) as PlayerId].cemetery.push(st.inst); log(s, `${cardOf(s, st.inst).name} is sacrificed and leaves Rubble.`, st.owner);
+  s.sites[src.site] = { inst: null, owner: null };
 }
 function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; }
@@ -752,7 +774,7 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
     if (left > 0) { const rest = order.find((f) => !give.has(f.id)) ?? order[0]; if (rest) give.set(rest.id, (give.get(rest.id) ?? 0) + left); }
     for (const f of foes) if (give.get(f.id)) strikes.push({ from: a, to: f, dmg: give.get(f.id)!, lethal, first: lance });
   }
-  for (const id of enemyIds) mk(s.units[id], a);
+  for (const id of enemyIds) { const dfn = s.units[id]; if (dfn && has(s, dfn, "Doesn't strike back while defending")) { log(s, `${unitCard(s, dfn).name} does not strike back.`, dfn.owner); continue; } mk(dfn, a); }
   for (const pass of [true, false]) {
     const batch = strikes.filter((x) => x.first === pass && s.units[x.from.id]);
     const wardHit = new Set<string>(); // Codex: all simultaneous damage to a warded unit is prevented when the Ward breaks
@@ -831,7 +853,8 @@ export function check(s: GameState, a: Action): Check {
       const d = cardOf(s, a.inst);
       if (d.type !== 'Site') return no(`${d.name} is not a site.`);
       if (avatar.tapped) return no('Your Avatar is tapped. Playing a site taps your Avatar, so it is one site per turn.');
-      if (!siteCells(s, p).includes(a.c)) return no(sitesOf(s, p).length ? 'A site must go on a void or rubble square next to a site you control (not diagonally).' : "Your first site goes on your Avatar's square.");
+      const corner = allows(d, 'Play to any corner') && [0, 4, 15, 19].includes(a.c) && (!s.sites[a.c] || !s.sites[a.c]!.inst);
+      if (!corner && !siteCells(s, p).includes(a.c)) return no(sitesOf(s, p).length ? 'A site must go on a void or rubble square next to a site you control (not diagonally).' : "Your first site goes on your Avatar's square.");
       return { ok: true };
     }
     case 'cast': {
@@ -841,7 +864,7 @@ export function check(s: GameState, a: Action): Check {
       if (d.type === 'Avatar') return no('Avatars are not cast.');
       const aff = affordable(s, p, d); if (!aff.ok) return aff;
       if (d.type === 'Minion' || d.type === 'Artifact') {
-        if (a.c === undefined || s.sites[a.c]?.owner !== p) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control.`);
+        if (a.c === undefined || !(s.sites[a.c]?.owner === p || (d.type === 'Minion' && allows(d, 'Summon to any site') && s.sites[a.c]?.inst))) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control.`);
       } else if (d.type === 'Aura') {
         if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose a square for the aura.');
       }
@@ -993,6 +1016,7 @@ export function apply(state: GameState, a: Action): GameState {
       if (e.cost) pl.mana -= e.cost;
       log(s, `${pname(p)} uses ${d.name}${e.on === 'tap' ? ' (tap)' : ''}${e.cost ? `, paying ${e.cost} mana` : ''}.`);
       resolve(s, d, effectsOn(d, e.on, a.fx), p, src.loc, a.choices ?? [], a.src);
+      if (e.sacrifice) sacrifice(s, a.src);
       break;
     }
     case 'trigger': {
@@ -1128,6 +1152,7 @@ export function legalActions(s: GameState): Action[] {
       const d = cardOf(s, inst);
       if (d.type !== 'Site' || seen.has(d.id)) continue; seen.add(d.id);
       for (const c of cells) out.push({ t: 'playSite', inst, c });
+      if (allows(d, 'Play to any corner')) for (const c of [0, 4, 15, 19]) if (!cells.includes(c) && (!s.sites[c] || !s.sites[c]!.inst)) out.push({ t: 'playSite', inst, c });
     }
     if (pl.atlas.length) out.push({ t: 'drawSite' });
   }

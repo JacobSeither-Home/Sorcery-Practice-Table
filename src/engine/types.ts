@@ -41,6 +41,8 @@ export type Op =
   | 'sink'
   /** move a unit straight to a chosen location (Choice.cell) */
   | 'teleport'
+  /** destroy the site at a chosen square (it leaves Rubble) */
+  | 'destroySite'
   /** static damage prevention for the units it reaches ("takes no damage from …", "take 1 less damage") */
   | 'prevent'
   /** a sentence the engine cannot carry out: the cast pop-up offers the hand tools for it */
@@ -117,7 +119,9 @@ export interface Effect {
   /** grant: the keyword given */
   keyword?: string;
   /** buff/grant: how long it lasts (static abilities last while the card is in the realm) */
-  until?: 'turn' | 'next' | 'permanent';
+  until?: 'turn' | 'next' | 'permanent' | 'hurt';
+  /** activated abilities: the card itself is sacrificed as part of the cost */
+  sacrifice?: boolean;
   /** activated abilities: mana paid on use */
   cost?: number;
   /** activated without tapping: may be used more than once per turn */
@@ -172,12 +176,14 @@ export interface Unit {
   avatar: boolean;
   stealthLost: boolean;
   lance: boolean;
+  /** turn on which a "the first time … would take damage each turn, prevent it" shield was used */
+  shieldTurn?: number;
   /** Ward mark (Codex "Ward"): breaks instead of the unit being damaged, destroyed or targeted by the opponent */
   ward?: boolean;
   /** power/defense changes and granted keywords from abilities; `turn` = expires at the end of that turn */
   mods?: Mod[];
 }
-export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
+export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura'; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }

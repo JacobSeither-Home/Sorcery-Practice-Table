@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', destroySite: 'Sites & threshold', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -110,12 +110,12 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   const steps = t.match(/ up to (two|three) steps away$/i); if (steps) { t = t.slice(0, steps.index); range = steps[1].toLowerCase() as Effect['range']; }
   if ((m = t.match(/^(nearby|adjacent)\s+/i))) { range = m[1].toLowerCase() as Effect['range']; t = t.slice(m[0].length); }
   // trailing location
-  const tail = t.match(/\s+(here|there|nearby|adjacent|atop this site|at (?:this|its) location|at its site|(?:at|atop|occupying) (?:target|a) (?:(nearby|adjacent) )?(?:land |water )?(?:location|site)(?: (nearby|adjacent))?(?: up to (two|three) steps away)?|atop target (?:(nearby|adjacent) )?site)$/i);
+  const tail = t.match(/\s+(here|there|nearby|adjacent|(?:occupying|atop) nearby sites|atop this site|at (?:this|its) location|at its site|(?:at|atop|occupying) (?:target|a) (?:(nearby|adjacent) )?(?:land |water )?(?:location|site)(?: (nearby|adjacent))?(?: up to (two|three) steps away)?|atop target (?:(nearby|adjacent) )?site)$/i);
   if (tail) {
     t = t.slice(0, tail.index);
     const w = tail[1].toLowerCase();
     if (/target|^(at|atop|occupying) a /.test(w)) { atTarget = true; range = ((tail[2] || tail[3] || tail[4] || tail[5] || '').toLowerCase() as Effect['range']) || range || 'any'; }
-    else range = /here|there|this|its/.test(w) ? 'here' : (w as Effect['range']);
+    else range = /here|there|this|its/.test(w) ? 'here' : /nearby sites/.test(w) ? 'nearby' : (w as Effect['range']);
   }
   let side: 'enemy' | 'ally' | '' = '';
   if ((m = t.match(/^(enemy|allied|opposing|your)\s+/i))) { side = /enemy|opposing/i.test(m[1]) ? 'enemy' : 'ally'; t = t.slice(m[0].length); }
@@ -260,6 +260,19 @@ export const RULES: Rule[] = [
     build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Movement', n: +m[2], until: until(m[3], on) }] : null; } },
   { id: 'site-flooded', label: 'This site is flooded', re: /^this site is flooded\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Flood', until: 'permanent' }] : null) },
   { id: 'reminder', label: 'Reminder sentence (nothing to do)', re: /^(?:it|this) is a water site\.$|^they'?re water sites\.$/i, build: () => [] },
+  { id: 'passive-flags', label: 'Passive rules on itself', re: /^(?:this )?(doesn'?t strike back while defending|may be summoned to any site|you may play this site to any corner|immediately heals from damage that doesn'?t kill it|the first time this would take damage each turn, prevent that damage)\.$/i,
+    build: (m, on) => {
+      if (on !== 'static') return null;
+      const t = m[1].toLowerCase();
+      const kw = /strike back/.test(t) ? "Doesn't strike back while defending" : /summoned to any site/.test(t) ? 'Summon to any site' : /any corner/.test(t) ? 'Play to any corner' : /first time/.test(t) ? 'Prevent first damage each turn' : 'Heals from damage that does not kill it';
+      return [{ op: 'grant', who: 'self', keyword: kw, until: 'permanent' }];
+    } },
+  { id: 'first-damage', label: 'Prevent the first damage each turn', re: /^the first time .+? would take damage each turn, prevent that damage\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Prevent first damage each turn', until: 'permanent' }] : null) },
+  { id: 'destroy-site', label: 'Destroy a nearby site', re: /^destroy (?:a|target) (nearby |adjacent )?site\.$/i,
+    build: (m) => [{ op: 'destroySite', who: 'atTarget', range: (m[1]?.trim() || 'any') as Effect['range'], siteKind: undefined }] },
+  { id: 'lose-stealth', label: '… lose Stealth', re: /^(.+?) (?:permanently )?loses? stealth\.$/i,
+    build: (m, on) => { const v = nounPhrase(m[1]); return v && on === 'static' && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: 'Loses Stealth', until: 'permanent' }] : null; } },
   // deck-building rules apply when the deck is built (Decks screen), not during play
   { id: 'deckbuilding', label: 'Deck-building rule', re: /^your (?:spellbook|atlas|deck) (?:may include any number of|can'?t contain|must contain) .+\.$/i, build: () => [] },
   { id: 'prevent', label: 'Takes no / less damage (from …)', re: /^(.+?) takes? (no|(\d+) less) damage(?: from (.+?))?\.$/i,
@@ -347,17 +360,20 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
   const out: Reading = { effects: [], lines: [], manual: [] };
   const lines = strip(rules).split('\n').map((l) => l.trim()).filter(Boolean);
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  lines.forEach((raw, lineNo) => {
+  lines.forEach((raw0, lineNo) => {
+    let raw = raw0;
     // the card's own name means "this" — unless the name is a word used as a verb ("Teleport an ally …")
-    const line = name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw;
+    raw = raw.replace(/^(?:\([AEFW]\))+\s*[—–-]\s*/, '');
+    const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
     if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null;
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false;
     if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
     else if ((m = line.match(/^At the (?:start|beginning) of your turn,\s*(.+)$/i))) { on = 'startTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^At the end of your turn,\s*(.+)$/i))) { on = 'endTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^(Once (?:on your|per|each) turn,\s*)?([①-⑳]|\(\d+\))\s*→\s*(.+)$/i))) { on = 'activated'; cost = manaOf(m[2]); repeat = !m[1]; body = m[3]; }
     else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you|this)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
+    else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) attacks,\s*(.+)$/i))) { on = 'attacks'; ev = { self: true }; body = cap(m[1]); }
@@ -382,6 +398,10 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         rl.effects.push({ on, op: 'shoot', who: 'controller', n: +pierce[1], pierce: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-pierce', auto: true, ...(cost ? { cost } : {}) });
         k++; continue;
       }
+      if (/^Fall asleep\.$/i.test(sentence) && /^this is disabled until hurt\.$/i.test(ss[k + 1] ?? '')) {
+        rl.effects.push({ on, op: 'grant', who: 'self', keyword: 'Disabled', until: 'hurt', line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'sleep', auto: true });
+        k++; continue;
+      }
       const look = sentence.match(/^Look at your (?:next|top(?:most)?) (spell|site)\.$/i);
       if (look && /^You may put it on the bottom of your (spellbook|atlas)\.$/i.test(ss[k + 1] ?? '')) {
         rl.effects.push({ on, op: 'scry', n: 1, who: 'controller', deck: look[1].toLowerCase() === 'site' ? 'atlas' : 'spellbook', line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'scry', auto: true });
@@ -394,7 +414,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       let hit = matchSentence(sentence, on, type);
       // "it" must have something to point back to on this line
       if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
-      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}) })));
+      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
     out.lines.push(rl); out.effects.push(...rl.effects); out.manual.push(...rl.manual);
