@@ -12,7 +12,7 @@
 import type { CardDef, CardType, Effect, Element, EventFilter, Trigger, Who } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
-const KEYWORD_LINE = new RegExp(`^((?:air |earth |fire |water )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
+const KEYWORD_LINE = new RegExp(`^((?:air |earth |fire |water |non-(?:air|earth|fire|water) )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
 const GRANTABLE = KEYWORDS.filter((k) => !['Deathrite', 'Genesis', 'Flood', 'Movement', 'Ranged'].includes(k));
 
 export type Category =
@@ -269,6 +269,8 @@ export const RULES: Rule[] = [
       const kw = /strike back/.test(t) ? "Doesn't strike back while defending" : /summoned to any site/.test(t) ? 'Summon to any site' : /any corner/.test(t) ? 'Play to any corner' : /first time/.test(t) ? 'Prevent first damage each turn' : 'Heals from damage that does not kill it';
       return [{ op: 'grant', who: 'self', keyword: kw, until: 'permanent' }];
     } },
+  { id: 'lance-token', label: 'Acquire a Lance token', re: /^(?:this )?acquires? a lance(?: token)?\.$/i, build: () => [{ op: 'grant', who: 'self', keyword: 'Lance', until: 'permanent' }] },
+  { id: 'first-strike-attacking', label: 'Strikes first while attacking', re: /^(?:this )?strikes first while attacking\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Strikes first while attacking', until: 'permanent' }] : null) },
   { id: 'first-damage', label: 'Prevent the first damage each turn', re: /^the first time .+? would take damage each turn, prevent that damage\.$/i,
     build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Prevent first damage each turn', until: 'permanent' }] : null) },
   { id: 'destroy-site', label: 'Destroy a nearby site', re: /^destroy (?:a|target) (nearby |adjacent )?site\.$/i,
@@ -408,6 +410,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^When(?:ever)? this is struck,\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) attacks,\s*(.+)$/i))) { on = 'attacks'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (an?|another) (.+?) dies( nearby| here)?,\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], m[3]))) { on = 'dies'; body = cap(m[4]); }
     else if ((m = line.match(/^Whenever (an?|another) (.+?) enters (?:here|this site),\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], ' here'))) { on = 'enters'; body = cap(m[3]); }
@@ -453,6 +456,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         k++; continue;
       }
       let hit = matchSentence(sentence, on, type);
+      // in a reaction about the card itself ("When this is struck, destroy it"), "it" is the card
+      if (hit && ev?.self) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined } : e)) };
       // "it" must have something to point back to on this line
       if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
       if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}) })));

@@ -697,6 +697,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'buff': case 'grant':
         if (e.who === 'siteHere' && e.keyword === 'Ward') { const st = loc ? s.sites[loc.c] : null; if (st?.inst) { st.ward = true; log(s, `${d.name} wards the site.`, p); } break; }
         if (e.keyword === 'Ward') { for (const v of victims) { v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
+        if (e.keyword === 'Lance' && e.on !== 'static') { for (const v of victims) { v.lance = true; log(s, `${nm(v)} takes up a Lance (${d.name}).`, p); } break; }
         for (const v of victims) {
           if (e.keyword === 'Movement') { (v.mods ??= []).push({ atk: 0, def: 0, move: e.n ?? 1, ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name }); log(s, `${nm(v)} gets Movement +${e.n ?? 1} (${d.name}).`, p); continue; }
           (v.mods ??= []).push({ atk: e.op === 'buff' ? e.atk ?? 0 : 0, def: e.op === 'buff' ? e.def ?? 0 : 0, ...(e.keyword ? { kw: e.keyword } : {}), ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : e.until === 'hurt' ? { hurt: true } : {}), from: d.name });
@@ -818,9 +819,9 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
   // The attacker divides its damage among the enemies in the fight. The engine picks the split
   // that kills the most: weakest minions first, anything left over on the next enemy in line.
   if (!isDisabled(s, a)) {
-    const lance = a.lance; a.lance = false;
+    const lance = a.lance || has(s, a, 'Strikes first while attacking'); const lanceDmg = a.lance; a.lance = false;
     const lethal = has(s, a, 'Lethal');
-    let left = power(s, a) + (lance ? 1 : 0);
+    let left = power(s, a) + (lanceDmg ? 1 : 0);
     const foes = enemyIds.map((id) => s.units[id]).filter(Boolean);
     const need = (u: Unit) => (u.avatar ? Infinity : lethal ? 1 : Math.max(1, defenseOf(s, u) - u.damage));
     const order = [...foes].sort((x, y) => need(x) - need(y));
