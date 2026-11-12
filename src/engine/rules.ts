@@ -1401,7 +1401,12 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
     if (e.op === 'shoot') { const dirs = origins.length ? shotDirs(s, p, origins[0]) : []; const dir = dirs.find(([dx, dy]) => projectileHit(s, p, origins[0], dx, dy, 9, self)?.owner !== p); if (!dir) return []; base[i] = { ...(base[i] ?? {}), dir }; }
   }
   if (spread < 0) return [base];
-  return targetsFor(s, p, d, spread, origins, self).map((target) => { const c = base.slice(); c[spread] = { ...(c[spread] ?? {}), target }; return c; });
+  return targetsFor(s, p, d, spread, origins, self).map((target) => {
+    const c = base.slice(); c[spread] = { ...(c[spread] ?? {}), target };
+    const e = d.effects[spread];
+    if (e.op === 'teleport' && chosenDest(e)) { const cl = teleportCells(s, e, s.units[target], origins[0]); if (!cl.length) return null; c[spread] = { ...c[spread]!, cell: cl[0] }; } // the destination depends on which unit moves
+    return c;
+  }).filter((c): c is Choice[] => !!c);
 }
 
 export function playableSiteCells(s: GameState, p: PlayerId): number[] { return siteCells(s, p); }
