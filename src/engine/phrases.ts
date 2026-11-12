@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -246,6 +246,21 @@ export const RULES: Rule[] = [
     build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Movement', n: +m[2], until: until(m[3], on) }] : null; } },
   { id: 'site-flooded', label: 'This site is flooded', re: /^this site is flooded\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Flood', until: 'permanent' }] : null) },
   { id: 'reminder', label: 'Reminder sentence (nothing to do)', re: /^(?:it|this) is a water site\.$|^they'?re water sites\.$/i, build: () => [] },
+  { id: 'prevent', label: 'Takes no / less damage (from …)', re: /^(.+?) takes? (no|(\d+) less) damage(?: from (.+?))?\.$/i,
+    build: (m, on) => {
+      if (on !== 'static') return null;
+      const v = nounPhrase(m[1]); if (!v || v.who === 'target' || v.who === 'atTarget') return null;
+      const f: Partial<Effect> = m[3] ? { less: +m[3] } : {};
+      if (m[4]) {
+        const src = m[4].toLowerCase(); let mm: RegExpMatchArray | null;
+        if ((mm = src.match(/^units with (\d+) or more power$/))) f.fromMinPower = +mm[1];
+        else if ((mm = src.match(/^(fire|water|air|earth) spells$/))) { f.fromElement = mm[1]; f.fromMagic = true; }
+        else if (/^magic$|^spells$/.test(src)) f.fromMagic = true;
+        else if ((mm = src.match(/^(deserts|rivers|towers|villages)$/))) f.fromSite = [mm[1].replace(/s$/, '').replace(/^./, (c) => c.toUpperCase())];
+        else { const subs = src.split(/, and |, | and | or /).map((w) => subOf(w.trim())); if (!subs.length || subs.some((x) => !x)) return null; f.fromSub = subs as string[]; }
+      }
+      return [{ op: 'prevent', ...v, ...f }];
+    } },
   // restrictions on itself
   { id: 'cant', label: "Can't defend / intercept", re: /^(?:this )?can'?t (defend or intercept|defend|intercept|move to defend)\.$/i,
     build: (m, on) => (on === 'static' ? (/defend or intercept/i.test(m[1]) ? ["Can't defend", "Can't intercept"] : [m[1].toLowerCase() === 'defend' ? "Can't defend" : m[1].toLowerCase() === 'intercept' ? "Can't intercept" : "Can't move to defend"]).map((keyword) => ({ op: 'grant' as const, who: 'self' as const, keyword, until: 'permanent' as const })) : null) },
@@ -254,8 +269,8 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'summon', ...amount(m[1]), who: 'controller', token: m[2].replace(/\b\w/g, (c) => c.toUpperCase()) }] },
 ];
 
-/** Which ops make sense for each trigger. A static line can only change stats, keywords and what a card provides. */
-const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide'] };
+/** Which ops make sense for each trigger. A static line can only change stats, keywords, prevention and what a card provides. */
+const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide', 'prevent'] };
 
 export interface ReadLine { text: string; on: Trigger | 'keywords'; effects: Effect[]; manual: string[] }
 export interface Reading { effects: Effect[]; lines: ReadLine[]; manual: string[] }
@@ -274,7 +289,7 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   const pay = sentence.match(new RegExp(`^(?:you may )?pay ${MANA} to (.+)$`, 'i'));
   if (pay) { const r = matchSentence(cap(pay[2]), on, type, false); if (r) return { got: r.got.map((e, i) => ({ ...e, ...(i === 0 ? { pay: manaOf(pay[1]) } : {}), ...(/^you may/i.test(sentence) ? { optional: true } : {}) })), rule: 'pay+' + r.rule }; }
   // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
-  if (/^(has|have|gains) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
+  if (/^(has|have|gains|takes) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
   // ", if it's a minion" after something given to a bearer changes nothing here
   if (/, if it'?s a minion\.$/i.test(sentence)) return matchSentence(sentence.replace(/, if it'?s a minion\.$/i, '.'), on, type, top);

@@ -64,7 +64,7 @@ export const manaIncome = (s: GameState, p: PlayerId) => sitesOf(s, p).length + 
 // static abilities of cards in the realm ("Other allies here have +1 power", "Bearer has Airborne").
 const staticCache = new WeakMap<object, Set<string>>();
 /** The index of cards with static abilities is kept per card table; call this after changing a table in place. */
-export function forgetStatics(cards: Record<string, CardDef>) { staticCache.delete(cards); provideCache.delete(cards); }
+export function forgetStatics(cards: Record<string, CardDef>) { staticCache.delete(cards); provideCache.delete(cards); preventCache.delete(cards); }
 function staticCards(s: GameState): Set<string> {
   let set = staticCache.get(s.cards);
   if (!set) { set = new Set(Object.values(s.cards).filter((d) => d.effects.some((e) => e.on === 'static' && (e.op === 'buff' || e.op === 'grant'))).map((d) => d.id)); staticCache.set(s.cards, set); }
@@ -251,9 +251,37 @@ function killUnit(s: GameState, u: Unit, force = false) {
   react(s, 'dies', u);
   fire(s, u.inst, 'deathrite', u.owner, { c: u.c, r: u.r });
 }
-function damageUnit(s: GameState, u: Unit, n: number, lethal = false) {
-  if (n <= 0 || !s.units[u.id]) return;
-  if (warded(s, u)) { breakWard(s, u, `prevents ${n} damage`); return; }
+/** Where damage comes from, for prevention effects ("takes no damage from units with 4 or more power"). */
+interface DmgFrom { unit?: Unit; card?: CardDef }
+const preventCache = new WeakMap<object, Set<string>>();
+/** Damage after static prevention effects that reach unit u. */
+function afterPrevention(s: GameState, u: Unit, n: number, from?: DmgFrom): number {
+  let set = preventCache.get(s.cards);
+  if (!set) { set = new Set(Object.values(s.cards).filter((d) => d.effects.some((e) => e.op === 'prevent')).map((d) => d.id)); preventCache.set(s.cards, set); }
+  if (!set.size) return n;
+  const srcCard = from?.unit ? unitCard(s, from.unit) : from?.card;
+  const applies = (e: Effect) => {
+    if (e.fromMinPower !== undefined && !(from?.unit && power(s, from.unit) >= e.fromMinPower)) return false;
+    if (e.fromSub?.length && !(srcCard && e.fromSub.some((x) => srcCard.subtypes.some((y) => y.toLowerCase() === x.toLowerCase())))) return false;
+    if (e.fromMagic && !(from?.card && !from.unit && from.card.type === 'Magic')) return false;
+    if (e.fromElement && !(srcCard && srcCard.thresholds[e.fromElement as keyof Thresholds] > 0)) return false;
+    if (e.fromSite?.length && !(from?.card?.type === 'Site' && e.fromSite.some((x) => from.card!.subtypes.some((y) => y.toLowerCase() === x.toLowerCase())))) return false;
+    return true;
+  };
+  const visit = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
+    for (const e of d.effects) if (e.op === 'prevent' && e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && applies(e)) n = e.less === undefined ? 0 : Math.max(0, n - e.less);
+  };
+  for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !isDisabled(s, v)) visit(d, v.owner, v, v.id); }
+  for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) visit(d, m.owner, { c: m.c, r: 'surface' }, undefined, m.carrier); }
+  return n;
+}
+export function forgetPrevention(cards: Record<string, CardDef>) { preventCache.delete(cards); }
+function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: DmgFrom) {
+  if (n0 <= 0 || !s.units[u.id]) return;
+  if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
+  const n = afterPrevention(s, u, n0, from);
+  if (n <= 0) { log(s, `${unitCard(s, u).name} takes no damage.`, null); return; }
+  if (n < n0) log(s, `${unitCard(s, u).name} takes ${n} instead of ${n0}.`, null);
   if (u.avatar) { damageAvatar(s, u.owner, n); return; }
   u.damage += n;
   const dies = lethal || u.damage >= defenseOf(s, u);
@@ -496,10 +524,10 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
     switch (e.op) {
       case 'damage':
         if (e.who === 'siteHere') { const st = loc ? s.sites[loc.c] : null; if (st?.owner != null) { if (st.ward) { st.ward = false; log(s, `The site's Ward breaks and prevents ${d.name}'s damage.`, p); } else { log(s, `${d.name} deals ${n} damage to the site.`, p); loseLife(s, st.owner, n); } } break; }
-        for (const v of victims) { if (!s.units[v.id] && !v.avatar) continue; log(s, `${d.name} deals ${n} damage to ${nm(v)}.`, p); damageUnit(s, v, n); } break;
+        for (const v of victims) { if (!s.units[v.id] && !v.avatar) continue; log(s, `${d.name} deals ${n} damage to ${nm(v)}.`, p); damageUnit(s, v, n, false, { card: d, ...(self && s.units[self] ? { unit: s.units[self] } : {}) }); } break;
       case 'strike': {
         const me = self ? s.units[self] : bearer ? s.units[bearer] : s.units[s.players[p].avatar]; if (!me) break; // magic: the caster strikes
-        for (const v of victims) { if (!s.units[v.id] && !v.avatar) continue; log(s, `${nm(me)} strikes ${nm(v)} for ${power(s, me)}.`, p); me.stealthLost = true; damageUnit(s, v, power(s, me), has(s, me, 'Lethal') && !v.avatar); }
+        for (const v of victims) { if (!s.units[v.id] && !v.avatar) continue; log(s, `${nm(me)} strikes ${nm(v)} for ${power(s, me)}.`, p); me.stealthLost = true; damageUnit(s, v, power(s, me), has(s, me, 'Lethal') && !v.avatar, { unit: me }); }
         break;
       }
       case 'shoot': {
@@ -508,7 +536,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
           const [x0, y0] = xy(loc.c); const hits: Unit[] = [];
           for (let k = 0; k < 9; k++) { const cc = cell(x0 + c.dir[0] * k, y0 + c.dir[1] * k); if (cc < 0) break; hits.push(...unitsAt(s, { c: cc, r: loc.r }).filter((u) => u.id !== self && !(k === 0 && u.owner === p) && !hasStealth(s, u))); }
           if (!hits.length) log(s, `${d.name}'s projectile hits nothing.`, p);
-          for (const h of hits) { log(s, `${d.name}'s projectile hits ${nm(h)} for ${n}.`, p); damageUnit(s, h, n); }
+          for (const h of hits) { log(s, `${d.name}'s projectile hits ${nm(h)} for ${n}.`, p); damageUnit(s, h, n, false, { card: d }); }
           break;
         }
         const shots = e.shots === -1 ? Math.max(1, c?.n ?? 1) : e.shots ?? 1;
@@ -516,8 +544,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
           const hit = projectileHit(s, p, loc, c.dir[0], c.dir[1], 9, self);
           if (!hit) { log(s, `${d.name}'s projectile hits nothing.`, p); break; }
           const at: Loc = { c: hit.c, r: hit.r };
-          log(s, `${d.name}'s projectile hits ${nm(hit)} for ${n}.`, p); damageUnit(s, hit, n);
-          if (e.splash) for (const o of unitsAt(s, at)) if (o.id !== hit.id) { log(s, `${d.name} deals ${e.splash} damage to ${nm(o)}.`, p); damageUnit(s, o, e.splash); }
+          log(s, `${d.name}'s projectile hits ${nm(hit)} for ${n}.`, p); damageUnit(s, hit, n, false, { card: d });
+          if (e.splash) for (const o of unitsAt(s, at)) if (o.id !== hit.id) { log(s, `${d.name} deals ${e.splash} damage to ${nm(o)}.`, p); damageUnit(s, o, e.splash, false, { card: d }); }
         }
         break;
       }
@@ -720,7 +748,7 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
       if (wardHit.has(x.to.id)) { log(s, `${unitCard(s, x.from).name}'s strike on ${unitCard(s, x.to).name} is prevented.`, x.from.owner); continue; }
       if (warded(s, x.to) && x.dmg > 0) wardHit.add(x.to.id);
       log(s, `${unitCard(s, x.from).name} strikes ${unitCard(s, x.to).name} for ${x.dmg}.`, x.from.owner);
-      damageUnit(s, x.to, x.dmg, x.lethal && !x.to.avatar);
+      damageUnit(s, x.to, x.dmg, x.lethal && !x.to.avatar, { unit: x.from });
       if ((s.phase as string) === 'over') return;
     }
   }
@@ -986,7 +1014,7 @@ export function apply(state: GameState, a: Action): GameState {
       const u = s.units[a.unit]; const t = shotTarget(s, u, a.dx, a.dy)!;
       u.tapped = true; u.stealthLost = true;
       log(s, `${unitCard(s, u).name} shoots ${unitCard(s, t).name} for ${power(s, u)}.`);
-      damageUnit(s, t, power(s, u), has(s, u, 'Lethal') && !t.avatar);
+      damageUnit(s, t, power(s, u), has(s, u, 'Lethal') && !t.avatar, { unit: u });
       break;
     }
     case 'endTurn': {

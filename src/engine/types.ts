@@ -41,6 +41,8 @@ export type Op =
   | 'sink'
   /** move a unit straight to a chosen location (Choice.cell) */
   | 'teleport'
+  /** static damage prevention for the units it reaches ("takes no damage from …", "take 1 less damage") */
+  | 'prevent'
   /** a sentence the engine cannot carry out: the cast pop-up offers the hand tools for it */
   | 'manual';
 export type Who =
@@ -92,6 +94,8 @@ export interface Effect {
   shots?: number; pierce?: boolean;
   /** atTarget: only land or water sites ("target land site") */
   siteKind?: 'land' | 'water';
+  /** prevent: damage removed (undefined = all of it), and which sources it applies to */
+  less?: number; fromMinPower?: number; fromSub?: string[]; fromMagic?: boolean; fromElement?: string; fromSite?: string[];
   /** pay this much mana first; the effect does not happen if it cannot be paid */
   pay?: number;
   /** draw: from the bottom of the deck */

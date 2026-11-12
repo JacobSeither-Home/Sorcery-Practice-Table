@@ -665,3 +665,20 @@ describe('more card text (wording from the live card list)', () => {
     expect(s.pending).toBeNull();                                           // nobody could defend
   });
 });
+
+describe('damage prevention read from text', () => {
+  it('"Takes no damage from units with 4 or more power" and "Nearby allies take 1 less damage"', () => {
+    const mk = (name: string, rules: string, atk: number) => { const c = makeCard({ name, type: 'Minion', rules, attack: atk, defense: atk }); c.effects = normalizeApiCards([{ id: c.id, name, engine: { type: 'Minion', rules } }]).cards[0].effects; cards[c.id] = c; forgetStatics(cards); return c.id; };
+    const pix = mk('Test Pixies', 'Takes no damage from units with 4 or more power.', 1);
+    const maid = mk('Test Maidens', 'Nearby allies take 1 less damage.', 2);
+    let s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.units[s.players[1].avatar].tapped = true;
+    const p1 = unit(s, 1, cell(2, 1), pix, { tapped: true });
+    const giant = unit(s, 0, cell(2, 2), id('Hill Giant'));
+    s = apply(s, { t: 'move', unit: giant, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: p1 } });
+    expect(s.units[p1]).toBeDefined();                                       // 7 power: no damage
+    let t = start(0); for (let c = 0; c < 20; c++) site(t, c < 10 ? 1 : 0, c); t.players[0].mana = 9;
+    const brute = unit(t, 1, cell(2, 2), id('Kiln Brute')); unit(t, 1, cell(3, 2), maid);
+    t = apply(t, { t: 'cast', inst: give(t, 0, id('Firebolt')), target: brute });
+    expect(t.units[brute].damage).toBe(2);                                   // 3 - 1
+  });
+});
