@@ -13,6 +13,7 @@ import { type Game, useStore } from '../store';
 import { CardFace, mainElement } from './CardFace';
 import { TRIGGER_SHORT, describe } from './abilityText';
 import { usePace } from './pace';
+import { HowItWorks } from './Explain';
 
 export type CastReq =
   | { k: 'cast'; inst: string; c?: number; bearer?: string }
@@ -108,6 +109,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
           {others.length > 0 && <div className="spell-other"><b>Its other abilities</b>{others.map((e, i) => <p key={i}><span className="trig">{TRIGGER_SHORT[e.on]}</span> {describe(e)}{e.op === 'manual' ? <em> (by hand)</em> : ''}</p>)}</div>}
           {manualLines.length > 0 && req.k === 'hand' && <HandTools g={g} lines={manualLines} p={pl.p} />}
           {why && phase === 'choose' && <p className="spell-why" role="alert">{why}</p>}
+          <HowItWorks card={d} />
 
           <div className="spell-actions">
             {req.k === 'hand' ? <button className="primary cast-btn" onClick={() => close()}>Done</button> : mine ? <>

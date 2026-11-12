@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
-import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, legalActions, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
+import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, isWater, legalActions, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
 import { chooseAction, determinize } from '../src/ai/ai';
 
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
@@ -537,5 +537,48 @@ describe('card abilities read from text', () => {
     s = apply(s, { t: 'cast', inst: give(s, 0, odd) });
     expect(s.players[0].hand.length).toBe(before + 1);                     // given card cast (-1), drew one (+1)
     expect(s.log.some((l) => l.manual && /Swap two sites/.test(l.text))).toBe(true);
+  });
+});
+
+describe('rules checked against the Codex', () => {
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); return s; };
+  it('Ward breaks instead of damage, destruction, or being targeted by the opponent', () => {
+    let s = board(); s.players[0].mana = 9;
+    const w = T('Test Warded', 'Minion', { attack: 2, defense: 2, keywords: ['Ward'] });
+    const foe = unit(s, 1, cell(2, 2), w, { ward: true });
+    const bolt = give(s, 0, id('Firebolt'));
+    s = apply(s, { t: 'cast', inst: bolt, target: foe });
+    expect(s.units[foe].damage).toBe(0); expect(s.units[foe].ward).toBe(false);
+    s = apply(s, { t: 'cast', inst: give(s, 0, id('Firebolt')), target: foe });
+    expect(s.units[foe]).toBeUndefined();                                   // no Ward left: 3 damage kills it
+  });
+  it('a summoned minion with the Ward keyword enters with a Ward mark', () => {
+    let s = board(); s.players[0].mana = 9;
+    const w = T('Test Warded 2', 'Minion', { attack: 1, defense: 1, keywords: ['Ward'] });
+    s = apply(s, { t: 'cast', inst: give(s, 0, w), c: cell(2, 3) });
+    expect(Object.values(s.units).find((u) => u.inst.startsWith('0x'))?.ward).toBe(true);
+  });
+  it('healing stops at the Avatar\'s maximum life', () => {
+    let s = board(); s.players[0].mana = 9; s.players[0].life = 19; site(s, 0, cell(0, 3), 'Stone Terrace');
+    s = apply(s, { t: 'cast', inst: give(s, 0, id('Mend')) });
+    expect(s.players[0].life).toBe(20);
+  });
+  it('a projectile stops at the first unit in its path, ally or enemy, and can hit an enemy at the shooter\'s location', () => {
+    let s = board();
+    const archer = unit(s, 0, cell(2, 3), id('Ash Archer'));
+    const ally = unit(s, 0, cell(2, 2), id('Ember Runner'));
+    unit(s, 1, cell(2, 1), id('Wind Sprite'));
+    s = apply(s, { t: 'shoot', unit: archer, dx: 0, dy: -1 });
+    expect(s.units[ally]).toBeUndefined();                                  // 2 power kills the 2/2 ally in the way
+    let t = board();
+    const a2 = unit(t, 0, cell(2, 3), id('Ash Archer')); const e2 = unit(t, 1, cell(2, 3), id('Ember Runner'));
+    t = apply(t, { t: 'shoot', unit: a2, dx: 1, dy: 0 });
+    expect(t.units[e2]).toBeUndefined();
+  });
+  it('a flooded site counts as a water site', () => {
+    const s = board();
+    const flooded = T('Test Flooded', 'Site', { keywords: ['Flood'], thresholds: { air: 0, earth: 1, fire: 0, water: 0 } });
+    s.inst['0fl'] = flooded; s.sites[cell(0, 3)] = { inst: '0fl', owner: 0 };
+    expect(isWater(s, cell(0, 3))).toBe(true);
   });
 });

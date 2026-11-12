@@ -518,3 +518,13 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .unit .mods { position: absolute; top: -6px; left: -6px; font-size: 11px; color: #fbe3a4; text-shadow: 0 0 6px var(--brass); pointer-events: auto; }
 .table { overflow-x: clip; }
 .folderrow { margin-top: 10px; }
+.howto { margin-top: 8px; border-top: 1px solid var(--line-soft); padding-top: 6px; text-align: left; }
+.howto-toggle { padding: 4px 0; color: var(--brass); }
+.howto-lines { list-style: none; padding: 0; margin: 4px 0 8px; display: grid; gap: 8px; font-size: 13px; }
+.howto-lines .when { color: var(--muted); } .howto-lines p { margin: 3px 0 0 4px; font-family: var(--serif); }
+.howto-lines p.by-hand { color: #f0d9a0; } .howto-lines p.auto { color: var(--text); }
+.howto-terms { display: grid; gap: 5px; margin: 0 0 6px; font-size: 12.5px; } .howto-terms div { display: grid; grid-template-columns: 120px 1fr; gap: 8px; }
+.howto-terms dt { font-weight: 600; } .howto-terms dd { margin: 0; color: var(--muted); }
+.howto .trig { color: var(--brass); }
+@media (max-width: 640px) { .howto-terms div { grid-template-columns: 1fr; gap: 0; } }
+.unit .ward { position: absolute; bottom: -5px; left: -5px; font-size: 13px; color: #cfe6ff; text-shadow: 0 0 6px #7fb8ff, 0 0 2px #000; }

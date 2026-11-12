@@ -26,7 +26,9 @@ export function nearby(c: number): number[] {
 }
 export function isWater(s: GameState, c: number): boolean {
   const site = s.sites[c];
-  return !!site && !!site.inst && cardOf(s, site.inst).thresholds.water > 0;
+  if (!site || !site.inst) return false;
+  const d = cardOf(s, site.inst);
+  return d.thresholds.water > 0 || d.keywords.includes('Flood'); // Codex "Flooded": a flooded site is a water site
 }
 export const isLand = (s: GameState, c: number) => !!s.sites[c] && !isWater(s, c);
 export function sitesOf(s: GameState, p: PlayerId): number[] {
@@ -149,7 +151,7 @@ export function createGame(cards: Record<string, CardDef>, decks: [DeckList, Dec
     const mk = (ids: string[], tag: string) => ids.map((id, i) => { const k = `${p}${tag}${i}`; s.inst[k] = id; return k; });
     const av = `${p}av`; s.inst[av] = d.avatar;
     const unitId = `u${s.nextId++}`;
-    s.units[unitId] = { id: unitId, inst: av, owner: p, c: AVATAR_START[p], r: 'surface', tapped: false, damage: 0, enteredTurn: 0, avatar: true, stealthLost: false, lance: false };
+    s.units[unitId] = { id: unitId, inst: av, owner: p, c: AVATAR_START[p], r: 'surface', tapped: false, damage: 0, enteredTurn: 0, avatar: true, stealthLost: false, lance: false, ...(cards[d.avatar]?.keywords.includes('Ward') ? { ward: true } : {}) };
     const pl: PlayerState = {
       life: cards[d.avatar]?.life || 20, deathsDoor: false, ddTurn: -1, mana: 0,
       spellbook: shuffle(s, mk(d.spellbook, 's')), atlas: shuffle(s, mk(d.atlas, 'a')), hand: [], cemetery: [], avatar: unitId, mulliganDone: false,
@@ -205,13 +207,20 @@ function loseLife(s: GameState, p: PlayerId, n: number) {
   log(s, `${pname(p)} loses ${n} life (life ${pl.life}).`, null);
   if (pl.life === 0) { pl.deathsDoor = true; pl.ddTurn = s.turn; log(s, `${pname(p)} is at death's door.`, null); }
 }
+/** Codex "Healing": an Avatar heals up to its maximum life, and not at all at death's door. */
+export const maxLife = (s: GameState, p: PlayerId) => unitCard(s, s.units[s.players[p].avatar]).life || 20;
 function gainLife(s: GameState, p: PlayerId, n: number) {
   const pl = s.players[p];
   if (pl.deathsDoor) { log(s, `${pname(p)} is at death's door and cannot gain life.`, null); return; }
-  pl.life += n; log(s, `${pname(p)} gains ${n} life (life ${pl.life}).`, null);
+  const before = pl.life; pl.life = Math.min(maxLife(s, p), pl.life + n);
+  log(s, pl.life > before ? `${pname(p)} heals ${pl.life - before} (life ${pl.life}).` : `${pname(p)} is already at full life.`, null);
 }
-function killUnit(s: GameState, u: Unit) {
+/** Codex "Ward": a warded unit or site is protected once from damage, destruction, or being targeted by the opponent; the Ward breaks instead. */
+export const warded = (s: GameState, u: Unit) => !!u.ward && !isDisabled(s, u);
+function breakWard(s: GameState, u: Unit, why: string) { u.ward = false; log(s, `${unitCard(s, u).name}'s Ward breaks (${why}).`, null); }
+function killUnit(s: GameState, u: Unit, force = false) {
   if (!s.units[u.id] || u.avatar) return;
+  if (!force && warded(s, u)) { breakWard(s, u, 'instead of being destroyed'); return; }
   const d = unitCard(s, u);
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; } // what it carried stays where it fell
   delete s.units[u.id];
@@ -221,9 +230,10 @@ function killUnit(s: GameState, u: Unit) {
 }
 function damageUnit(s: GameState, u: Unit, n: number, lethal = false) {
   if (n <= 0 || !s.units[u.id]) return;
+  if (warded(s, u)) { breakWard(s, u, `prevents ${n} damage`); return; }
   if (u.avatar) { damageAvatar(s, u.owner, n); return; }
   u.damage += n;
-  if (lethal || u.damage >= defenseOf(s, u)) killUnit(s, u);
+  if (lethal || u.damage >= defenseOf(s, u)) killUnit(s, u, true);
 }
 function drawCard(s: GameState, p: PlayerId, deck: 'spellbook' | 'atlas'): boolean {
   const pl = s.players[p];
@@ -333,6 +343,7 @@ function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
 /** Carry out effects `idx` of card `d` for player `p`. `loc` is where the ability happens; `src` what it came from. */
 function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc | null, ch: (Choice | null)[], src?: Source) {
   const self = selfUnit(s, src), bearer = bearerOf(s, src);
+  const shielded = new Set<string>(); // targets a Ward protected: the rest of the effect on them does not resolve
   for (const i of idx) {
     const e = d.effects[i]; const c = ch[i] ?? undefined;
     if (s.phase === 'over') return;
@@ -343,7 +354,12 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc: Loc 
     const near = (u: Unit) => !!loc && u.r === loc.r && nearby(loc.c).includes(u.c);
     let victims: Unit[] = [];
     switch (e.who) {
-      case 'target': { const t = c?.target ? s.units[c.target] : undefined; if (t) victims = [t]; break; }
+      case 'target': {
+        const t = c?.target ? s.units[c.target] : undefined;
+        if (t && shielded.has(t.id)) break;
+        if (t && t.owner !== p && warded(s, t)) { breakWard(s, t, `${d.name} targeted it`); shielded.add(t.id); break; }
+        if (t) victims = [t]; break;
+      }
       case 'enemyAvatar': victims = [s.units[s.players[other(p)].avatar]]; break;
       case 'ownAvatar': victims = [s.units[s.players[p].avatar]]; break;
       case 'allAvatars': victims = [s.units[s.players[p].avatar], s.units[s.players[other(p)].avatar]]; break;
@@ -486,7 +502,11 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
   const a = s.units[attackerId]; if (!a) return;
   a.stealthLost = true;
   if (!enemyIds.length) {
-    if (siteOwner !== null) { log(s, `${unitCard(s, a).name} strikes the site.`, a.owner); loseLife(s, siteOwner, power(s, a)); }
+    if (siteOwner !== null) {
+      const st = s.sites[a.c];
+      if (st?.ward) { st.ward = false; log(s, `${unitCard(s, a).name} strikes the site; its Ward breaks and prevents the damage.`, a.owner); }
+      else { log(s, `${unitCard(s, a).name} strikes the site.`, a.owner); loseLife(s, siteOwner, power(s, a)); }
+    }
     return;
   }
   type Strike = { from: Unit; to: Unit; dmg: number; lethal: boolean; first: boolean };
@@ -513,8 +533,11 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
   for (const id of enemyIds) mk(s.units[id], a);
   for (const pass of [true, false]) {
     const batch = strikes.filter((x) => x.first === pass && s.units[x.from.id]);
+    const wardHit = new Set<string>(); // Codex: all simultaneous damage to a warded unit is prevented when the Ward breaks
     for (const x of batch) {
       if (!s.units[x.to.id] && !x.to.avatar) continue;
+      if (wardHit.has(x.to.id)) { log(s, `${unitCard(s, x.from).name}'s strike on ${unitCard(s, x.to).name} is prevented.`, x.from.owner); continue; }
+      if (warded(s, x.to) && x.dmg > 0) wardHit.add(x.to.id);
       log(s, `${unitCard(s, x.from).name} strikes ${unitCard(s, x.to).name} for ${x.dmg}.`, x.from.owner);
       damageUnit(s, x.to, x.dmg, x.lethal && !x.to.avatar);
       if ((s.phase as string) === 'over') return;
@@ -665,11 +688,14 @@ export function check(s: GameState, a: Action): Check {
     default: return no('Unknown action.');
   }
 }
+/** Codex "Projectile": it starts at the shooter's location (allies there are ignored) and stops at the
+ *  first unit it reaches, ally or enemy. Stealthed minions are not hit. Ranged X: it stops after X steps. */
 function shotTarget(s: GameState, u: Unit, dx: number, dy: number): Unit | null {
   const [x, y] = xy(u.c);
-  for (let i = 1; i <= unitCard(s, u).ranged; i++) {
+  for (let i = 0; i <= unitCard(s, u).ranged; i++) {
     const c = cell(x + dx * i, y + dy * i); if (c < 0) return null;
-    const hit = unitsAt(s, { c, r: u.r }).find((e) => e.owner !== u.owner && !hasStealth(s, e));
+    const there = unitsAt(s, { c, r: u.r }).filter((e) => e.id !== u.id && !(i === 0 && e.owner === u.owner) && !(e.owner !== u.owner && hasStealth(s, e)) && !(e.owner === u.owner && hasStealth(s, e)));
+    const hit = there.find((e) => e.owner !== u.owner) ?? there[0]; // the shooter chooses among several: an enemy first
     if (hit) return hit;
   }
   return null;
@@ -701,7 +727,7 @@ export function apply(state: GameState, a: Action): GameState {
     case 'playSite': {
       s.units[pl.avatar].tapped = true;
       pl.hand.splice(pl.hand.indexOf(a.inst), 1);
-      s.sites[a.c] = { inst: a.inst, owner: p };
+      s.sites[a.c] = { inst: a.inst, owner: p, ...(cardOf(s, a.inst).keywords.includes('Ward') ? { ward: true } : {}) };
       pl.mana += 1;
       log(s, `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`);
       fire(s, a.inst, 'genesis', p, { c: a.c, r: 'surface' }, { site: a.c });
@@ -717,7 +743,7 @@ export function apply(state: GameState, a: Action): GameState {
       const hand = d.effects.some((e) => e.op === 'manual') ? ' Part of its text is not automated; resolve it by hand.' : '';
       if (d.type === 'Minion') {
         const id = `u${s.nextId++}`;
-        s.units[id] = { id, inst: a.inst, owner: p, c: a.c!, r: 'surface', tapped: false, damage: 0, enteredTurn: s.turn, avatar: false, stealthLost: false, lance: d.keywords.includes('Lance') };
+        s.units[id] = { id, inst: a.inst, owner: p, c: a.c!, r: 'surface', tapped: false, damage: 0, enteredTurn: s.turn, avatar: false, stealthLost: false, lance: d.keywords.includes('Lance'), ...(d.keywords.includes('Ward') ? { ward: true } : {}) };
         log(s, `${pname(p)} summons ${d.name}.${hand}`);
         resolve(s, d, idx, p, { c: a.c!, r: 'surface' }, ch, { unit: id });
       } else if (d.type === 'Artifact' || d.type === 'Aura') {
@@ -810,7 +836,7 @@ function manual(s: GameState, a: ManualOp) {
     case 'life': { const pl = s.players[a.p]; pl.life = Math.max(0, pl.life + a.n); if (pl.life > 0) pl.deathsDoor = false; else if (!pl.deathsDoor) { pl.deathsDoor = true; pl.ddTurn = s.turn; } say(`${pname(a.p)} life ${a.n >= 0 ? '+' : ''}${a.n} (now ${pl.life}).`); break; }
     case 'mana': s.players[a.p].mana = Math.max(0, s.players[a.p].mana + a.n); say(`${pname(a.p)} mana ${a.n >= 0 ? '+' : ''}${a.n}.`); break;
     case 'damage': { const u = s.units[a.unit]; if (u) { say(`${a.n} damage to ${unitCard(s, u).name}.`); damageUnit(s, u, a.n); } break; }
-    case 'destroy': { const u = s.units[a.unit]; if (u && !u.avatar) { say(`destroy ${unitCard(s, u).name}.`); killUnit(s, u); } break; }
+    case 'destroy': { const u = s.units[a.unit]; if (u && !u.avatar) { say(`destroy ${unitCard(s, u).name}.`); killUnit(s, u, true); } break; }
     case 'destroyPerm': { const i = s.perms.findIndex((x) => x.id === a.perm); if (i >= 0) { const [m] = s.perms.splice(i, 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); say(`destroy ${cardOf(s, m.inst).name}.`); } break; }
     case 'tap': { const u = s.units[a.unit]; if (u) { u.tapped = !u.tapped; say(`${u.tapped ? 'tap' : 'untap'} ${unitCard(s, u).name}.`); } break; }
     case 'draw': if (drawCard(s, a.p, a.deck)) say(`${pname(a.p)} draws from the ${a.deck}.`); break;

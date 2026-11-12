@@ -106,12 +106,14 @@ export interface Unit {
   avatar: boolean;
   stealthLost: boolean;
   lance: boolean;
+  /** Ward mark (Codex "Ward"): breaks instead of the unit being damaged, destroyed or targeted by the opponent */
+  ward?: boolean;
   /** power/defense changes and granted keywords from abilities; `turn` = expires at the end of that turn */
   mods?: Mod[];
 }
 export interface Mod { atk: number; def: number; kw?: string; turn?: number; from: string }
 
-export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean } // inst null = rubble
+export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura'; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
 
 export interface PlayerState {

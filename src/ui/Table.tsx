@@ -11,6 +11,7 @@ import { PACES } from '../store';
 import { CardFace, Pips, hoverProps, mainElement, useHover, useInspect } from './CardFace';
 import { spring, usePace } from './pace';
 import { type CastReq, CastModal, abilityList } from './CastModal';
+import { HowItWorks } from './Explain';
 
 type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string };
 interface Opt { label: string; hint?: string; action: Action }
@@ -452,6 +453,7 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
       {boosted && <span className="mods" data-tip={[...(u.mods ?? []).map((m) => `${m.kw ? m.kw : `${m.atk >= 0 ? '+' : ''}${m.atk} power`}${m.turn !== undefined ? ' this turn' : ''} (${m.from})`), atk !== d.attack + (u.mods ?? []).reduce((n, m) => n + m.atk, 0) ? 'boosted by a card nearby' : ''].filter(Boolean).join(', ')}>✦</span>}
       {carried.length > 0 && <span className="attached">{carried.map((m) => { const ac = cardOf(s, m.inst); return <AttachTab key={m.id} card={ac} />; })}</span>}
       {u.r === 'under' && <span className="under-tag">below</span>}
+      {u.ward && !isDisabled(s, u) && <span className="ward" data-tip="Ward: the first damage, destruction or enemy targeting breaks the Ward instead">◈</span>}
       {summoningSick(s, u) && <span className="sick" data-tip="Entered this turn">z</span>}
       {art && <span className="plate">{d.name}</span>}
     </motion.button>
@@ -600,10 +602,7 @@ export function Preview({ card: given }: { card?: CardDef }) {
       {card.type !== 'Site' && card.type !== 'Avatar' && <p className="meta">Cost {card.cost}{card.type === 'Minion' ? `, power ${card.attack === card.defense ? card.attack : `${card.attack} attack / ${card.defense} defense`}` : ''}</p>}
       {card.rules && <p className="rules">{card.rules}</p>}
       {card.source === 'custom' && <p className="meta">Custom card</p>}
-      {card.type !== 'Site' && card.type !== 'Avatar' && card.rules && !card.effects.length && card.keywords.length === 0 && <p className="meta warn">This card's text is not automated. Use Manual tools to resolve it.</p>}
-      <ul className="kw">{kws.map((k) => KEYWORD_HELP[k] && (
-        <li key={k}><a href={codexUrl(k)} target="_blank" rel="noreferrer" data-tip="Open the Codex on sorcerytcg.com">{k}</a> {KEYWORD_HELP[k].text}</li>
-      ))}</ul>
+      <HowItWorks key={card.id} card={card} open={!!given} />
     </div>
   );
 }
