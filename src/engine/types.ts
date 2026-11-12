@@ -132,8 +132,13 @@ export interface Effect {
   pay?: number;
   /** draw: from the bottom of the deck */
   fromBottom?: boolean;
-  /** teleport: where to ("nearby" its own location, or any "site" surface) */
-  dest?: 'nearby' | 'site';
+  /** teleport (movement): where to. Chosen: a nearby / adjacent location or any site; fixed: this card's location ("here"),
+   *  the caster's, one step toward / away from this card, a random site or void, or the location of the chosen unit ("to") */
+  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to';
+  /** movement kind (Codex "Forced Movement"): teleport and drag move anyone; a step is the unit's own and Immobile stops it */
+  move?: 'teleport' | 'drag' | 'step';
+  /** only units with less power than this card ("target weaker minion") */
+  weaker?: boolean;
   /** sink: which way under (Submerge = water sites, Burrowing = land sites, either when unset) */
   under?: 'water' | 'land';
   /** only wounded units (damaged this turn) */

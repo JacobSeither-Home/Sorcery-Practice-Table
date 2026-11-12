@@ -857,3 +857,46 @@ describe('choosing cards from zones, the collection, and targets', () => {
     expect(reason(s, { t: 'cast', inst: give(s, 0, zap), target: mole })).toMatch(/valid target/);
   });
 });
+
+describe('movement from card text (Codex "Forced Movement", "Teleport")', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense, keywords: c.keywords } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 20; return s; };
+  it('"Lure target adjacent enemy minion to take a step closer" moves it one step toward the source', () => {
+    let s = board();
+    const lure = read('Minion', 'Test Lurer', 'Genesis → Lure target nearby enemy minion to take a step closer.', { attack: 1, defense: 1 });
+    const foe = unit(s, 1, cell(2, 1), id('Ember Runner'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, lure), c: cell(2, 2), target: foe });
+    expect(s.units[foe].c).toBe(cell(2, 2));
+  });
+  it('an Immobile unit cannot be lured into a step, but can be teleported', () => {
+    let s = board();
+    const lure = read('Minion', 'Test Lurer 2', 'Genesis → Lure target nearby enemy minion to take a step closer.', { attack: 1, defense: 1 });
+    const pull = read('Magic', 'Test Pull', 'Teleport target minion to the caster\'s location.', { cost: 1 });
+    const rock = read('Minion', 'Test Rock', 'Immobile', { attack: 1, defense: 5, keywords: ['Immobile'] });
+    const r = unit(s, 1, cell(2, 1), rock);
+    s = apply(s, { t: 'cast', inst: give(s, 0, lure), c: cell(2, 2), target: r });
+    expect(s.units[r].c).toBe(cell(2, 1));
+    s = apply(s, { t: 'cast', inst: give(s, 0, pull), target: r });
+    expect(s.units[r].c).toBe(s.units[s.players[0].avatar].c);
+  });
+  it('"Teleport target weaker minion to this location. … may strike it."', () => {
+    let s = board();
+    const harp = read('Minion', 'Test Harpies', 'Genesis → Teleport target weaker minion to this location. Test Harpies may strike it.', { attack: 3, defense: 3 });
+    const weak = unit(s, 1, cell(4, 0), id('Wind Sprite')); const strong = unit(s, 1, cell(0, 0), id('Hill Giant'));
+    expect(reason(s, { t: 'cast', inst: give(s, 0, harp), c: cell(2, 3), target: strong })).toMatch(/valid target/);
+    s = apply(s, { t: 'cast', inst: give(s, 0, harp), c: cell(2, 3), target: weak });
+    expect(s.units[weak]).toBeUndefined();                                  // teleported in, then struck for 3
+  });
+  it('"An allied minion takes a step." to an adjacent square the player picks', () => {
+    let s = board();
+    const wind = read('Magic', 'Test Wind', 'An allied minion takes a step.', { cost: 1 });
+    const runner = unit(s, 0, cell(2, 2), id('Ember Runner'));
+    const ch: { target?: string; cell?: number }[] = []; ch[0] = { target: runner, cell: cell(3, 2) };
+    s = apply(s, { t: 'cast', inst: give(s, 0, wind), choices: ch });
+    expect(s.units[runner].c).toBe(cell(3, 2));
+  });
+});

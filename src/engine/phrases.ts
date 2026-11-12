@@ -68,7 +68,7 @@ const subOf = (w: string): string | null => {
 };
 
 /** What a noun phrase picks out. */
-type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref' | 'siteKind' | 'targets'>;
+type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref' | 'siteKind' | 'targets' | 'weaker'>;
 
 /**
  * The noun-phrase grammar for units in card text:
@@ -119,8 +119,9 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   }
   let side: 'enemy' | 'ally' | '' = '';
   if ((m = t.match(/^(enemy|allied|opposing|your)\s+/i))) { side = /enemy|opposing/i.test(m[1]) ? 'enemy' : 'ally'; t = t.slice(m[0].length); }
-  let wounded = false;
+  let wounded = false; let weaker = false;
   if ((m = t.match(/^wounded\s+/i))) { wounded = true; t = t.slice(m[0].length); }
+  if ((m = t.match(/^weaker\s+(?:(enemy|allied)\s+)?/i))) { weaker = true; t = t.slice(m[0].length); if (m[1]) side = /enemy/i.test(m[1]) ? 'enemy' : 'ally'; }
   const words = t.split(' ');
   const noun = words.pop()!.toLowerCase();
   const subs: string[] = []; let kw: string | undefined;
@@ -138,7 +139,7 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   else if (/^enem(y|ies)$/.test(noun)) { kind = 'unit'; side = 'enemy'; }
   else { const sb = subOf(noun); if (!sb) return null; subs.push(sb); kind = 'minion'; }
   if (mode === 'minion' && kind === 'unit') kind = 'minion';
-  const filters = { ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
+  const filters = { ...(weaker ? { weaker: true } : {}), ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
   const only: Effect['only'] = kind === 'avatar' ? 'avatar' : kind === 'minion' ? (side === 'enemy' ? 'enemyMinion' : side === 'ally' ? 'allyMinion' : 'minion') : side === 'enemy' ? 'enemy' : side === 'ally' ? 'ally' : undefined;
   if (atTarget) return { who: 'atTarget', range: range ?? 'any', targets: /target/i.test(np), ...(only ? { only } : {}), ...filters };
   const chosen = q === 'target' || q === 'an' || q === 'a' || q === 'another' || q === 'one';
@@ -319,6 +320,8 @@ export const RULES: Rule[] = [
   { id: 'mana', label: 'Gain mana this turn', re: new RegExp(`^(?:you )?gain ${MANA}(?: this turn)?\\.$`, 'i'), build: (m) => [{ op: 'mana', n: manaOf(m[1]), who: 'controller' }] },
   { id: 'mana-only-copy', label: 'If this is the only …, gain mana', re: new RegExp(`^if this is the only .+ you control, gain ${MANA} this turn\\.$`, 'i'),
     build: (m, on) => (on === 'genesis' ? [{ op: 'mana', n: manaOf(m[1]), who: 'controller', cond: 'onlyCopy' }] : null) },
+  { id: 'provides-mana-first', label: 'Provides an additional ① and (E)(F)…', re: new RegExp(`^(?:this site |this )?provides? (?:an additional )?${MANA} and ((?:\\([AEFW]\\))+)\\.$`, 'i'),
+    build: (m, on) => (on === 'static' ? [{ op: 'provide', who: 'controller', n: manaOf(m[1]), el: elementsOf(m[2]) }] : null) },
   { id: 'provides', label: 'Provides mana / threshold', re: /^(?:this site |this )?provides? ((?:\([AEFW]\))*)(?:\s*(?:and|,)?\s*(?:an additional )?([①-⑳]|\(\d+\)))?( to its controller)?( this turn)?\.?$/i,
     build: (m, on) => {
       const el = elementsOf(m[1] ?? ''); const n = m[2] ? manaOf(m[2]) : 0;
@@ -372,6 +375,20 @@ export const RULES: Rule[] = [
   { id: 'draw-bottom', label: 'Draw your bottommost spell', re: /^draw your bottom(?:most)? (spell|site)\.$/i, build: (m) => [{ op: 'draw', n: 1, who: 'controller', deck: m[1].toLowerCase() === 'site' ? 'atlas' : 'spellbook', fromBottom: true }] },
   { id: 'sink', label: 'Submerge / burrow …', re: /^(submerge|burrow) (.+?)(?:, if able)?\.$/i,
     build: (m) => { const v = minionOnly(nounPhrase(m[2].replace(/ or artifacts?\b| and artifacts\b|,? minions and artifacts/gi, (x) => (/minions/i.test(x) ? ' minions' : '')), 'minion')); return v ? [{ op: 'sink', ...v, under: m[1].toLowerCase() === 'submerge' ? 'water' : 'land' }] : null; } },
+  { id: 'lure', label: 'Lure / force … to step closer', re: /^(?:lure|force|tempt) (.+?) (?:to|into) (?:take a step|taking a step|step) (closer|towards? (?:her|him|this|this one|it|them))\.$/i,
+    build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v ? [{ op: 'teleport', ...v, move: 'step', dest: 'toward' }] : null; } },
+  { id: 'make-step', label: 'Make it step closer / away', re: /^make (?:it|them) (?:take a )?step (closer|away)\.$/i,
+    build: (m) => [{ op: 'teleport', who: 'target', ref: true, move: 'step', dest: m[1].toLowerCase() === 'away' ? 'away' : 'toward' }] },
+  { id: 'teleport-here', label: 'Teleport / drag … to this location', re: /^(teleport|drag|pull)s? (?:in )?(.+?)(?: from an adjacent site)? to (this location|here|its location|the caster'?s location|your location)(?:, ignoring regions)?\.$|^(drag)s? in (.+?)\.$/i,
+    build: (m) => { const v = nounPhrase(m[2] ?? m[5]); if (!v || v.who === 'self') return null; const dest = /caster/i.test(m[3] ?? '') ? 'caster' : 'here'; return [{ op: 'teleport', ...v, move: /teleport/i.test(m[1] ?? '') ? 'teleport' : 'drag', dest }]; } },
+  { id: 'teleport-all', label: 'Teleport any number of … to …', re: /^teleport (?:any number of|all) (.+?) (here|to the caster'?s location|to this location)\.$/i,
+    build: (m) => { const v = nounPhrase('all ' + m[1]); return v && v.who !== 'target' ? [{ op: 'teleport', ...v, move: 'teleport', dest: /caster/i.test(m[2]) ? 'caster' : 'here' }] : null; } },
+  { id: 'teleport-random', label: 'Teleport to a random site or void', re: /^(?:this )?teleports? (?:this )?to the top of a random site or void\.$/i, build: () => [{ op: 'teleport', who: 'self', move: 'teleport', dest: 'random' }] },
+  { id: 'teleport-self-nearby', label: 'Teleport to another nearby location', re: /^(?:this )?(?:may )?teleports? to (?:another|a) nearby location(?: or void)?\.$/i, build: () => [{ op: 'teleport', who: 'self', move: 'teleport', dest: 'nearby' }] },
+  { id: 'take-step', label: '… takes a step', re: /^(.+?) (?:may )?takes? a step\.$/i,
+    build: (m) => { const v = nounPhrase(m[1]); return v && (v.who === 'self' || v.who === 'target') ? [{ op: 'teleport', ...v, move: 'step', dest: 'adjacent' }] : null; } },
+  { id: 'fly-to', label: 'Fly to … (to Ward / strike it)', re: /^fly to (.+?)(?: to (ward|strike) it)?\.$/i,
+    build: (m) => { const v = nounPhrase(m[1]); if (!v || v.who !== 'target') return null; const fx: Omit<Effect, 'on'>[] = [{ op: 'teleport', ...v, move: 'teleport', dest: 'to' }]; if (m[2]) fx.push(m[2].toLowerCase() === 'ward' ? { op: 'grant', who: 'target', ref: true, keyword: 'Ward', until: 'permanent' } : { op: 'strike', who: 'target', ref: true }); return fx; } },
   { id: 'teleport', label: 'Teleport an ally …', re: /^(?:teleport (an? ally|an allied minion|target (?:allied )?minion|target ally) to (?:the surface of )?(?:target|a) site|(an? ally|an allied minion) teleports to a location (?:it'?s|it is) nearby)\.$/i,
     build: (m) => { const v = nounPhrase(m[1] ?? m[2]); return v?.who === 'target' ? [{ op: 'teleport', ...v, dest: m[1] ? 'site' : 'nearby' }] : null; } },
   { id: 'give-movement', label: 'Give … Movement +N', re: new RegExp(`^give (.+?) movement \\+(\\d+)${UNTIL}\\.$`, 'i'),
@@ -459,6 +476,10 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   // "You may pay ① to X." — X costs mana and is optional
   const pay = sentence.match(new RegExp(`^(?:you may )?pay ${MANA} to (.+)$`, 'i'));
   if (pay) { const r = matchSentence(cap(pay[2]), on, type, false); if (r) return { got: r.got.map((e, i) => ({ ...e, ...(i === 0 ? { pay: manaOf(pay[1]) } : {}), ...(/^you may/i.test(sentence) ? { optional: true } : {}) })), rule: 'pay+' + r.rule }; }
+  // wrappers that do not change what happens: "When it arrives, …", "… on arrival", "… if it is untapped"
+  let w: RegExpMatchArray | null;
+  if ((w = sentence.match(/^(?:when it arrives|upon arrival|on arrival), (.+)$/i))) return matchSentence(cap(w[1]), on, type, top);
+  if ((w = sentence.match(/^(.+?) (?:on arrival|upon arrival|when it arrives|if (?:it is|it's) untapped|if able)\.$/i))) return matchSentence(w[1] + '.', on, type, top);
   // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
   if (/^(has|have|gains|takes) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
@@ -473,7 +494,7 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
     if (b && b.every((e) => !OK_FOR[on] || OK_FOR[on]!.includes(e.op))) return { got: b, rule: r.id };
   }
   // "A, then B." / "A and you heal 3." — both halves must read on their own
-  const parts = sentence.replace(/\.$/, '').split(/,? (?:and )?then |, and (?=(?:you|deal|draw|gain|heal|untap|tap|kill|destroy|banish|summon|give|return|each|your)\b)| and (?=(?:you heal|you gain|draw|untap|tap|deal)\b)/i);
+  const parts = sentence.replace(/\.$/, '').split(/,? (?:and )?then |, and (?=(?:you|deal|draw|gain|heal|untap|tap|kill|destroy|banish|summon|give|return|each|your)\b)| and (?=(?:you heal|you gain|draw|untap|tap|deal|make|may)\b)/i);
   if (parts.length > 1) {
     const all: Omit<Effect, 'on'>[] = []; const ids: string[] = [];
     for (const part of parts) { const r = matchSentence(part.trim().replace(/^./, (c) => c.toUpperCase()) + '.', on, type, false); if (!r) return null; all.push(...r.got); ids.push(r.rule); }

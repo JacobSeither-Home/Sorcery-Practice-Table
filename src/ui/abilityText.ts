@@ -82,7 +82,14 @@ export function describe(e: Effect): string {
     case 'destroySite': return `Destroy a site you choose${RANGE[e.range ?? 'any']} (it leaves Rubble)`;
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
-    case 'teleport': return `Teleport ${who} to ${e.dest === 'site' ? 'the surface of a site you choose' : 'a nearby location you choose'}`;
+    case 'teleport': {
+      const verb = e.move === 'step' ? 'takes a step' : e.move === 'drag' ? 'is dragged' : 'teleports';
+      const subj = e.who === 'self' ? 'This' : who[0].toUpperCase() + who.slice(1);
+      const where = ({ here: "to this card's location", caster: "to the caster's location", toward: 'one step closer to this card', away: 'one step away from this card', random: 'to a random site or void', to: '', adjacent: 'to an adjacent location you choose', site: 'to the surface of a site you choose', nearby: 'to a nearby location you choose' } as Record<string, string>)[e.dest ?? 'nearby'];
+      if (e.dest === 'to') return `This flies to ${who}`;
+      return `${subj} ${verb} ${where}`;
+    }
+    case 'teleport-old' as never: return `Teleport ${who} to ${e.dest === 'site' ? 'the surface of a site you choose' : 'a nearby location you choose'}`;
     case 'mill': return `Discard the top ${n} of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}`;
     case 'manual': return e.text ?? 'Resolve by hand';
   }
