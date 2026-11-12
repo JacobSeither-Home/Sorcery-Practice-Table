@@ -146,8 +146,9 @@ fieldset { border: 1px solid var(--line-soft); border-radius: var(--r); margin: 
 
 /* ---- the realm ---- */
 .board-scroll { flex: 1; min-height: 0; width: 100%; position: relative; container-type: size; display: grid; place-items: center; overflow: hidden; }
-.mat { --gap: 8px; --umax: 71px;
-  --cellw: calc(min(100cqw, 100cqh * 1.75, 1180px) / 5); --cellh: calc(min(100cqh, 100cqw * 1.4, 680px) / 4);
+.mat { --gap: 8px; --umax: 132px;
+  /* Fit view: fill the space the play area has, with no fixed pixel ceiling, so nothing ever needs a scroll bar */
+  --cellw: calc(min(100cqw, 100cqh * 1.9) / 5); --cellh: calc(min(100cqh, 100cqw * 1.4) / 4);
   width: calc(var(--cellw) * 5); height: calc(var(--cellh) * 4);
   display: grid; grid-template-columns: repeat(5, 1fr); grid-template-rows: repeat(4, 1fr); gap: var(--gap); padding: var(--gap);
   position: relative; isolation: isolate; border-radius: 16px;
@@ -551,3 +552,61 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .checks li.ok b { color: #7fd69a; } .checks li.bad b { color: #f0a08a; } .checks small { padding-left: 16px; }
 .legal { font-size: 11.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid #d98a6a; color: #f0a08a; white-space: nowrap; } .legal.ok { border-color: #7fd69a; color: #7fd69a; }
 @media (max-width: 760px) { .searchbar { grid-template-columns: 1fr 1fr; } }
+
+/* ---- the void takes on the elements in play ----
+   Sits between the mat's own background and the squares, so it shows through the void and the gaps.
+   --i runs 0..1 with the total threshold of that element on the board. */
+.aura-layer { position: absolute; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; border-radius: 16px; } /* kept inside the mat: bleeding past it would change the board's scroll size */
+.el-glow { --i: 0; --sz: calc(34% + 62% * var(--i)); position: absolute; width: var(--sz); aspect-ratio: 1; translate: -50% -50%; border-radius: 50%;
+  opacity: calc(.3 + .65 * var(--i)); transition: left 1.2s ease, top 1.2s ease, width 1.2s ease, opacity 1.2s ease; mix-blend-mode: screen; }
+.el-glow span { position: absolute; inset: 0; border-radius: 50%; }
+/* fire: a breathing ember glow with sparks climbing out of it */
+.el-glow.fire { background: radial-gradient(closest-side, #ff7a3acc, #e2401f66 45%, #8a1d0c00 72%); animation: flicker calc(2.6s * var(--pace, 1)) ease-in-out infinite; }
+.el-glow.fire span { background: radial-gradient(circle, #ffd27a 0 1.5px, #0000 2.5px) 0 0 / 46px 58px, radial-gradient(circle, #ff9a4a 0 1px, #0000 2px) 23px 31px / 37px 49px;
+  -webkit-mask: radial-gradient(closest-side, #000 30%, #0000 85%); mask: radial-gradient(closest-side, #000 30%, #0000 85%); animation: embers calc(5s * var(--pace, 1)) linear infinite; }
+.el-glow.fire span + span { animation-duration: calc(7.5s * var(--pace, 1)); opacity: .6; scale: 1.15; }
+/* water: a deep pool with slow rings spreading across it */
+.el-glow.water { background: radial-gradient(closest-side, #2fb6e6b3, #1565a866 50%, #06285800 74%); }
+.el-glow.water span { border: 2px solid #8fe0ff55; inset: 30%; animation: ripple calc(6s * var(--pace, 1)) ease-out infinite; }
+.el-glow.water span + span { animation-delay: calc(-3s * var(--pace, 1)); }
+/* air: pale light with wisps sliding across */
+.el-glow.air { background: radial-gradient(closest-side, #dcecffa6, #9fc0ee55 48%, #6f8fc000 74%); }
+.el-glow.air span { background: repeating-linear-gradient(100deg, #0000 0 26px, #ffffff2e 30px 34px, #0000 40px 70px); -webkit-mask: radial-gradient(closest-side, #000 20%, #0000 80%); mask: radial-gradient(closest-side, #000 20%, #0000 80%);
+  animation: wisps calc(9s * var(--pace, 1)) linear infinite; }
+.el-glow.air span + span { animation-duration: calc(14s * var(--pace, 1)); animation-direction: reverse; opacity: .6; }
+/* earth: a warm, heavy glow with motes turning slowly */
+.el-glow.earth { background: radial-gradient(closest-side, #d0a64aa6, #7d6a2a66 50%, #3a310f00 74%); }
+.el-glow.earth span { background: radial-gradient(circle, #f3dc9a 0 1.4px, #0000 2.4px) 0 0 / 52px 44px, radial-gradient(circle, #b9d07a 0 1px, #0000 2px) 19px 27px / 41px 53px;
+  -webkit-mask: radial-gradient(closest-side, #000 25%, #0000 82%); mask: radial-gradient(closest-side, #000 25%, #0000 82%); animation: motes calc(48s * var(--pace, 1)) linear infinite; }
+.el-glow.earth span + span { animation-duration: calc(70s * var(--pace, 1)); animation-direction: reverse; opacity: .55; }
+@keyframes flicker { 0%, 100% { filter: brightness(1); scale: 1; } 40% { filter: brightness(1.18); scale: 1.03; } 70% { filter: brightness(.92); scale: .985; } }
+@keyframes embers { from { background-position: 0 0, 23px 31px; } to { background-position: 0 -232px, 23px -165px; } }
+@keyframes ripple { from { scale: .35; opacity: .9; } to { scale: 1.9; opacity: 0; } }
+@keyframes wisps { from { background-position: 0 0; } to { background-position: 280px 0; } }
+@keyframes motes { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .el-glow, .el-glow span { animation: none !important; } }
+
+/* the table view never scrolls the page; only the log, the side panel, and the Roomy/Spacious boards scroll by design */
+.app:has(> .table) { overflow: hidden; }
+.el-glow { --sz: calc(55% + 85% * var(--i)); }
+
+/* void squares soak up the elements of the sites around them (--ef/--ew/--ea/--ee run 0..1) */
+.cell.void { --ef: 0; --ew: 0; --ea: 0; --ee: 0; }
+.cell.void::after { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; transition: opacity 1.2s ease;
+  background:
+    radial-gradient(120% 120% at 50% 100%, rgb(255 110 50 / calc(.55 * var(--ef))), transparent 70%),
+    radial-gradient(120% 120% at 50% 0%, rgb(60 170 230 / calc(.5 * var(--ew))), transparent 70%),
+    radial-gradient(120% 120% at 0% 50%, rgb(205 225 255 / calc(.42 * var(--ea))), transparent 70%),
+    radial-gradient(120% 120% at 100% 50%, rgb(205 165 70 / calc(.5 * var(--ee))), transparent 70%); }
+.cell.void[class*='dom-'] > .void-fx, .cell.void[class*='dom-']::before { animation-duration: calc(5s * var(--pace, 1)); }
+.cell.void.dom-fire { border-color: rgb(255 140 80 / calc(.25 + .5 * var(--ef))); box-shadow: inset 0 0 26px rgb(226 80 31 / calc(.5 * var(--ef))); }
+.cell.void.dom-water { border-color: rgb(110 200 240 / calc(.25 + .5 * var(--ew))); box-shadow: inset 0 0 26px rgb(21 101 168 / calc(.6 * var(--ew))); }
+.cell.void.dom-air { border-color: rgb(210 228 255 / calc(.25 + .5 * var(--ea))); box-shadow: inset 0 0 26px rgb(159 192 238 / calc(.45 * var(--ea))); }
+.cell.void.dom-earth { border-color: rgb(215 180 90 / calc(.25 + .5 * var(--ee))); box-shadow: inset 0 0 26px rgb(125 106 42 / calc(.6 * var(--ee))); }
+/* the strongest element also moves: sparks rise, rings spread, wisps slide, motes drift */
+.cell.void.dom-fire::before { inset: 0; border-radius: inherit; opacity: calc(.35 + .65 * var(--ef)); background: radial-gradient(circle, #ffd27a 0 1.3px, #0000 2.3px) 0 0 / 34px 46px, radial-gradient(circle, #ff9a4a 0 1px, #0000 2px) 17px 23px / 29px 37px; animation: embers calc(4.5s * var(--pace, 1)) linear infinite; -webkit-mask: linear-gradient(#0000, #000 60%); mask: linear-gradient(#0000, #000 60%); }
+.cell.void.dom-water::before { inset: 18%; border-radius: 50%; background: none; border: 2px solid rgb(143 224 255 / calc(.25 + .5 * var(--ew))); animation: ripple calc(5s * var(--pace, 1)) ease-out infinite; }
+.cell.void.dom-air::before { inset: 0; border-radius: inherit; opacity: calc(.4 + .6 * var(--ea)); background: repeating-linear-gradient(100deg, #0000 0 22px, #ffffff26 26px 29px, #0000 34px 60px); animation: wisps calc(8s * var(--pace, 1)) linear infinite; }
+.cell.void.dom-earth::before { inset: 0; border-radius: inherit; opacity: calc(.35 + .65 * var(--ee)); background: radial-gradient(circle, #f3dc9a 0 1.3px, #0000 2.3px) 0 0 / 38px 32px, radial-gradient(circle, #b9d07a 0 1px, #0000 2px) 15px 21px / 31px 41px; animation: drift calc(16s * var(--pace, 1)) linear infinite; }
+@keyframes drift { from { background-position: 0 0, 15px 21px; } to { background-position: 76px 32px, 77px 62px; } }
+@media (prefers-reduced-motion: reduce) { .cell.void[class*='dom-']::before { animation: none !important; } }

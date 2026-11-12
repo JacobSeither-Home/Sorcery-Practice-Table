@@ -192,6 +192,17 @@ export function Table() {
   const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen
 
   const order = [...Array(CELLS).keys()]; if (flip) order.reverse();
+  // How strongly each element reaches each square: every site radiates its threshold, falling off with distance.
+  const voidTint = useMemo(() => {
+    const src: { x: number; y: number; th: Record<string, number> }[] = [];
+    order.forEach((c, i) => { const st = s.sites[c]; if (st?.inst) src.push({ x: i % COLS, y: Math.floor(i / COLS), th: cardOf(s, st.inst).thresholds }); });
+    return order.map((_, i) => {
+      const x = i % COLS, y = Math.floor(i / COLS); const v: Record<string, number> = {};
+      for (const e of ELEMENTS) { let sum = 0; for (const q of src) { const k = q.th[e]; if (k) { const dist = Math.max(Math.abs(q.x - x), Math.abs(q.y - y)); sum += k / (dist * dist); } } v[e] = Math.min(1, sum / 3.5); }
+      const dom = ELEMENTS.reduce((a, b) => (v[b] > v[a] ? b : a));
+      return { dom: v[dom] > 0.12 ? dom : '', style: { '--ef': v.fire, '--ew': v.water, '--ea': v.air, '--ee': v.earth } as React.CSSProperties };
+    });
+  }, [s.sites, flip]);
   const unitsByCell = useMemo(() => { const m = new Map<number, Unit[]>(); for (const u of Object.values(s.units)) { if (!m.has(u.c)) m.set(u.c, []); m.get(u.c)!.push(u); } return m; }, [s.units]);
   const pend = s.pending;
   const pendUnits = pend ? responders(s) : [];
@@ -231,13 +242,15 @@ export function Table() {
 
         <div className="board-scroll" ref={scroller}>
           <div className="mat" onClick={() => { setSel(null); setMenu(null); }}>
+            <ElementAura s={s} order={order} />
             <svg className="rune-ring" viewBox="-100 -100 200 200" aria-hidden><RuneRing /></svg>
-            {order.map((c) => {
+            {order.map((c, di) => {
               const site = s.sites[c]; const d = site?.inst ? cardOf(s, site.inst) : undefined; const hi = hiCells.get(c);
+              const tint = site ? undefined : voidTint[di];
               const [x, y] = xy(c); const mark = herald?.marks.get(c);
               return (
-                <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''}`}
-                  onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d)} data-cell={c}>
+                <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''} ${tint?.dom ? 'dom-' + tint.dom : ''}`}
+                  style={tint?.style} onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d)} data-cell={c}>
                   {d && <SiteArt id={d.id} />}
                   {d && <span className="site-flash" key={site!.inst} />}
                   {d && <div className="site-label"><span>{d.name}</span><Pips t={d.thresholds} /></div>}
@@ -440,6 +453,26 @@ export function Table() {
 function AttachTab({ card }: { card: CardDef }) {
   const art = useStore((st) => st.art[card.id]);
   return <span className="attach-tab" style={art ? { backgroundImage: `url(${art})` } : undefined} {...hoverProps(card)}><b>{card.name}</b></span>;
+}
+/**
+ * The void takes on the elements of the sites in play. Each element gets a glow centred on where its
+ * sites are, growing and brightening with the total threshold of that element on the board.
+ */
+function ElementAura({ s, order }: { s: GameState; order: number[] }) {
+  const glows = useMemo(() => {
+    const acc = ELEMENTS.map((e) => ({ e, n: 0, x: 0, y: 0 }));
+    order.forEach((c, i) => {
+      const site = s.sites[c]; if (!site?.inst) return;
+      const th = cardOf(s, site.inst).thresholds;
+      acc.forEach((a) => { const k = th[a.e]; if (k > 0) { a.n += k; a.x += k * ((i % COLS) + 0.5) / COLS; a.y += k * (Math.floor(i / COLS) + 0.5) / (CELLS / COLS); } });
+    });
+    return acc.filter((a) => a.n > 0).map((a) => ({ e: a.e, i: Math.min(1, a.n / 8), x: (a.x / a.n) * 100, y: (a.y / a.n) * 100 }));
+  }, [s.sites, order.join()]);
+  return (
+    <div className="aura-layer" aria-hidden>
+      {glows.map((g) => <div key={g.e} className={`el-glow ${g.e}`} style={{ left: `${g.x}%`, top: `${g.y}%`, ['--i' as string]: g.i }}><span /><span /></div>)}
+    </div>
+  );
 }
 function SiteArt({ id }: { id: string }) {
   const art = useStore((st) => st.art[id]);
