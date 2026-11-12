@@ -538,3 +538,16 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .aura-area .aura-name { position: absolute; left: 50%; top: 50%; translate: -50% -50%; pointer-events: auto; font: 600 11px var(--display); padding: 3px 8px; border-radius: 99px; background: #0b0a18dd; border: 1px solid var(--line); white-space: nowrap; }
 .toast { display: grid; gap: 4px; } .toast-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--display); color: #ffb3a8; letter-spacing: .04em; }
 .toast-x { padding: 0 6px; font-size: 12px; } .toast-rule { font-size: 12.5px; color: var(--muted); border-top: 1px solid var(--line-soft); padding-top: 4px; } .toast-rule b { color: var(--text); font-weight: 600; }
+
+/* deck builder: rarity, copy limits, collection, checklist */
+.searchbar { grid-template-columns: 1fr 140px 190px auto auto; }
+.addto { margin-bottom: 10px; color: var(--muted); } .addto .seg { margin: 0; max-width: 380px; flex: 1; }
+.rar { display: inline-grid; place-items: center; min-width: 17px; height: 17px; padding: 0 3px; border-radius: 4px; font: 700 10px/1 var(--sans, sans-serif); font-style: normal; color: #14100a; background: #b9b3a3; border: 1px solid #0006; }
+.rar-Exceptional { background: #7fb6e6; } .rar-Elite { background: #c89be8; } .rar-Unique { background: #f0c24a; }
+.gridcard .rar { position: absolute; left: -5px; top: -6px; z-index: 1; }
+.gridcard.maxed .card { opacity: .45; filter: saturate(.5); } .gridcard.maxed .n { background: #d98a6a; }
+.decklines li.over span:first-child { color: #f0a08a; } .row.tight { gap: 3px; flex-wrap: nowrap; }
+.checks ul { list-style: none; padding: 0; margin: 4px 0 8px; } .checks li { display: flex; flex-direction: column; padding: 4px 0; border-bottom: 1px solid var(--line-soft, #2c3a58); }
+.checks li.ok b { color: #7fd69a; } .checks li.bad b { color: #f0a08a; } .checks small { padding-left: 16px; }
+.legal { font-size: 11.5px; padding: 2px 9px; border-radius: 99px; border: 1px solid #d98a6a; color: #f0a08a; white-space: nowrap; } .legal.ok { border-color: #7fd69a; color: #7fd69a; }
+@media (max-width: 760px) { .searchbar { grid-template-columns: 1fr 1fr; } }

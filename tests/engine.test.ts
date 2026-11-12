@@ -1067,3 +1067,24 @@ describe('protections and restrictions', () => {
     expect(s.units[u].c).toBe(cell(0, 0));
   });
 });
+
+describe('deck building rules', () => {
+  it('counts copies across spellbook, atlas and collection against the rarity limit', async () => {
+    const { deckChecks, constructedLegal, copyLimit, parseDeckText } = await import('../src/data/decks');
+    const pool: Record<string, CardDef> = {};
+    const mk = (name: string, type: CardDef['type'], rarity: string) => { const c = makeCard({ name, type, rarity, source: 'api' }); pool[c.id] = c; return c.id; };
+    const av = mk('Test Mage', 'Avatar', 'Unique'), ord = mk('Foot Troop', 'Minion', 'Ordinary'), exc = mk('Fine Blade', 'Artifact', 'Exceptional'), eli = mk('Old Wyrm', 'Minion', 'Elite'), uni = mk('The Crown', 'Artifact', 'Unique'), site = mk('Plain Field', 'Site', 'Ordinary');
+    expect([ord, exc, eli, uni].map((id) => copyLimit(pool[id]))).toEqual([4, 3, 2, 1]);
+    const deck = { name: 'd', avatar: av, spellbook: [...Array(57).fill(ord), exc, exc, exc, eli, eli, uni], atlas: Array(30).fill(site), collection: [uni] };
+    const checks = deckChecks(deck, pool);
+    const by = (label: string) => checks.find((c) => c.label.startsWith(label))!;
+    expect(by('One Avatar').ok).toBe(true); expect(by('Spellbook').ok).toBe(true); expect(by('Atlas').ok).toBe(true); expect(by('Collection').ok).toBe(true);
+    expect(by('Copies').ok).toBe(false);
+    expect(by('Copies').detail).toMatch(/Foot Troop 57\/4/); expect(by('Copies').detail).toMatch(/The Crown 2\/1 \(Unique\)/); // one in the spellbook + one in the collection
+    expect(by('Copies').detail).not.toMatch(/Fine Blade|Old Wyrm/);
+    expect(constructedLegal(deck, pool)).toBe(false);
+    const r = parseDeckText('Avatar (1)\n1 Test Mage\nSpellbook\n2 Old Wyrm\n3x Fine Blade\nAtlas:\n4 Plain Field\nCollection (2)\n1 The Crown\n1 Plain Field\nNot A Card', pool, 'x');
+    expect(r.deck.avatar).toBe(av); expect(r.deck.spellbook.length).toBe(5); expect(r.deck.atlas.length).toBe(4);
+    expect(r.deck.collection).toEqual([uni, site]); expect(r.unknown).toEqual(['Not A Card']);
+  });
+});
