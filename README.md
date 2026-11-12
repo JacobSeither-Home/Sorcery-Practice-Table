@@ -1,5 +1,7 @@
 # Sorcery Practice Table
 
+**Play it here: https://jacobseither-home.github.io/Sorcery-Practice-Table/** (sign-in required; access is by invitation)
+
 **Unofficial fan project, not affiliated with Erik's Curiosa.** Free, non-commercial, for practice and teaching a few friends.
 Sorcery: Contested Realm is a trademark of Erik's Curiosa Limited. See their Community Use & Copyright Policy: https://sorcerytcg.com/community-use
 
