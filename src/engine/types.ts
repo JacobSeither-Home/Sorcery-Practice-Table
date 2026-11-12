@@ -90,6 +90,8 @@ export interface Effect {
   random?: number;
   /** shoot: how many projectiles in the chosen direction (-1: X); pierce: hits every unit along the path */
   shots?: number; pierce?: boolean;
+  /** atTarget: only land or water sites ("target land site") */
+  siteKind?: 'land' | 'water';
   /** pay this much mana first; the effect does not happen if it cannot be paid */
   pay?: number;
   /** draw: from the bottom of the deck */

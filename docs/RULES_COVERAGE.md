@@ -1,9 +1,20 @@
 # Rules coverage
 
-Source used for the rules: the Sorcery: Contested Realm rulebook, read on 2026-11-10 through a
-community rulebook reader (sorcery-rulebook.vercel.app). It was **not** checked against
-sorcerytcg.com or the Codex, because this project does not fetch those pages automatically.
-The reader's page cut off before the Ward, Landbound and Voidwalk entries.
+Sources: the Sorcery: Contested Realm rulebook, read on 2026-11-10 through a community rulebook
+reader (sorcery-rulebook.vercel.app), and the Codex at https://sorcerytcg.com/codex, read on
+2026-11-12 from a development workspace (one page load; the app itself never fetches it). Card
+wording was checked against all 1,100 cards from GET https://api.sorcerytcg.com/api/cards on
+2026-11-12. In the app, every keyword and rule term links to its exact Codex entry
+(`src/engine/keywords.ts`) next to a one-line reminder in our own words.
+
+## Changed after reading the Codex (2026-11-12)
+
+- **Ward** (Codex "Ward") is enforced for units and sites: a card with the keyword enters with a Ward; the first damage, destruction, or targeting by an opponent's spell or ability breaks the Ward instead (simultaneous damage in a fight is all prevented). Sacrifice and the hand tools' Destroy ignore it.
+- **Healing** (Codex "Healing") stops at the Avatar's maximum life; healing a minion removes damage.
+- **Flooded** sites count as water sites.
+- **Projectiles** (Codex "Projectile") start at the shooter's location, ignore allies there, and stop at the first unit they reach, ally or enemy; stealthed minions are not hit.
+- **Tokens** (Codex "Token") are banished instead of going to the cemetery or hand.
+- **"Up to two steps away"** is counted in orthogonal steps.
 
 ## Enforced by the engine (`src/engine/rules.ts`, tests in `tests/engine.test.ts`)
 
@@ -19,21 +30,21 @@ The reader's page cut off before the Ward, Landbound and Voidwalk entries.
 - Defend (untapped units in reach may tap, move in and join; a defended site leaves the fight; the original target may be taken out) and Intercept
 - Death's door: at 0 life, immune for the rest of that turn, no life gain, next damage is a death blow
 - Losing by drawing with both decks empty
-- Keywords: Airborne, Burrowing, Charge, Disabled, Immobile, Lance, Landbound, Lethal, Movement, Ranged, Spellcaster, Stealth, Submerge, Voidwalk, Waterbound, plus Genesis/Deathrite through data-driven effects
+- Keywords: Airborne, Burrowing, Charge, Disabled, Flood, Immobile, Lance, Landbound, Lethal, Movement, Ranged, Spellcaster, Stealth, Submerge, Voidwalk, Ward, Waterbound, plus Genesis/Deathrite through data-driven effects
 
 ## Simplified or not automated
 
 - **Card text** is read sentence by sentence (`src/engine/phrases.ts`). Each sentence that matches a known phrase becomes an effect the engine carries out; each sentence that does not is kept as a "by hand" entry, and the cast pop-up offers the hand tools for it after the rest resolves. Hand-entered effects in Card library replace what was read. What is read today:
-  - triggers: cast (magic), Genesis →, Deathrite →, Tap → (with an optional mana cost before it), "② → …" and "Once on your turn, … may …" (once per turn), "At the start / end of your turn, …", and plain sentences on permanents as always-on (static) abilities
-  - effects: deal N damage to a target / a group / an Avatar; "… takes N damage"; destroy / kill, banish, return to owner's hand; tap / untap; gain or heal life, lose life, opponent loses life; draw N spells / sites / cards (cards: the player picks the deck); gain mana (circled numbers), including the "only copy" towers; opponent discards at random; "+N power" (this turn, or always for static text); gaining keywords (this turn or always)
-  - targets: "target [nearby/adjacent] [enemy/allied] unit/minion/Avatar/ally/enemy [here/nearby/adjacent]"; groups: "each/all [other] [enemy/allied] units/minions/allies/enemies [here/nearby/adjacent]"; "this minion", "your Avatar", "bearer"
+  - triggers: cast (magic), Genesis →, Deathrite → / "When this dies", Tap → (with an optional mana cost), "② → …" and "Once on your turn, … may …", "At the start / end of your turn, …", reactions ("Whenever a [nearby] [allied/enemy] minion dies", "Whenever this takes damage", "Whenever this attacks", "Whenever an enemy enters here"), and plain sentences on permanents as always-on abilities
+  - effects: damage (target, group, Avatar, a chosen location, this site); strikes; projectiles (one, several in one direction, piercing, splash on impact); destroy / kill, banish, return to hand; tap / untap; heal, lose life, opponent loses life; draw (spell / site / card, from the bottom); discard at random; discard the top of a deck; look at the top card and maybe bottom it; gain mana; "Provides (A) and ①" (always, or this turn); "+N power" and keywords (this turn, until your next turn, or always); Movement +N; Ward a unit or this site; disable; submerge / burrow; teleport an ally; summon Foot Soldier / Skeleton / Frog / Bruin / Tawny tokens; "Can't defend / intercept"; "This site is flooded"
+  - targets and groups: "[each/all/target/an/another] [other] [nearby/adjacent] [enemy/allied] [wounded] [Subtype/Keyword] unit/minion/ally/enemy/Avatar [here/nearby/adjacent/at target location/up to two steps away/on the surface] [with N or less power]", plus "a random unit at target location", "this", "your Avatar", "bearer", and "it"/"them" for the unit chosen earlier on the line
+  - "You may …" parts can be skipped in the pop-up; "You may pay ① to …" costs mana when done
+  - Coverage measured with `node tests/coverage.mjs cards.json` on 2026-11-12: of 1,100 cards, 154 fully automated, 85 keywords only, 44 partly automated, 817 still have at least one sentence that is resolved by hand. Of the 132 cards in the four Beta precons: 37 fully, 24 keywords only, 3 partly, 68 by hand. The remaining sentences are mostly one-off mechanics (search, copy, control change, area templates drawn on the card, "instead" replacement effects, movement rules).
   - X: the player picks the number in the pop-up (the AI uses 1)
   - These phrase rules were written from the card text shapes in the tests and general Sorcery wording, not checked against the full live card list from this workspace. Settings → Card Sync and Card library → Rules coverage show, after a sync, exactly which sentences are still by hand, grouped by ability type and by how often each wording occurs.
 - **Unread sentences on the AI's cards** are logged as "not automated; resolve by hand". The AI does not play magic whose text is entirely by hand, and does not use activated abilities that are entirely by hand.
 - **Static abilities** read today only change power/defense and give keywords. Static mana, threshold, cost and movement rules stay by hand.
 - **Triggered abilities that need a choice** (a target, X, which deck) wait in a queue for their controller before anything else happens; ones with no choice resolve on their own.
-- **Ward** is displayed but not enforced (no definition was available from the source above).
-- **Flood** is not applied to sites.
 - **Auras** are placed on a square you control, not on an intersection, and have no area effect.
 - **Artifacts** can be conjured onto a site or handed to one of your units there (drop the card on the unit); a carried artifact moves with its bearer and is left where the bearer dies. Picking up and putting down afterwards is a Manual tools action. The rulebook's own rules for carrying and for who may pick up were not read; this is a table convenience, and artifact text is not applied to the bearer.
 - **Damage allocation**: an attacker facing several enemies has its damage split automatically to kill the most (weakest minions first, remainder on the next in line). The rulebook lets the attacker choose the split; there is no prompt for it.

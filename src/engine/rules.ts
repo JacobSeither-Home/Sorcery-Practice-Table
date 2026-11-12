@@ -295,8 +295,12 @@ function fits(s: GameState, e: Effect, u: Unit): boolean {
 export function cellsFor(s: GameState, d: CardDef, i: number, origins: Loc[]): number[] {
   const e = d.effects[i]; if (e?.who !== 'atTarget') return [];
   const out: number[] = [];
-  for (let c = 0; c < CELLS; c++) if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c)) && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
-  return out;
+  for (let c = 0; c < CELLS; c++) {
+    if (e.siteKind && (!s.sites[c]?.inst || (e.siteKind === 'water') !== isWater(s, c))) continue;
+    if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c)) && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
+  }
+  const busy = (c: number) => Object.values(s.units).some((u) => u.c === c) ? 0 : 1;
+  return out.sort((a, b) => busy(a) - busy(b) || a - b); // squares with units first
 }
 /** Where a teleport effect may send unit `u`. */
 export function teleportCells(s: GameState, e: Effect, u: Unit | undefined): number[] {

@@ -530,3 +530,4 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .unit .ward { position: absolute; bottom: -5px; left: -5px; font-size: 13px; color: #cfe6ff; text-shadow: 0 0 6px #7fb8ff, 0 0 2px #000; }
 .incant .maybe { margin-left: 8px; padding: 2px 9px; font-size: 11.5px; } .incant .maybe.on { border-color: var(--brass-2); }
 .incant .peek { font-family: var(--display); color: #fff3d6; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 6px; }
+.howto .fineprint { font-size: 11px; color: var(--muted); margin-top: 4px; }

@@ -68,7 +68,7 @@ const subOf = (w: string): string | null => {
 };
 
 /** What a noun phrase picks out. */
-type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref'>;
+type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref' | 'siteKind'>;
 
 /**
  * The noun-phrase grammar for units in card text:
@@ -80,12 +80,13 @@ type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wou
 function nounPhrase(np: string, mode: 'unit' | 'minion' = 'unit'): Sel | null {
   let t = np.replace(/\s+/g, ' ').trim().replace(/[.,]$/, '');
   let maxPower: number | undefined, minPower: number | undefined, surface = false, rnd = 0;
-  let pm: RegExpMatchArray | null;
+  let pm: RegExpMatchArray | null; let siteKind: 'land' | 'water' | undefined;
+  if ((pm = t.match(/ (?:target|a) (land|water) site/i))) { siteKind = pm[1].toLowerCase() as 'land' | 'water'; t = t.replace(` ${pm[1]} site`, ' site'); }
   if ((pm = t.match(/ with (\d+) or (less|more) power/i))) { if (pm[2].toLowerCase() === 'less') maxPower = +pm[1]; else minPower = +pm[1]; t = t.replace(pm[0], ''); }
   if ((pm = t.match(/ (?:on the surface|aboveground|above ground)$/i))) { surface = true; t = t.slice(0, pm.index); }
   if ((pm = t.match(/^(?:each |all )?(?:aboveground|surface) /i))) { surface = true; t = (/^(each|all)/i.test(pm[0]) ? pm[0].split(' ')[0] + ' ' : '') + t.slice(pm[0].length); }
   if ((pm = t.match(/^(?:a|one|another) random /i))) { rnd = 1; t = (/^another/i.test(pm[0]) ? 'each other ' : 'each ') + t.slice(pm[0].length); }
-  const extra = { ...(maxPower !== undefined ? { maxPower } : {}), ...(minPower !== undefined ? { minPower } : {}), ...(surface ? { surface: true } : {}), ...(rnd ? { random: rnd } : {}) };
+  const extra = { ...(siteKind ? { siteKind } : {}), ...(maxPower !== undefined ? { maxPower } : {}), ...(minPower !== undefined ? { minPower } : {}), ...(surface ? { surface: true } : {}), ...(rnd ? { random: rnd } : {}) };
   const r0 = nounPhrase0(t, mode);
   if (!r0) return null;
   if (rnd && (r0.who === 'target' || r0.who === 'self')) return null;

@@ -26,7 +26,8 @@ For whoever picks this up next. Read with `docs/RULES_COVERAGE.md`.
 - `npm test` (43 tests: engine, abilities and triggers, AI legality, art matching, official lists, text reader).
 - `node tests/arena.mjs 8 50` plays the tiers against each other on the fixture decks. Last run: medium beat easy 8/8, hard beat easy 8/8, hard beat medium 7/8.
 - UI: `npm run dev`, open `http://localhost:5173/?local`, Settings → Import cards.json. Headless Chromium via Python Playwright works in the cloud workspace for screenshots and drag tests. Under `npm run dev` the store is on `window.__store`; a script can `import('/tests/fixtures/practiceSet.ts')`, set `pool`, and call `newGame` to get a board without a Card Sync.
-- The workspace shell cannot reach api.sorcerytcg.com or the Pages site. The built-in browser on Jacob's machine can (he has allowed api.sorcerytcg.com, sorcerytcg.com and the Pages origin).
+- The cloud workspace's environment allows api.sorcerytcg.com and sorcerytcg.com (added 2026-11-12). Keep requests to the card API to a single download per working session (the API allows 30 per minute and asks consumers to keep their own copy); keep the file outside the repository (card text is never committed).
+- `node tests/coverage.mjs <cards.json> [out-dir]`: coverage of the reader against a card list.
 
 ## Facts verified against the live API on 2026-11-10
 
@@ -55,7 +56,7 @@ The engine was written from the rulebook as read through a community reader, not
 
 ## Open items, roughly by value
 
-1. Check the phrase rules against the full card list (not available from this workspace: api.sorcerytcg.com is blocked by the network policy here). After one signed-in Card Sync the text is in `public.card_catalog`. Likely next ops: tokens/summons, search, movement effects, site rules (conditional mana/threshold), "whenever" reactions, strike modifiers.
+1. Card text: 817 of 1,100 cards still have a sentence resolved by hand (`node tests/coverage.mjs <cards.json> <out-dir>` writes shapes.tsv and open.tsv). Biggest groups left: search/look at, "instead" replacement and damage prevention ("takes no damage from …"), area templates drawn on the card ("in the area of effect:" — the shape is an image, not text), control changes, forced movement (drag, push, step toward), conditional power ("+1 power for each …", "while …"), spell-casting permissions ("May be cast by any ally"), and the four Beta Avatars' own abilities.
 2. Rules gaps listed in RULES_COVERAGE.md (Ward, Flood, auras on intersections, carried artifacts, entering the void, attacker-chosen damage split, spellcaster element limits).
 3. AI: it treats unautomated spells as unplayable and values minions by stats and keywords only. It does not use tap abilities. `evaluate` weights were set by hand and checked only with the arena script.
 4. Untested on real hardware: online play (PeerJS), touch devices, the full 3.3 GB art load, account sync across two devices.
