@@ -52,6 +52,20 @@ export function Table() {
   const narrow = useMedia('(max-width: 820px)');
   const scroller = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = scroller.current; if (el) { el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; el.scrollTop = (el.scrollHeight - el.clientHeight) / 2; } }, [boardSize]);
+  // Fit view: centre the board on the screen rather than on the column between the side panels, as far as the spare room allows.
+  useEffect(() => {
+    const el = scroller.current; const wrap = el?.parentElement; if (!el || !wrap) return;
+    const place = () => {
+      const mat = el.querySelector<HTMLElement>('.mat'); const bar = wrap.querySelector<HTMLElement>('.turnbar');
+      if (boardSize !== 'fit' || !mat) { wrap.style.removeProperty('--shift'); wrap.style.removeProperty('--shift-bar'); return; }
+      const r = el.getBoundingClientRect(); const off = window.innerWidth / 2 - (r.left + r.width / 2);
+      const cap = (w: number) => { const free = Math.max(0, (r.width - w) / 2); return Math.round(Math.max(-free, Math.min(free, off))); };
+      wrap.style.setProperty('--shift', `${cap(mat.offsetWidth)}px`);
+      wrap.style.setProperty('--shift-bar', `${cap(bar?.offsetWidth ?? r.width)}px`);
+    };
+    place(); const ro = new ResizeObserver(place); ro.observe(el); window.addEventListener('resize', place);
+    return () => { ro.disconnect(); window.removeEventListener('resize', place); };
+  }, [boardSize, settings.infoPanel]);
 
   // clear transient UI whenever the game state moves on
   useEffect(() => { setSel(null); setMenu(null); setPicks([]); setRemoveOrig(false); setMull([]); }, [s]);
@@ -193,17 +207,6 @@ export function Table() {
 
   const order = [...Array(CELLS).keys()]; if (flip) order.reverse();
   const rubble = useMemo(() => Object.values(s.cards).find((c) => c.name.toLowerCase() === 'rubble'), [s.cards]);
-  // How strongly each element reaches each square: every site radiates its threshold, falling off with distance.
-  const voidTint = useMemo(() => {
-    const src: { x: number; y: number; th: Record<string, number> }[] = [];
-    order.forEach((c, i) => { const st = s.sites[c]; if (st?.inst) src.push({ x: i % COLS, y: Math.floor(i / COLS), th: cardOf(s, st.inst).thresholds }); });
-    return order.map((_, i) => {
-      const x = i % COLS, y = Math.floor(i / COLS); const v: Record<string, number> = {};
-      for (const e of ELEMENTS) { let sum = 0; for (const q of src) { const k = q.th[e]; if (k) { const dist = Math.max(Math.abs(q.x - x), Math.abs(q.y - y)); sum += k / (dist * dist); } } v[e] = Math.min(1, sum / 3.5); }
-      const dom = ELEMENTS.reduce((a, b) => (v[b] > v[a] ? b : a));
-      return { dom: v[dom] > 0.12 ? dom : '', style: { '--ef': v.fire, '--ew': v.water, '--ea': v.air, '--ee': v.earth } as React.CSSProperties };
-    });
-  }, [s.sites, flip]);
   const unitsByCell = useMemo(() => { const m = new Map<number, Unit[]>(); for (const u of Object.values(s.units)) { if (!m.has(u.c)) m.set(u.c, []); m.get(u.c)!.push(u); } return m; }, [s.units]);
   const pend = s.pending;
   const pendUnits = pend ? responders(s) : [];
@@ -215,6 +218,7 @@ export function Table() {
 
   return (
     <div className={`table board-${boardSize} ${settings.infoPanel === false ? 'no-info' : ''}`} style={{ '--pace': pace } as React.CSSProperties}>
+      <ElementAura s={s} />
       <aside className="rail left">
         <PlayerPanel g={g} p={opp} manual={manual} />
         <LogPanel s={s} g={g} />
@@ -243,16 +247,14 @@ export function Table() {
 
         <div className="board-scroll" ref={scroller}>
           <div className="mat" onClick={() => { setSel(null); setMenu(null); }}>
-            <ElementAura s={s} order={order} />
             <svg className="rune-ring" viewBox="-100 -100 200 200" aria-hidden><RuneRing /></svg>
             {order.map((c, di) => {
               const site = s.sites[c]; const d = site?.inst ? cardOf(s, site.inst) : undefined; const hi = hiCells.get(c);
               const rub = site && !site.inst ? rubble : undefined; // Rubble is a token card in the pool: show its art and let it be read like any card
-              const tint = site ? undefined : voidTint[di];
               const [x, y] = xy(c); const mark = herald?.marks.get(c);
               return (
-                <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''} ${tint?.dom ? 'dom-' + tint.dom : ''}`}
-                  style={tint?.style} onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d ?? rub)} data-cell={c}>
+                <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d ?? rub)} data-cell={c}>
                   {d && <SiteArt id={d.id} />}
                   {rub && <SiteArt id={rub.id} upright={rub.type !== 'Site'} />}
                   {d && <span className="site-flash" key={site!.inst} />}
@@ -462,21 +464,14 @@ function AttachTab({ card }: { card: CardDef }) {
  * The void takes on the elements of the sites in play. Each element gets a glow centred on where its
  * sites are, growing and brightening with the total threshold of that element on the board.
  */
-function ElementAura({ s, order }: { s: GameState; order: number[] }) {
-  const glows = useMemo(() => {
-    const acc = ELEMENTS.map((e) => ({ e, n: 0, x: 0, y: 0 }));
-    order.forEach((c, i) => {
-      const site = s.sites[c]; if (!site?.inst) return;
-      const th = cardOf(s, site.inst).thresholds;
-      acc.forEach((a) => { const k = th[a.e]; if (k > 0) { a.n += k; a.x += k * ((i % COLS) + 0.5) / COLS; a.y += k * (Math.floor(i / COLS) + 0.5) / (CELLS / COLS); } });
-    });
-    return acc.filter((a) => a.n > 0).map((a) => ({ e: a.e, i: Math.min(1, a.n / 8), x: (a.x / a.n) * 100, y: (a.y / a.n) * 100 }));
-  }, [s.sites, order.join()]);
-  return (
-    <div className="aura-layer" aria-hidden>
-      {glows.map((g) => <div key={g.e} className={`el-glow ${g.e}`} style={{ left: `${g.x}%`, top: `${g.y}%`, ['--i' as string]: g.i }}><span /><span /></div>)}
-    </div>
-  );
+/** Very faint washes behind the whole table that strengthen as each element's threshold builds up in the realm. */
+function ElementAura({ s }: { s: GameState }) {
+  const total = useMemo(() => {
+    const n: Record<string, number> = {};
+    for (const site of Object.values(s.sites)) { if (!site?.inst) continue; const th = cardOf(s, site.inst).thresholds; for (const e of ELEMENTS) n[e] = (n[e] ?? 0) + (th[e] ?? 0); }
+    return n;
+  }, [s.sites]);
+  return <div className="table-aura" aria-hidden>{ELEMENTS.map((e) => <i key={e} className={e} style={{ ['--i' as string]: Math.min(1, (total[e] ?? 0) / 6) }} />)}</div>;
 }
 function SiteArt({ id, upright }: { id: string; upright?: boolean }) {
   const art = useStore((st) => st.art[id]);
