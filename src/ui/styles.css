@@ -528,3 +528,4 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .howto .trig { color: var(--brass); }
 @media (max-width: 640px) { .howto-terms div { grid-template-columns: 1fr; gap: 0; } }
 .unit .ward { position: absolute; bottom: -5px; left: -5px; font-size: 13px; color: #cfe6ff; text-shadow: 0 0 6px #7fb8ff, 0 0 2px #000; }
+.incant .maybe { margin-left: 8px; padding: 2px 9px; font-size: 11.5px; } .incant .maybe.on { border-color: var(--brass-2); }

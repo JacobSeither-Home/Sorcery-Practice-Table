@@ -13,6 +13,10 @@ const WHEN: Record<Trigger, string> = {
   startTurn: 'Happens at the start of your turn, after your cards untap.',
   endTurn: 'Happens at the end of your turn, before damage clears.',
   static: 'Always on while the card is in the realm.',
+  dies: 'Reaction: happens on its own whenever a unit it watches dies.',
+  damaged: 'Reaction: happens on its own whenever this takes damage.',
+  attacks: 'Reaction: happens on its own whenever this attacks.',
+  enters: 'Reaction: happens on its own whenever a unit it watches enters its location.',
 };
 
 /** One line per ability group, saying what the table does with it. */
@@ -40,7 +44,7 @@ export function HowItWorks({ card, open: start = false }: { card: CardDef; open?
             {g.parts.map((e, j) => <p key={j} className={e.op === 'manual' ? 'by-hand' : 'auto'}>
               {e.op === 'manual'
                 ? <>✋ “{e.text}” — the table does not do this automatically. The cast pop-up opens the hand tools so you can do it yourself; the change is marked in the log.</>
-                : <>✓ {describe(e)}{e.cost ? `, costs ${e.cost} mana` : ''} — the table does this for you{e.who === 'target' || e.x || (e.op === 'draw' && !e.deck) ? ' after you choose' : ''}.</>}
+                : <>✓ {describe(e)}{e.cost ? `, costs ${e.cost} mana` : ''}{e.optional ? ' (optional: you can skip it in the pop-up)' : ''} — the table does this for you{e.who === 'target' || e.x || (e.op === 'draw' && !e.deck) ? ' after you choose' : ''}.</>}
             </p>)}
           </li>
         ))}</ul>}

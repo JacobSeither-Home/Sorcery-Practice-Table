@@ -16,17 +16,35 @@ export interface Loc { c: number; r: Region }
  *  activated — activated without tapping, whenever the controller chooses (once per turn unless `repeat`)
  *  startTurn / endTurn — at the start / end of its controller's turn
  *  static    — always on while the card is in the realm (stat changes and granted keywords) */
-export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | 'startTurn' | 'endTurn' | 'static';
-export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static'];
+export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | 'startTurn' | 'endTurn' | 'static'
+  /** reactions ("Whenever …"): a unit dies, this takes damage, this attacks, a unit enters here; `ev` narrows which */
+  | 'dies' | 'damaged' | 'attacks' | 'enters';
+export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters'];
+/** Which events a reaction listens to, relative to the card that has it. */
+export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean }
 export type Op =
   | 'damage' | 'heal' | 'loseLife' | 'draw' | 'mana' | 'destroy' | 'banish' | 'bounce'
   | 'tap' | 'untap' | 'buff' | 'grant' | 'discard'
+  /** mana and/or threshold: static ("Provides (F)") or for this turn ("Genesis → Provides (A)(E) this turn") */
+  | 'provide'
+  /** put a token minion (by card name) into the realm at the ability's location */
+  | 'summon'
+  /** shoot a projectile from the source (or the caster) in a chosen direction */
+  | 'shoot'
+  /** the source unit strikes the victims with its power */
+  | 'strike'
+  /** put the top N cards of a deck into the cemetery ("Discard your top two spells") */
+  | 'mill'
   /** a sentence the engine cannot carry out: the cast pop-up offers the hand tools for it */
   | 'manual';
 export type Who =
   | 'target' | 'enemyAvatar' | 'ownAvatar' | 'enemiesHere' | 'controller' | 'nearbyAvatars'
   | 'opponent' | 'self' | 'alliesHere' | 'unitsHere' | 'minionsHere' | 'enemiesNearby' | 'alliesNearby' | 'unitsNearby'
-  | 'allMinions' | 'enemyMinions' | 'allyMinions' | 'allAvatars' | 'bearer';
+  | 'allMinions' | 'enemyMinions' | 'allyMinions' | 'allAvatars' | 'bearer'
+  /** units at a location the player chooses (Choice.cell), within `range` */
+  | 'atTarget'
+  /** the site this card is at: damage to it costs its controller life */
+  | 'siteHere';
 
 /** Data-driven ability. Most cards are data entries, not code. */
 export interface Effect {
@@ -40,20 +58,44 @@ export interface Effect {
   /** only applies when this is the single copy of the card (by name) among the sites its controller has */
   cond?: 'onlyCopy';
   /** for who:'target' — how far from a spellcaster (or from the unit itself for genesis and activated abilities) */
-  range?: 'here' | 'adjacent' | 'nearby' | 'any';
+  range?: 'here' | 'adjacent' | 'nearby' | 'two' | 'three' | 'any';
   deck?: 'spellbook' | 'atlas';
+  /** reactions: which events trigger it */
+  ev?: EventFilter;
+  /** "You may …": the player can skip this part when it resolves */
+  optional?: boolean;
+  /** "it" / "them": the unit chosen for the previous targeted effect on the same line */
+  ref?: boolean;
   /** group effects (each, all …): leave out the card's own unit */
   other?: boolean;
   /** effects read from the same line of text resolve together (an activated ability and what it does) */
   line?: number;
   /** restrict a targeted effect */
   only?: 'minion' | 'enemy' | 'ally' | 'enemyMinion' | 'allyMinion' | 'avatar';
+  /** only units with one of these subtypes (Mortal, Undead, Evil …) */
+  sub?: string[];
+  /** only units with this keyword ("target Spellcaster minion") */
+  kw?: string;
+  /** only units on the surface ("aboveground", "on the surface") */
+  surface?: boolean;
+  /** only units with at most / at least this much power */
+  maxPower?: number; minPower?: number;
+  /** groups: pick this many of them at random ("a random unit at target location") */
+  random?: number;
+  /** shoot: how many projectiles in the chosen direction (-1: X); pierce: hits every unit along the path */
+  shots?: number; pierce?: boolean;
+  /** only wounded units (damaged this turn) */
+  wounded?: boolean;
+  /** provide: elements given */
+  el?: Partial<Record<Element, number>>;
+  /** summon: the token's card name; shoot: extra damage to each other unit where it hits */
+  token?: string; splash?: number;
   /** buff: power and defense change */
   atk?: number; def?: number;
   /** grant: the keyword given */
   keyword?: string;
   /** buff/grant: how long it lasts (static abilities last while the card is in the realm) */
-  until?: 'turn' | 'permanent';
+  until?: 'turn' | 'next' | 'permanent';
   /** activated abilities: mana paid on use */
   cost?: number;
   /** activated without tapping: may be used more than once per turn */
@@ -67,7 +109,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean }
+export interface Choice { target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -91,6 +133,8 @@ export interface CardDef {
   typeline: string;
   printings: { slug: string; set: string; finish?: string; product?: string }[];
   source: 'api' | 'practice' | 'custom';
+  /** the API's engine.category: 'Token' cards are banished when they leave the realm */
+  category?: string;
   effects: Effect[];
 }
 
@@ -111,7 +155,7 @@ export interface Unit {
   /** power/defense changes and granted keywords from abilities; `turn` = expires at the end of that turn */
   mods?: Mod[];
 }
-export interface Mod { atk: number; def: number; kw?: string; turn?: number; from: string }
+export interface Mod { atk: number; def: number; kw?: string; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; c: number; kind: 'artifact' | 'aura'; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
@@ -128,6 +172,8 @@ export interface PlayerState {
   cemetery: string[];
   avatar: string; // unit id
   mulliganDone: boolean;
+  /** threshold (and mana already added) from "Provides … this turn" effects, for the turn given */
+  extra?: { turn: number; th: Partial<Record<Element, number>> };
 }
 
 export type Pending = {
@@ -151,6 +197,8 @@ export interface Queued {
   loc: Loc | null;
   /** the unit/permanent/site it came from, when it is still on the table */
   src?: Source;
+  /** reactions: the unit the event happened to ("it" in the card text) */
+  subject?: string;
 }
 
 export interface LogEntry { turn: number; p: PlayerId | null; text: string; manual?: boolean }

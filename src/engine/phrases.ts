@@ -5,10 +5,11 @@
 // long as its cards use phrasing these rules already know. `analyzeCards` reports what is and is not
 // covered, grouped by ability type, so new phrasing shows up after a Card Sync.
 //
-// Source of the phrasing: written from the card-text shapes the engine already read (cards.ts, checked
-// against the API on 2026-11-10) and general Sorcery wording. Any rule here that turns out not to match
-// real card text simply never fires; the coverage report shows what is left.
-import type { CardDef, CardType, Effect, Trigger, Who } from './types';
+// Source of the phrasing: the rules text of every card in GET https://api.sorcerytcg.com/api/cards, read
+// on 2026-11-12 (1,100 cards), and the Codex at https://sorcerytcg.com/codex for what the words mean
+// (nearby, adjacent, here, heal, Ward, projectile …). `node tests/coverage.mjs cards.json` reports what
+// is still by hand.
+import type { CardDef, CardType, Effect, Element, EventFilter, Trigger, Who } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
 const KEYWORD_LINE = new RegExp(`^(${KEYWORDS.join('|')})(\\s*\\+?\\s*\\d+)?$`, 'i');
@@ -24,6 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
+  provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -51,156 +53,296 @@ export function categorize(sentence: string): Category {
 const WORDNUM: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7 };
 const NUM = '(\\d+|a|an|one|two|three|four|five|six|seven|x)';
 const amount = (w: string): Pick<Effect, 'n' | 'x'> => (/^x$/i.test(w) ? { x: true } : { n: WORDNUM[w.toLowerCase()] ?? +w });
-/** ① .. ⑳ are the circled digits U+2460..; "(1)" and "1 mana" are accepted as well */
+/** Mana in card text: ① .. ⑳ (U+2460..), "(1)", or "1 mana" */
 const MANA = '([\\u2460-\\u2473]|\\(\\d+\\)|\\d+ mana)';
 const manaOf = (w: string) => (/^[①-⑳]$/.test(w) ? w.charCodeAt(0) - 0x245f : parseInt(w.replace(/\D/g, ''), 10));
+/** Element symbols in card text: (A) air, (E) earth, (F) fire, (W) water */
+const EL: Record<string, Element> = { A: 'air', E: 'earth', F: 'fire', W: 'water' };
+const elementsOf = (t: string) => { const o: Partial<Record<Element, number>> = {}; for (const m of t.matchAll(/\(([AEFW])\)/g)) o[EL[m[1]]] = (o[EL[m[1]]] ?? 0) + 1; return o; };
 
-type TargetSpec = Pick<Effect, 'who' | 'range' | 'only'>;
-type GroupSpec = Pick<Effect, 'who' | 'other' | 'only'>;
+/** Subtypes and umbrella words that narrow a noun ("Undead allies", "target nearby Giant"). From the API's subtype list. */
+const SUBTYPES = ['Angel', 'Beast', 'Demon', 'Dragon', 'Dwarf', 'Faerie', 'Giant', 'Gnome', 'Goblin', 'Merfolk', 'Monster', 'Mortal', 'Ogre', 'Spirit', 'Sphinx', 'Troll', 'Undead', 'Knight', 'Royalty', 'Evil'];
+const subOf = (w: string): string | null => {
+  const t = w.toLowerCase().replace(/ies$/, 'y').replace(/(?<=[a-z])s$/, '').replace(/^faery$/, 'faerie');
+  return SUBTYPES.find((x) => x.toLowerCase() === t || x.toLowerCase() === w.toLowerCase()) ?? null;
+};
 
-/** "target nearby enemy minion", "target unit here", "target ally" … */
-function target(np: string): TargetSpec | null {
-  const m = np.match(/^target (?:(nearby|adjacent) )?(?:(enemy|allied|other) )?(unit|minion|avatar|ally|enemy)(?: (nearby|adjacent|here|at (?:this|its) location|atop this site))?$/i);
-  if (!m) return null;
-  const where = (m[1] || m[4] || '').toLowerCase();
-  const range: Effect['range'] = where === 'adjacent' ? 'adjacent' : where === 'nearby' ? 'nearby' : where ? 'here' : 'any';
-  const side = (m[2] || '').toLowerCase(), noun = m[3].toLowerCase();
-  let only: Effect['only'];
-  if (noun === 'avatar') only = 'avatar';
-  else if (noun === 'ally') only = 'ally';
-  else if (noun === 'enemy') only = 'enemy';
-  else if (noun === 'minion') only = side === 'enemy' ? 'enemyMinion' : side === 'allied' ? 'allyMinion' : 'minion';
-  else only = side === 'enemy' ? 'enemy' : side === 'allied' ? 'ally' : undefined;
-  return { who: 'target', range, ...(only ? { only } : {}) };
+/** What a noun phrase picks out. */
+type Sel = Pick<Effect, 'who' | 'range' | 'only' | 'other' | 'sub' | 'kw' | 'wounded' | 'ref'>;
+
+/**
+ * The noun-phrase grammar for units in card text:
+ *   [each|all|every|target|an|a|another] [other] [nearby|adjacent] [enemy|allied|opposing] [wounded]
+ *   [Subtype…|Keyword] [unit(s)|minion(s)|ally|allies|enemy|enemies|Avatar(s)|Subtype(s)]
+ *   [here|there|nearby|adjacent|atop this site|at its location|at target [nearby|adjacent] location/site]
+ * A target is chosen by the player; "an ally" and "another ally" are chosen too (range anywhere).
+ */
+function nounPhrase(np: string, mode: 'unit' | 'minion' = 'unit'): Sel | null {
+  let t = np.replace(/\s+/g, ' ').trim().replace(/[.,]$/, '');
+  let maxPower: number | undefined, minPower: number | undefined, surface = false, rnd = 0;
+  let pm: RegExpMatchArray | null;
+  if ((pm = t.match(/ with (\d+) or (less|more) power/i))) { if (pm[2].toLowerCase() === 'less') maxPower = +pm[1]; else minPower = +pm[1]; t = t.replace(pm[0], ''); }
+  if ((pm = t.match(/ (?:on the surface|aboveground|above ground)$/i))) { surface = true; t = t.slice(0, pm.index); }
+  if ((pm = t.match(/^(?:each |all )?(?:aboveground|surface) /i))) { surface = true; t = (/^(each|all)/i.test(pm[0]) ? pm[0].split(' ')[0] + ' ' : '') + t.slice(pm[0].length); }
+  if ((pm = t.match(/^(?:a|one|another) random /i))) { rnd = 1; t = (/^another/i.test(pm[0]) ? 'each other ' : 'each ') + t.slice(pm[0].length); }
+  const extra = { ...(maxPower !== undefined ? { maxPower } : {}), ...(minPower !== undefined ? { minPower } : {}), ...(surface ? { surface: true } : {}), ...(rnd ? { random: rnd } : {}) };
+  const r0 = nounPhrase0(t, mode);
+  if (!r0) return null;
+  if (rnd && (r0.who === 'target' || r0.who === 'self')) return null;
+  return { ...r0, ...extra } as Sel;
 }
-/** "each other enemy minion here", "all units nearby", "allies here" … */
-function group(np: string): GroupSpec | null {
-  const m = np.match(/^(?:(?:each|all|every) )?(other )?(enemy |allied |other )?(units?|minions?|avatars?|allies|ally|enemies|enemy)(?: (here|nearby|adjacent|atop this site|at (?:this|its) location))?$/i);
-  if (!m) return null;
-  if (!/^(each|all|every)\b/i.test(np) && !/^(other )?(allies|enemies)/i.test(np)) return null; // a bare "minion" is not a group
-  const other = !!m[1] || /other/i.test(m[2] || '');
-  const side = /enemy|enemies/i.test((m[2] || '') + m[3]) ? 'enemy' : /allied|all(y|ies)/i.test((m[2] || '') + m[3]) ? 'ally' : 'any';
-  const noun = m[3].toLowerCase().replace(/s$/, '').replace(/ie$/, 'y');
-  const loc = (m[4] || '').toLowerCase();
-  const here = loc === 'here' || loc.startsWith('at ') || loc.startsWith('atop'); const near = loc === 'nearby' || loc === 'adjacent';
-  let who: Who | null = null;
-  if (noun === 'avatar') who = loc ? (near ? 'nearbyAvatars' : null) : side === 'enemy' ? 'enemyAvatar' : side === 'ally' ? 'ownAvatar' : 'allAvatars';
-  else who = here ? (side === 'enemy' ? 'enemiesHere' : side === 'ally' ? 'alliesHere' : 'unitsHere') : near ? (side === 'enemy' ? 'enemiesNearby' : side === 'ally' ? 'alliesNearby' : 'unitsNearby') : noun === 'minion' ? (side === 'enemy' ? 'enemyMinions' : side === 'ally' ? 'allyMinions' : 'allMinions') : null;
-  // "each minion here" leaves Avatars out; "each unit here" and "each enemy here" include them
-  return who ? { who, ...(other ? { other: true } : {}), ...(noun === 'minion' ? { only: 'minion' as const } : {}) } : null;
+function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
+  let t = np;
+  const tl = t.toLowerCase();
+  if (/^(this|itself|this (minion|unit))$/.test(tl)) return { who: 'self' };
+  if (/^(it|them|that (minion|unit|ally|enemy))$/.test(tl)) return { who: 'target', ref: true } as Sel;
+  if (/^(its |the )?bearer$/.test(tl)) return { who: 'bearer' };
+  if (/^your avatar$|^you$/.test(tl)) return { who: 'ownAvatar' };
+  if (/^(the |each )?enemy avatars?$|^the opposing avatar$|^your opponent'?s? avatar$|^opposing avatars?$/.test(tl)) return { who: 'enemyAvatar' };
+  if (/^(each|every|all|both) avatars?$/.test(tl)) return { who: 'allAvatars' };
+  if (/^(each )?nearby avatars?$/.test(tl)) return { who: 'nearbyAvatars' };
+  let m = t.match(/^(each|all|every|target|an|a|another|one)\s+/i);
+  const q = m ? m[1].toLowerCase() : ''; if (m) t = t.slice(m[0].length);
+  let other = q === 'another';
+  if ((m = t.match(/^other\s+/i))) { other = true; t = t.slice(m[0].length); }
+  let range: Effect['range'] | undefined; let atTarget = false;
+  const steps = t.match(/ up to (two|three) steps away$/i); if (steps) { t = t.slice(0, steps.index); range = steps[1].toLowerCase() as Effect['range']; }
+  if ((m = t.match(/^(nearby|adjacent)\s+/i))) { range = m[1].toLowerCase() as Effect['range']; t = t.slice(m[0].length); }
+  // trailing location
+  const tail = t.match(/\s+(here|there|nearby|adjacent|atop this site|at (?:this|its) location|at its site|(?:at|atop|occupying) (?:target|a) (?:(nearby|adjacent) )?(?:location|site)(?: (nearby|adjacent))?(?: up to (two|three) steps away)?|atop target (?:(nearby|adjacent) )?site)$/i);
+  if (tail) {
+    t = t.slice(0, tail.index);
+    const w = tail[1].toLowerCase();
+    if (/target|^(at|atop|occupying) a /.test(w)) { atTarget = true; range = ((tail[2] || tail[3] || tail[4] || tail[5] || '').toLowerCase() as Effect['range']) || range || 'any'; }
+    else range = /here|there|this|its/.test(w) ? 'here' : (w as Effect['range']);
+  }
+  let side: 'enemy' | 'ally' | '' = '';
+  if ((m = t.match(/^(enemy|allied|opposing|your)\s+/i))) { side = /enemy|opposing/i.test(m[1]) ? 'enemy' : 'ally'; t = t.slice(m[0].length); }
+  let wounded = false;
+  if ((m = t.match(/^wounded\s+/i))) { wounded = true; t = t.slice(m[0].length); }
+  const words = t.split(' ');
+  const noun = words.pop()!.toLowerCase();
+  const subs: string[] = []; let kw: string | undefined;
+  for (const w of words) {
+    if (/^(or|and)$/i.test(w)) continue;
+    const sb = subOf(w.replace(/,$/, '')); if (sb) { subs.push(sb); continue; }
+    const k = KEYWORDS.find((x) => x.toLowerCase() === w.toLowerCase()); if (k) { kw = k; continue; }
+    return null; // a word we do not understand (Unique, Elite, Ordinary …): leave the sentence for the hand tools
+  }
+  let kind: 'unit' | 'minion' | 'avatar';
+  if (/^units?$/.test(noun)) kind = 'unit';
+  else if (/^minions?$/.test(noun)) kind = 'minion';
+  else if (/^avatars?$/.test(noun)) kind = 'avatar';
+  else if (/^all(y|ies)$/.test(noun)) { kind = 'unit'; side = 'ally'; }
+  else if (/^enem(y|ies)$/.test(noun)) { kind = 'unit'; side = 'enemy'; }
+  else { const sb = subOf(noun); if (!sb) return null; subs.push(sb); kind = 'minion'; }
+  if (mode === 'minion' && kind === 'unit') kind = 'minion';
+  const filters = { ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
+  const only: Effect['only'] = kind === 'avatar' ? 'avatar' : kind === 'minion' ? (side === 'enemy' ? 'enemyMinion' : side === 'ally' ? 'allyMinion' : 'minion') : side === 'enemy' ? 'enemy' : side === 'ally' ? 'ally' : undefined;
+  if (atTarget) return { who: 'atTarget', range: range ?? 'any', ...(only ? { only } : {}), ...filters };
+  const chosen = q === 'target' || q === 'an' || q === 'a' || q === 'another' || q === 'one';
+  if (chosen) return { who: 'target', range: range ?? 'any', ...(only ? { only } : {}), ...filters };
+  // a group needs each/all, a plural, or a place
+  if (!q && !/s$/.test(noun) && !/ies$/.test(noun) && !range && !(subs.length && other)) return null;
+  const here = range === 'here', near = range === 'nearby' || range === 'adjacent';
+  let who: Who;
+  if (kind === 'avatar') { if (near) who = 'nearbyAvatars'; else if (side === 'enemy') who = 'enemyAvatar'; else if (side === 'ally') who = 'ownAvatar'; else who = 'allAvatars'; return { who }; }
+  if (here) who = side === 'enemy' ? 'enemiesHere' : side === 'ally' ? 'alliesHere' : 'unitsHere';
+  else if (near) who = side === 'enemy' ? 'enemiesNearby' : side === 'ally' ? 'alliesNearby' : 'unitsNearby';
+  else who = side === 'enemy' ? 'enemyMinions' : side === 'ally' ? 'allyMinions' : 'allMinions';
+  if (!range && kind === 'unit' && !subs.length && side === '') return null; // "each unit" anywhere: Avatars too, not modelled
+  return { who, ...(kind === 'minion' || (!range && kind === 'unit') ? { only: 'minion' as const } : {}), ...filters };
 }
-/** Subjects of "X gets/gains/has …" */
-function subject(np: string, trigger: Trigger): (TargetSpec | GroupSpec) | null {
-  const t = np.toLowerCase();
-  if (/^this (minion|unit|creature|site|artifact|aura)$|^it$/.test(t)) return { who: 'self' };
-  if (/^your avatar$/.test(t)) return { who: 'ownAvatar' };
-  if (/^(its |the )?bearer$|^the unit carrying this$/.test(t)) return { who: 'bearer' };
-  if (trigger !== 'static' && /^target /.test(t)) return target(np);
-  return group(np);
-}
-const plainNoun = (np: string) => np.replace(/\s+/g, ' ').trim();
+const minionOnly = (v: Sel | null): Sel | null => {
+  if (!v || ['enemyAvatar', 'ownAvatar', 'allAvatars', 'nearbyAvatars'].includes(v.who) || v.only === 'avatar') return null;
+  if (v.who === 'target' || v.who === 'atTarget') return { ...v, only: v.only === 'enemy' ? 'enemyMinion' : v.only === 'ally' ? 'allyMinion' : v.only ?? 'minion' };
+  return v;
+};
 
 interface Rule { id: string; label: string; re: RegExp; build: (m: RegExpMatchArray, on: Trigger, type: CardType) => Omit<Effect, 'on'>[] | null }
-
-/** A noun phrase for damage and removal: a target, a group, or a named Avatar. */
-function victim(np: string, allowAvatar = true): TargetSpec | GroupSpec | null {
-  const t = np.toLowerCase();
-  if (allowAvatar) {
-    if (/^(the |each )?enemy avatars?$|^the opposing avatar$|^your opponent'?s? avatar$/.test(t)) return { who: 'enemyAvatar' };
-    if (/^your avatar$/.test(t)) return { who: 'ownAvatar' };
-    if (/^each avatar$|^all avatars$|^both avatars$/.test(t)) return { who: 'allAvatars' };
-    if (/^(this (minion|unit))$|^itself$/.test(t)) return { who: 'self' };
-  }
-  const tg = target(np); if (tg) return allowAvatar || tg.only !== 'avatar' ? tg : null;
-  const g = group(np); if (!g) return null;
-  if (!allowAvatar && ['enemyAvatar', 'ownAvatar', 'allAvatars', 'nearbyAvatars'].includes(g.who)) return null;
-  return g;
-}
-const removal = (op: 'destroy' | 'banish') => (m: RegExpMatchArray): Omit<Effect, 'on'>[] | null => {
-  const v = victim(plainNoun(m[1]), false); if (!v) return null;
-  if (v.who === 'target' && !(v as TargetSpec).only) (v as TargetSpec).only = 'minion';
-  if (v.who === 'target' && (v as TargetSpec).only === 'enemy') (v as TargetSpec).only = 'enemyMinion';
-  if (v.who === 'target' && (v as TargetSpec).only === 'ally') (v as TargetSpec).only = 'allyMinion';
-  return [{ op, ...v }];
-};
+const KW = `(?:${GRANTABLE.join('|')})`;
+const UNTIL = '( this turn| until the end of (?:the|this) turn| until your next turn)?';
+const until = (w: string | undefined, on: Trigger): Effect['until'] => (on === 'static' ? 'permanent' : !w ? 'permanent' : /next/.test(w) ? 'next' : 'turn');
+const num = (x?: string) => (x ? parseInt(x.replace('−', '-'), 10) : 0);
+const kwList = (t: string) => t.split(/, and |, | and /).map((k) => GRANTABLE.find((g) => g.toLowerCase() === k.trim().toLowerCase())).filter((k): k is string => !!k);
 
 export const RULES: Rule[] = [
   { id: 'avatar-site', label: 'Avatar: tap to play or draw a site', re: /^play or draw a site\.?$/i, build: () => [] },
+  // damage
   { id: 'damage', label: 'Deal N damage to …', re: new RegExp(`^deal ${NUM} damage to (.+?)\\.$`, 'i'),
-    build: (m) => { const v = victim(plainNoun(m[2])); return v ? [{ op: 'damage', ...amount(m[1]), ...v }] : null; } },
+    build: (m) => { if (/^this site$/i.test(m[2])) return [{ op: 'damage', ...amount(m[1]), who: 'siteHere' }]; const v = nounPhrase(m[2]); return v ? [{ op: 'damage', ...amount(m[1]), ...v }] : null; } },
   { id: 'takes-damage', label: '… takes N damage', re: new RegExp(`^(.+?) takes? ${NUM} damage\\.$`, 'i'),
-    build: (m) => { const v = victim(plainNoun(m[1])); return v ? [{ op: 'damage', ...amount(m[2]), ...v }] : null; } },
-  { id: 'destroy', label: 'Destroy / kill …', re: /^(?:destroy|kill|slay) (.+?)\.$/i, build: removal('destroy') },
-  { id: 'banish', label: 'Banish …', re: /^banish (.+?)\.$/i, build: removal('banish') },
-  { id: 'bounce', label: "Return … to its owner's hand", re: /^return (.+?) to (?:its|their) owner'?s'? hands?\.$/i,
-    build: (m) => { const v = victim(plainNoun(m[1]), false); if (!v) return null; if (v.who === 'target' && !(v as TargetSpec).only) (v as TargetSpec).only = 'minion'; return [{ op: 'bounce', ...v }]; } },
-  { id: 'tap', label: 'Tap / untap …', re: /^(tap|untap) (.+?)\.$/i,
-    build: (m) => { const v = subject(plainNoun(m[2]), 'cast') ?? victim(plainNoun(m[2])); return v ? [{ op: m[1].toLowerCase() as 'tap' | 'untap', ...v }] : null; } },
-  { id: 'gain-life', label: 'Gain N life', re: new RegExp(`^(?:you |your avatar )?(?:gains?|heals?) ${NUM} life\\.$`, 'i'), build: (m) => [{ op: 'heal', ...amount(m[1]), who: 'controller' }] },
-  { id: 'avatars-heal', label: 'Each nearby Avatar heals N life', re: new RegExp(`^each (nearby )?avatar (?:heals|gains) ${NUM} life\\.$`, 'i'),
-    build: (m) => [{ op: 'heal', ...amount(m[2]), who: m[1] ? 'nearbyAvatars' : 'allAvatars' }] },
+    build: (m) => { const v = nounPhrase(m[1]); return v ? [{ op: 'damage', ...amount(m[2]), ...v }] : null; } },
+  { id: 'strike', label: 'Strike …', re: /^(?:this |it )?strikes? (.+?)\.$/i,
+    build: (m, on, type) => { if (type === 'Site' || type === 'Aura') return null; const v = nounPhrase(m[1]); return v && v.who !== 'self' ? [{ op: 'strike', ...v }] : null; } },
+  { id: 'shoot', label: 'Shoot a projectile that deals N damage', re: new RegExp(`^shoot (?:a|one) (?:${NUM}-damage )?projectile(?: that deals ${NUM} damage)?\\.$`, 'i'),
+    build: (m) => { const n = m[1] ?? m[2]; return n ? [{ op: 'shoot', ...amount(n), who: 'controller' }] : null; } },
+  // removal
+  { id: 'destroy', label: 'Destroy / kill …', re: /^(?:destroy|kill|slay) (.+?)\.$/i, build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v ? [{ op: 'destroy', ...v }] : null; } },
+  { id: 'banish', label: 'Banish …', re: /^banish (.+?)\.$/i, build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v ? [{ op: 'banish', ...v }] : null; } },
+  { id: 'bounce', label: "Return … to its owner's hand", re: /^return (.+?) to (?:its|their) owner'?s'? hands?\.$/i, build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v ? [{ op: 'bounce', ...v }] : null; } },
+  { id: 'tap', label: 'Tap / untap …', re: /^(tap|untap) (.+?)\.$/i, build: (m) => { const v = nounPhrase(m[2]); return v ? [{ op: m[1].toLowerCase() as 'tap' | 'untap', ...v }] : null; } },
+  // life
+  { id: 'gain-life', label: 'You heal / gain N life', re: new RegExp(`^(?:you |your avatar )?(?:gains?|heals?) ${NUM}(?: life)?\\.$`, 'i'), build: (m) => [{ op: 'heal', ...amount(m[1]), who: 'controller' }] },
+  { id: 'heal-unit', label: 'Heal …', re: new RegExp(`^(?:fully )?heal (.+?)(?: by ${NUM})?\\.$`, 'i'), build: (m) => { const v = nounPhrase(m[1]); return v && m[2] ? [{ op: 'heal', ...amount(m[2]), ...v }] : null; } },
+  { id: 'avatars-heal', label: 'Each nearby Avatar heals N', re: new RegExp(`^each (nearby )?avatar (?:heals|gains) ${NUM}(?: life)?\\.$`, 'i'), build: (m) => [{ op: 'heal', ...amount(m[2]), who: m[1] ? 'nearbyAvatars' : 'allAvatars' }] },
   { id: 'lose-life', label: 'You lose N life', re: new RegExp(`^(?:you )?lose ${NUM} life\\.$`, 'i'), build: (m) => [{ op: 'loseLife', ...amount(m[1]), who: 'controller' }] },
-  { id: 'opponent-loses', label: 'Opponent loses N life', re: new RegExp(`^(?:your |each )?(opponent|enemy|other player|player)s? loses? ${NUM} life\\.$`, 'i'),
-    build: (m) => [{ op: 'loseLife', ...amount(m[2]), who: /^player$/i.test(m[1]) ? 'allAvatars' : 'opponent' }] },
-  { id: 'draw', label: 'Draw N spells / sites / cards', re: new RegExp(`^(?:you )?draw ${NUM} (spell|site|card)s?\\.$`, 'i'),
+  { id: 'opponent-loses', label: 'Opponent loses N life', re: new RegExp(`^(?:your |each )?(opponents?|enemy|other players?|players?)s? loses? ${NUM} life\\.$`, 'i'),
+    build: (m) => [{ op: 'loseLife', ...amount(m[2]), who: /^players?$/i.test(m[1]) ? 'allAvatars' : 'opponent' }] },
+  // cards
+  { id: 'draw', label: 'Draw N spells / sites / cards', re: new RegExp(`^(?:you (?:may )?)?draw ${NUM} (spell|site|card)s?\\.$`, 'i'),
     build: (m) => [{ op: 'draw', ...amount(m[1]), who: 'controller', ...(m[2].toLowerCase() === 'card' ? {} : { deck: m[2].toLowerCase() === 'site' ? 'atlas' as const : 'spellbook' as const }) }] },
-  { id: 'discard-random', label: 'Opponent discards N at random', re: new RegExp(`^(?:your |each )?opponent discards ${NUM} (?:random )?(?:card|spell)s? at random\\.$|^(?:your |each )?opponent discards ${NUM} random (?:card|spell)s?\\.$`, 'i'),
-    build: (m) => [{ op: 'discard', ...amount(m[1] ?? m[2]), who: 'opponent' }] },
+  { id: 'opponent-draws', label: 'Your opponent draws', re: new RegExp(`^(?:your |each )?opponent draws ${NUM} (spell|site)s?\\.$`, 'i'),
+    build: (m) => [{ op: 'draw', ...amount(m[1]), who: 'opponent', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook' }] },
+  { id: 'discard-random', label: 'Discard at random', re: new RegExp(`^(?:(your |each )?(opponent) |you )?discards? ${NUM} (?:random )?(?:card|spell)s?(?: at random)?\\.$`, 'i'),
+    build: (m) => (/random/i.test(m[0]) ? [{ op: 'discard', ...amount(m[3]), who: m[2] ? 'opponent' : 'controller' }] : null) },
+  // mana and threshold
   { id: 'mana', label: 'Gain mana this turn', re: new RegExp(`^(?:you )?gain ${MANA}(?: this turn)?\\.$`, 'i'), build: (m) => [{ op: 'mana', n: manaOf(m[1]), who: 'controller' }] },
   { id: 'mana-only-copy', label: 'If this is the only …, gain mana', re: new RegExp(`^if this is the only .+ you control, gain ${MANA} this turn\\.$`, 'i'),
     build: (m, on) => (on === 'genesis' ? [{ op: 'mana', n: manaOf(m[1]), who: 'controller', cond: 'onlyCopy' }] : null) },
-  { id: 'power', label: '… gets / has +N power', re: /^(.+?) (?:gets?|gains?|has|have) ([+\-−]\d+) power(?: and ([+\-−]\d+) defen[cs]e)?( this turn| until the end of (?:the|this) turn)?\.$/i,
+  { id: 'provides', label: 'Provides mana / threshold', re: /^(?:this site )?provides ((?:\([AEFW]\))*)(?:\s*(?:and|,)?\s*(?:an additional )?([①-⑳]|\(\d+\)))?( to its controller)?( this turn)?\.?$/i,
     build: (m, on) => {
-      const v = subject(plainNoun(m[1]), on); if (!v) return null;
-      const num = (x?: string) => (x ? parseInt(x.replace('−', '-'), 10) : 0);
-      const turn = !!m[4]; if (on === 'static' && turn) return null;
-      return [{ op: 'buff', ...v, atk: num(m[2]), def: m[3] ? num(m[3]) : num(m[2]), until: on === 'static' ? 'permanent' : turn ? 'turn' : 'permanent' }];
+      const el = elementsOf(m[1] ?? ''); const n = m[2] ? manaOf(m[2]) : 0;
+      if (!Object.keys(el).length && !n) return null;
+      if (on === 'static' && m[4]) return null;
+      if (on !== 'static' && !m[4]) return null;
+      return [{ op: 'provide', who: 'controller', ...(Object.keys(el).length ? { el } : {}), ...(n ? { n } : {}) }];
     } },
-  { id: 'grant', label: '… gains / has a keyword', re: new RegExp(`^(.+?) (?:gets?|gains?|has|have) ((?:${GRANTABLE.join('|')})(?:(?:, | and |, and )(?:${GRANTABLE.join('|')}))*)( this turn| until the end of (?:the|this) turn)?\\.$`, 'i'),
+  // power and keywords
+  { id: 'power', label: '… gets / has +N power', re: new RegExp(`^(?:give )?(.+?) (?:gets?|gains?|has|have|\\+)? ?([+\\-−]\\d+) power(?: and ([+\\-−]\\d+) defen[cs]e)?${UNTIL}\\.$`, 'i'),
     build: (m, on) => {
-      const v = subject(plainNoun(m[1]), on); if (!v) return null;
-      const turn = !!m[3]; if (on === 'static' && turn) return null;
-      const kws = m[2].split(/, and |, | and /).map((k) => GRANTABLE.find((g) => g.toLowerCase() === k.trim().toLowerCase())!).filter(Boolean);
-      return kws.map((keyword) => ({ op: 'grant' as const, ...v, keyword, until: on === 'static' ? 'permanent' as const : turn ? 'turn' as const : 'permanent' as const }));
+      const v = nounPhrase(m[1]); if (!v || (on === 'static' && (v.who === 'target' || v.who === 'atTarget'))) return null;
+      if (on === 'static' && m[4]) return null;
+      return [{ op: 'buff', ...v, atk: num(m[2]), def: m[3] ? num(m[3]) : num(m[2]), until: until(m[4], on) }];
     } },
+  { id: 'give-power', label: 'Give … +N power', re: new RegExp(`^give (.+?) ([+\\-−]\\d+) power${UNTIL}\\.$`, 'i'),
+    build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? [{ op: 'buff', ...v, atk: num(m[2]), def: num(m[2]), until: until(m[3], on) }] : null; } },
+  { id: 'grant', label: '… gains / has a keyword', re: new RegExp(`^(.+?) (?:gets?|gains?|has|have) (${KW}(?:(?:, | and |, and )${KW})*)${UNTIL}\\.$`, 'i'),
+    build: (m, on) => {
+      const v = nounPhrase(m[1]); if (!v || (on === 'static' && (v.who === 'target' || v.who === 'atTarget'))) return null;
+      if (on === 'static' && m[3]) return null;
+      return kwList(m[2]).map((keyword) => ({ op: 'grant' as const, ...v, keyword, until: until(m[3], on) }));
+    } },
+  { id: 'give-keyword', label: 'Give … a keyword', re: new RegExp(`^give (.+?) (${KW}(?:(?:, | and |, and )${KW})*)${UNTIL}\\.$`, 'i'),
+    build: (m, on) => { const v = nounPhrase(m[1]); return v && on !== 'static' ? kwList(m[2]).map((keyword) => ({ op: 'grant' as const, ...v, keyword, until: until(m[3], on) })) : null; } },
+  { id: 'ward', label: 'Ward …', re: /^(?:give )?(.+?) (?:gains? )?(?:a )?ward\.$|^ward (.+?)\.$/i,
+    build: (m, on) => { const v = nounPhrase(m[1] ?? m[2]); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Ward', until: 'permanent' }] : null; } },
+  { id: 'disable', label: 'Disable …', re: new RegExp(`^disable (.+?)${UNTIL}\\.$`, 'i'),
+    build: (m, on) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Disabled', until: until(m[2], on) }] : null; } },
+  { id: 'bearer-spellcaster', label: 'Bearer has +N power and is a Spellcaster', re: /^(bearer|this) has ([+\-−]\d+) power and is an? (?:\w+ )?spellcaster\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'buff', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', atk: num(m[2]), def: num(m[2]), until: 'permanent' }, { op: 'grant', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', keyword: 'Spellcaster', until: 'permanent' }] : null) },
+  { id: 'ward-site', label: 'Ward this site', re: /^ward (?:this|its) site\.$/i, build: (m, on) => (on !== 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Ward', until: 'permanent' }] : null) },
+  { id: 'mill', label: 'Discard your top N spells', re: new RegExp(`^discard your top(?:most)? (?:${NUM} )?(spell|site)s?\\.$`, 'i'),
+    build: (m) => [{ op: 'mill', ...amount(m[1] ?? 'a'), who: 'controller', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook' }] },
+  { id: 'avatars-discard', label: 'Each nearby Avatar discards a random card', re: /^each (nearby )?avatar discards a random (?:card|spell)\.$/i,
+    build: (m) => [{ op: 'discard', n: 1, who: m[1] ? 'nearbyAvatars' : 'allAvatars' }] },
+  // restrictions on itself
+  { id: 'cant', label: "Can't defend / intercept", re: /^(?:this )?can'?t (defend or intercept|defend|intercept|move to defend)\.$/i,
+    build: (m, on) => (on === 'static' ? (/defend or intercept/i.test(m[1]) ? ["Can't defend", "Can't intercept"] : [m[1].toLowerCase() === 'defend' ? "Can't defend" : m[1].toLowerCase() === 'intercept' ? "Can't intercept" : "Can't move to defend"]).map((keyword) => ({ op: 'grant' as const, who: 'self' as const, keyword, until: 'permanent' as const })) : null) },
+  // tokens
+  { id: 'summon-token', label: 'Summon a … token here', re: new RegExp(`^summon ${NUM} (foot soldier|skeleton|frog|bruin|tawny)(?: token)?s?(?: tokens?)? (?:here|there|to (?:its|this) location|at (?:its|this) location)\\.$`, 'i'),
+    build: (m) => [{ op: 'summon', ...amount(m[1]), who: 'controller', token: m[2].replace(/\b\w/g, (c) => c.toUpperCase()) }] },
 ];
 
-/** Which ops make sense for each trigger. A static line can only change stats and keywords. */
-const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant'] };
+/** Which ops make sense for each trigger. A static line can only change stats, keywords and what a card provides. */
+const OK_FOR: Partial<Record<Trigger, Effect['op'][]>> = { static: ['buff', 'grant', 'provide'] };
 
 export interface ReadLine { text: string; on: Trigger | 'keywords'; effects: Effect[]; manual: string[] }
 export interface Reading { effects: Effect[]; lines: ReadLine[]; manual: string[] }
 
-const strip = (t: string) => t.replace(/\r/g, '').replace(/\([^()]*\)/g, (p) => (/^\(\d+\)$/.test(p) ? p : '')).replace(/->/g, '→').replace(/[‘’]/g, "'").replace(/[ \t]+/g, ' ');
+/** Normalize card text: reminder text in parentheses is dropped, but symbols such as (A) (F) (1) (X) are kept. */
+const strip = (t: string) => t.replace(/\r/g, '').replace(/\([^()]*\)/g, (p) => (/^\((\d+|[AEFWX])\)$/.test(p) ? p : '')).replace(/->/g, '→').replace(/[‘’]/g, "'").replace(/[ \t]+/g, ' ');
 
-/** Split a line's body into sentences; keeps "e.g." style abbreviations together well enough for card text. */
-const sentences = (body: string) => body.split(/(?<=[.!])\s+(?=[A-Z①-⑳])/).map((x) => x.trim()).filter(Boolean).map((x) => (/[.!]$/.test(x) ? x : x + '.'));
+/** Split a line's body into sentences. */
+const sentences = (body: string) => body.split(/(?<=[.!])\s+(?=[A-Z①-⑳(])/).map((x) => x.trim()).filter(Boolean).map((x) => (/[.!]$/.test(x) ? x : x + '.'));
 
+function matchSentence(sentence: string, on: Trigger, type: CardType, top = true): { got: Omit<Effect, 'on'>[]; rule: string } | null {
+  // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
+  if (/^(has|have|gains) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
+  if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This g' + sentence.slice(1), on, type, top);
+  // ", if it's a minion" after something given to a bearer changes nothing here
+  if (/, if it'?s a minion\.$/i.test(sentence)) return matchSentence(sentence.replace(/, if it'?s a minion\.$/i, '.'), on, type, top);
+  // "You may X." / "May X." / "This may X.": X is optional for the player
+  const may = top && sentence.match(/^(?:you |this |it |bearer )?may (.+)$/i);
+  if (may) { const r = matchSentence(may[1].replace(/^./, (c) => c.toUpperCase()), on, type, false); if (r) return { got: r.got.map((e) => ({ ...e, optional: true })), rule: 'may+' + r.rule }; }
+  for (const r of RULES) {
+    const mm = sentence.match(r.re); if (!mm) continue;
+    const b = r.build(mm, on, type);
+    if (b && b.every((e) => !OK_FOR[on] || OK_FOR[on]!.includes(e.op))) return { got: b, rule: r.id };
+  }
+  // "A, then B." / "A and you heal 3." — both halves must read on their own
+  const parts = sentence.replace(/\.$/, '').split(/,? (?:and )?then |, and (?=(?:you|deal|draw|gain|heal|untap|tap|kill|destroy|banish|summon|give|return|each|your)\b)| and (?=(?:you heal|you gain|draw|untap|tap|deal)\b)/i);
+  if (parts.length > 1) {
+    const all: Omit<Effect, 'on'>[] = []; const ids: string[] = [];
+    for (const part of parts) { const r = matchSentence(part.trim().replace(/^./, (c) => c.toUpperCase()) + '.', on, type, false); if (!r) return null; all.push(...r.got); ids.push(r.rule); }
+    return { got: all, rule: ids.join('+') };
+  }
+  return null;
+}
+
+const cap = (t: string) => t.replace(/^./, (c) => c.toUpperCase());
+/** "Whenever a nearby allied minion dies" → which deaths count. Null when a word is not understood. */
+function eventFilter(q: string, np: string, where?: string): EventFilter | null {
+  const sel = nounPhrase(`${q.toLowerCase() === 'another' ? 'another' : 'an'} ${np}`); if (!sel) return null;
+  const f: EventFilter = {};
+  if (sel.only === 'minion' || sel.only === 'enemyMinion' || sel.only === 'allyMinion') f.minion = true;
+  if (sel.only === 'enemy' || sel.only === 'enemyMinion') f.side = 'enemy';
+  if (sel.only === 'ally' || sel.only === 'allyMinion') f.side = 'ally';
+  if (sel.only === 'avatar') return null;
+  if (sel.sub) f.sub = sel.sub;
+  if (sel.other) f.other = true;
+  const w = (where ?? '').trim().toLowerCase() || (sel.range && sel.range !== 'any' ? sel.range : '');
+  if (w === 'here') f.range = 'here'; else if (w === 'nearby' || w === 'adjacent') f.range = 'nearby';
+  return f;
+}
 /** Read a card's whole rules text into effects. Unread sentences become `manual` effects. */
 export function readRules(type: CardType, rules: string, name = ''): Reading {
   const out: Reading = { effects: [], lines: [], manual: [] };
   const lines = strip(rules).split('\n').map((l) => l.trim()).filter(Boolean);
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   lines.forEach((raw, lineNo) => {
-    const line = name ? raw.replace(new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'g'), 'this') : raw;
-    if (line.split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null;
+    const line = name ? raw.replace(new RegExp(`\\b${esc}\\b`, 'g'), 'this') : raw;
+    if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null;
     if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
     else if ((m = line.match(/^At the (?:start|beginning) of your turn,\s*(.+)$/i))) { on = 'startTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^At the end of your turn,\s*(.+)$/i))) { on = 'endTurn'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
-    else if ((m = line.match(/^(Once per turn,\s*)?([①-⑳]|\(\d+\))\s*→\s*(.+)$/i))) { on = 'activated'; cost = manaOf(m[2]); repeat = !m[1]; body = m[3]; }
-    else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
+    else if ((m = line.match(/^(Once (?:on your|per|each) turn,\s*)?([①-⑳]|\(\d+\))\s*→\s*(.+)$/i))) { on = 'activated'; cost = manaOf(m[2]); repeat = !m[1]; body = m[3]; }
+    else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you|this)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
+    else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
+    else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^Whenever (?:this|bearer) attacks,\s*(.+)$/i))) { on = 'attacks'; ev = { self: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^Whenever (an?|another) (.+?) dies( nearby| here)?,\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], m[3]))) { on = 'dies'; body = cap(m[4]); }
+    else if ((m = line.match(/^Whenever (an?|another) (.+?) enters (?:here|this site),\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], ' here'))) { on = 'enters'; body = cap(m[3]); }
     else on = type === 'Magic' ? 'cast' : 'static';
     const rl: ReadLine = { text: raw, on, effects: [], manual: [] };
-    for (const sentence of sentences(body)) {
-      let got: Omit<Effect, 'on'>[] | null = null; let rule = '';
-      for (const r of RULES) {
-        const mm = sentence.match(r.re); if (!mm) continue;
-        const b = r.build(mm, on, type);
-        if (b && b.every((e) => !OK_FOR[on] || OK_FOR[on]!.includes(e.op))) { got = b; rule = r.id; break; }
+    const ss = sentences(body);
+    for (let k = 0; k < ss.length; k++) {
+      let sentence = ss[k];
+      // "Shoot a projectile." + "It deals N damage on impact[, and M damage to each other unit at that location]."
+      const imp = ss[k + 1]?.match(/^It deals (\d+) damage(?: on impact)?(?:,? and (\d+) damage to each other unit (?:at|there|at that location)[^.]*)?\.$/i);
+      const many = sentence.match(new RegExp(`^shoot ${NUM} projectiles in the same direction, one at a time\\.$`, 'i'));
+      const each = ss[k + 1]?.match(/^Each deals (\d+) damage\.$/i);
+      if (many && each) {
+        const a = amount(many[1]);
+        rl.effects.push({ on, op: 'shoot', who: 'controller', n: +each[1], shots: a.x ? -1 : a.n, ...(a.x ? { x: true } : {}), line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-many', auto: true, ...(cost ? { cost } : {}) });
+        k++; continue;
       }
-      if (got) rl.effects.push(...got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}) })));
-      else { rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}) }); }
+      const pierce = ss[k + 1]?.match(/^Deal (\d+) damage to each hit unit\.$/i);
+      if (/^shoot a piercing projectile\.$/i.test(sentence) && pierce) {
+        rl.effects.push({ on, op: 'shoot', who: 'controller', n: +pierce[1], pierce: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-pierce', auto: true, ...(cost ? { cost } : {}) });
+        k++; continue;
+      }
+      if (/^shoot a projectile\.$/i.test(sentence) && imp) {
+        rl.effects.push({ on, op: 'shoot', who: 'controller', n: +imp[1], ...(imp[2] ? { splash: +imp[2] } : {}), line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-impact', auto: true, ...(cost ? { cost } : {}) });
+        k++; continue;
+      }
+      let hit = matchSentence(sentence, on, type);
+      // "it" must have something to point back to on this line
+      if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
+      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}) })));
+      else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
     out.lines.push(rl); out.effects.push(...rl.effects); out.manual.push(...rl.manual);
   });

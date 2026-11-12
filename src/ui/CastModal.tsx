@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, actor, cardOf, casterOrigins, cellsFor, shotDirs, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, mainElement } from './CardFace';
@@ -59,7 +59,8 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
     const c: Choice[] = [];
     for (const i of pl.idx) {
       const e = pl.d.effects[i];
-      if (e.who === 'target') { const t = targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self); if (t.length === 1) c[i] = { target: t[0] }; }
+      if (e.who === 'target' && !e.ref) { const t = targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self); if (t.length === 1) c[i] = { target: t[0] }; }
+      if (e.op === 'shoot') { const dirs = shotDirs(s, pl.p, pl.origins[0] ?? { c: 0, r: 'surface' }); if (dirs.length === 1) c[i] = { ...(c[i] ?? {}), dir: dirs[0] }; }
       if (e.x) c[i] = { ...(c[i] ?? {}), n: 1 };
       if (e.op === 'draw' && !e.deck) c[i] = { ...(c[i] ?? {}), deck: 'spellbook' };
     }
@@ -126,14 +127,23 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
 
 /** One ability line, with whatever choice it needs. */
 function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: number; e: Effect; c?: Choice; set: (p: Partial<Choice>) => void; focus: (u: string | null) => void }) {
-  const targets = e.who === 'target' ? targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self) : [];
+  const targets = e.who === 'target' && !e.ref ? targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self) : [];
+  const cells = e.who === 'atTarget' ? cellsFor(s, pl.d, i, pl.origins) : [];
+  const dirs = e.op === 'shoot' ? shotDirs(s, pl.p, pl.origins[0] ?? { c: 0, r: 'surface' }) : [];
+  const DIR: Record<string, string> = { '0,-1': '↑ Up', '0,1': '↓ Down', '-1,0': '← Left', '1,0': '→ Right' };
   return (
     <li className={e.op === 'manual' ? 'by-hand' : needsChoice(e) ? 'choose' : 'auto'}>
       <span className="glyph" aria-hidden>{e.op === 'manual' ? '✋' : needsChoice(e) ? '◈' : '✓'}</span>
       <div>
-        <span className="what">{describe(e)}</span>
+        <span className="what" style={c?.skip ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>{describe(e)}</span>
+        {e.optional && <button className={`maybe ${c?.skip ? '' : 'on'}`} onClick={() => set({ skip: !c?.skip })} aria-pressed={!c?.skip} data-tip="The card says you may: choose whether this part happens">{c?.skip ? 'Skipped — do it' : 'You may: skip it'}</button>}
         {e.op === 'manual' && <small> — not automated: the hand tools open after it resolves</small>}
-        {e.who === 'target' && (targets.length ? <div className="chips targets">{targets.map((id) => {
+        {e.who === 'atTarget' && (cells.length ? <div className="chips targets">{cells.map((cl) => {
+          const here = Object.values(s.units).filter((u) => u.c === cl); const on = c?.cell === cl;
+          return <button key={cl} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ cell: cl })} onPointerEnter={() => here[0] && focus(here[0].id)} onPointerLeave={() => focus(null)}>{sq(cl)}<small> {here.length ? here.map((u) => unitCard(s, u).name).join(', ') : s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'empty'}</small></button>;
+        })}</div> : <small className="none"> — no location in range</small>)}
+        {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
+        {e.who === 'target' && !e.ref && (targets.length ? <div className="chips targets">{targets.map((id) => {
           const u = s.units[id]; const on = c?.target === id;
           return <button key={id} className={`chip p${u.owner} ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ target: id })} onPointerEnter={() => focus(id)} onPointerLeave={() => focus(null)}>
             {unitCard(s, u).name}<small> {u.owner === pl.p ? 'yours' : 'enemy'} · {sq(u.c)}{u.r === 'under' ? ' below' : ''}</small></button>;
@@ -209,7 +219,11 @@ export function abilityList(s: GameState, p: PlayerId): { src: Source; fx: numbe
       const key = `${e.on}:${e.line ?? i}`; if (seen.has(key)) return; seen.add(key);
       const idx = effectsOn(d, e.on, i); const so = sourceOf(s, src)!;
       const ch: Choice[] = [];
-      for (const k of idx) { const t = targetsFor(s, p, d, k, [so.loc], so.unit?.id); if (d.effects[k].who === 'target' && t.length) ch[k] = { target: t[0] }; }
+      for (const k of idx) {
+        const t = targetsFor(s, p, d, k, [so.loc], so.unit?.id); if (t.length) ch[k] = { target: t[0] };
+        const cl = cellsFor(s, d, k, [so.loc]); if (cl.length) ch[k] = { ...(ch[k] ?? {}), cell: cl[0] };
+        if (d.effects[k].op === 'shoot') { const dv = shotDirs(s, p, so.loc); if (dv.length) ch[k] = { ...(ch[k] ?? {}), dir: dv[0] }; }
+      }
       const r = check(s, { t: 'ability', src, fx: i, choices: ch });
       out.push({ src, fx: i, name: d.name, label: idx.map((k) => describe(d.effects[k])).join(' · '), ok: r.ok, why: r.ok ? '' : r.reason, on: e.on });
     });

@@ -392,7 +392,8 @@ describe('rules text and damage split', () => {
     expect(auto(two)).toMatchObject([{ op: 'damage', n: 2 }]);
     expect(hand(two)).toEqual(['Any number of times, you may spend ② to additionally target a new unit.']);
     // sentences with more to them are not guessed at
-    expect(auto(effectsFromText('Magic', 'Deal 1 damage to target nearby minion and untap it.'))).toEqual([]);
+    // "it" points back at the chosen target
+    expect(auto(effectsFromText('Magic', 'Deal 1 damage to target nearby minion and untap it.'))).toMatchObject([{ op: 'damage', who: 'target' }, { op: 'untap', who: 'target', ref: true }]);
     expect(auto(effectsFromText('Minion', 'Genesis → Kill target adjacent Unique or Elite minion.'))).toEqual([]);
     // "Once on your turn, bearer may …" is an activated ability
     expect(effectsFromText('Artifact', 'Once on your turn, bearer may deal 1 damage to target adjacent minion.')).toMatchObject([{ on: 'activated', op: 'damage', n: 1, range: 'adjacent', only: 'minion' }]);
@@ -580,5 +581,87 @@ describe('rules checked against the Codex', () => {
     const flooded = T('Test Flooded', 'Site', { keywords: ['Flood'], thresholds: { air: 0, earth: 1, fire: 0, water: 0 } });
     s.inst['0fl'] = flooded; s.sites[cell(0, 3)] = { inst: '0fl', owner: 0 };
     expect(isWater(s, cell(0, 3))).toBe(true);
+  });
+});
+
+describe('more card text (wording from the live card list)', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense, keywords: c.keywords } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); return s; };
+  const fx = (cid: string, op: string) => cards[cid].effects.findIndex((e) => e.op === op);
+  it('"Provides (A) and ① to its controller" adds threshold and a mana each turn', () => {
+    let s = board();
+    const core = read('Artifact', 'Test Core', 'Provides (A) and ① to its controller.');
+    s.inst['0cr'] = core; s.perms.push({ id: 'mc', inst: '0cr', owner: 0, c: cell(2, 3), kind: 'artifact' });
+    expect(thresholdOf(s, 0).air).toBe(1);
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' }); s = apply(s, { t: 'endTurn' });
+    expect(s.players[0].mana).toBe(11);                                    // 10 sites + 1 from the core
+  });
+  it('"Genesis → Provides (A)(E)(F) this turn" lasts only this turn', () => {
+    let s = start(0);
+    const bloom = read('Site', 'Test Bloom', 'Genesis → Provides (A)(E)(F) this turn.');
+    s = apply(s, { t: 'playSite', inst: give(s, 0, bloom), c: AVATAR_START[0] });
+    expect(thresholdOf(s, 0)).toMatchObject({ air: 1, earth: 1, fire: 1 });
+    s = apply(apply(s, { t: 'endTurn' }), { t: 'draw', deck: 'spellbook' });
+    expect(thresholdOf(s, 0).air).toBe(0);
+  });
+  it('a token summoned by Deathrite enters, and is banished (not put in the cemetery) when it dies', () => {
+    let s = board(); s.players[0].mana = 9;
+    cards['tok:skeleton'] = makeCard({ id: 'tok:skeleton', name: 'Skeleton', type: 'Minion', attack: 1, defense: 1, category: 'Token' });
+    const twosome = read('Minion', 'Test Twosome', 'Deathrite → Summon a Skeleton token here.', { attack: 1, defense: 1 });
+    const t = unit(s, 0, cell(2, 2), twosome);
+    s = apply(s, { t: 'manual', op: 'destroy', unit: t });
+    const sk = Object.values(s.units).find((u) => cards[s.inst[u.inst]].name === 'Skeleton')!;
+    expect(sk.c).toBe(cell(2, 2));
+    const before = s.players[0].cemetery.length;
+    s = apply(s, { t: 'manual', op: 'destroy', unit: sk.id });
+    expect(s.players[0].cemetery.length).toBe(before);
+  });
+  it('"Shoot three projectiles in the same direction" hits up to three times', () => {
+    let s = board(); s.players[0].mana = 9; s.units[s.players[0].avatar].c = cell(2, 3);
+    const bolts = read('Magic', 'Test Bolts', 'Shoot three projectiles in the same direction, one at a time. Each deals 1 damage.', { cost: 1 });
+    const foe = unit(s, 1, cell(2, 1), id('Kiln Brute'));                    // 4 defense
+    const ch: { dir?: [number, number] }[] = []; ch[fx(bolts, 'shoot')] = { dir: [0, -1] };
+    s = apply(s, { t: 'cast', inst: give(s, 0, bolts), choices: ch });
+    expect(s.units[foe].damage).toBe(3);
+  });
+  it('area damage at a chosen location hits each unit there', () => {
+    let s = board(); s.players[0].mana = 9;
+    const blast = read('Magic', 'Test Blast', 'Deal 3 damage to each unit at target location up to two steps away.', { cost: 1 });
+    const a = unit(s, 1, cell(2, 1), id('Ember Runner')), b = unit(s, 1, cell(2, 1), id('Wind Sprite'));
+    const ch: { cell?: number }[] = []; ch[fx(blast, 'damage')] = { cell: cell(2, 1) };
+    s = apply(s, { t: 'cast', inst: give(s, 0, blast), choices: ch });
+    expect(s.units[a]).toBeUndefined(); expect(s.units[b]).toBeUndefined();
+    const far: { cell?: number }[] = []; far[fx(blast, 'damage')] = { cell: cell(2, 0) };
+    s.players[0].mana = 9;
+    expect(reason(s, { t: 'cast', inst: give(s, 0, blast), choices: far })).toMatch(/location in range/); // three steps from the Avatar
+  });
+  it('a reaction: "Whenever a minion dies nearby, you heal 1"', () => {
+    let s = board(); s.players[0].life = 10;
+    const box = read('Artifact', 'Test Box', 'Whenever a minion dies nearby, you heal 1.');
+    s.inst['0bx'] = box; s.perms.push({ id: 'mb', inst: '0bx', owner: 0, c: cell(2, 2), kind: 'artifact' });
+    const v = unit(s, 1, cell(2, 1), id('Ember Runner'));
+    s = apply(s, { t: 'manual', op: 'destroy', unit: v });
+    expect(s.players[0].life).toBe(11);
+  });
+  it('"You may …" can be skipped in the pop-up', () => {
+    let s = board(); s.players[0].mana = 9;
+    const maybe = read('Magic', 'Test Maybe', 'You may draw a spell.', { cost: 1 });
+    expect(cards[maybe].effects[0]).toMatchObject({ op: 'draw', optional: true });
+    const n = s.players[0].hand.length;
+    s = apply(s, { t: 'cast', inst: give(s, 0, maybe), choices: [{ skip: true }] });
+    expect(s.players[0].hand.length).toBe(n);                              // cast one, drew none
+  });
+  it('"Can\'t defend" keeps a unit out of defending', () => {
+    let s = board(); s.units[s.players[1].avatar].tapped = true;
+    const lump = read('Minion', 'Test Lump', "Can't defend or intercept.", { attack: 3, defense: 3 });
+    unit(s, 1, cell(2, 1), lump);
+    const tgt = unit(s, 1, cell(2, 1), id('Ember Runner'), { tapped: true });
+    const att = unit(s, 0, cell(2, 2), id('Hill Giant'));
+    s = apply(s, { t: 'move', unit: att, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: tgt } });
+    expect(s.pending).toBeNull();                                           // nobody could defend
   });
 });

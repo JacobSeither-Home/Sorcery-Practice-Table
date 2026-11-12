@@ -64,13 +64,13 @@ export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[
       rules,
       cost: num(e.cost), attack: num(e.attack), defense: num(e.defense), life: num(e.life),
       thresholds: { air: num(e.air), earth: num(e.earth), fire: num(e.fire), water: num(e.water) },
-      subtypes: arr(e.subtypes),
+      subtypes: [...arr(e.subtypes), ...arr(e.umbrellas)],
       keywords,
       movement: keywords.includes('Movement') ? Math.max(1, keywordNumber(rules, 'Movement')) : 0,
       ranged: keywords.includes('Ranged') ? Math.max(1, keywordNumber(rules, 'Ranged')) : 0,
       typeline: str(first?.meta?.typeline),
       printings: printingsRaw.map((p) => { const meta = (p?.meta ?? {}) as Record<string, unknown>; return { slug: str(p?.slug), set: str((p?.set as Record<string, unknown> | undefined)?.name), finish: str(meta.finish) || undefined, product: str(meta.product) || undefined }; }).filter((p) => p.slug),
-      source: 'api',
+      source: 'api', category: str(e.category) || undefined,
       effects: overlays[id] ?? overlays[slug] ?? effectsFromText(type, rules, name),
     });
   }
@@ -89,6 +89,6 @@ export function makeCard(p: Partial<CardDef> & { name: string; type: CardType })
     subtypes: p.subtypes ?? [], keywords,
     movement: p.movement ?? (keywords.includes('Movement') ? Math.max(1, keywordNumber(rules, 'Movement')) : 0),
     ranged: p.ranged ?? (keywords.includes('Ranged') ? Math.max(1, keywordNumber(rules, 'Ranged')) : 0),
-    typeline: p.typeline ?? '', printings: p.printings ?? [], source: p.source ?? 'custom', effects: p.effects ?? [],
+    typeline: p.typeline ?? '', printings: p.printings ?? [], source: p.source ?? 'custom', effects: p.effects ?? [], ...(p.category ? { category: p.category } : {}),
   };
 }
