@@ -37,7 +37,7 @@ const ONLY: Record<string, string> = { minion: 'minion', enemy: 'enemy', ally: '
 export function describe(e: Effect): string {
   const n = e.amount === 'airCastThisTurn' ? 'the (A) on spells you cast this turn' : e.amount === 'banishedElement' ? `the (${(e.banishDead ?? 'f')[0].toUpperCase()}) on the minions banished` : e.x ? 'X' : String(e.n ?? 1);
   const group = e.only === 'minion' ? WHO_LABEL[e.who].replace(/\b(enemy|ally|unit)\b/, (w) => (w === 'unit' ? 'minion' : `${w === 'ally' ? 'allied' : w} minion`)) : WHO_LABEL[e.who];
-  const filt = [e.random ? 'one at random' : '', e.surface ? 'on the surface' : '', e.wounded ? 'wounded' : '', ...(e.sub ?? []), e.kw ?? '', e.maxPower !== undefined ? `power ${e.maxPower} or less` : '', e.minPower !== undefined ? `power ${e.minPower} or more` : ''].filter(Boolean).join(', ');
+  const filt = [e.random && !e.refCell ? 'one at random' : '', e.surface ? 'on the surface' : '', e.wounded ? 'wounded' : '', ...(e.sub ?? []), e.kw ?? '', e.maxPower !== undefined ? `power ${e.maxPower} or less` : '', e.minPower !== undefined ? `power ${e.minPower} or more` : ''].filter(Boolean).join(', ');
   const who0 = e.ref ? 'that unit' : e.refCell ? `${e.random ? 'a random other unit' : e.only === 'minion' ? 'minions' : 'units'} there${e.notKw ? ` without ${e.notKw}` : ''}` : e.who === 'target' ? `target ${ONLY[e.only ?? ''] ?? 'unit'}${RANGE[e.range ?? 'any']}` : (e.other ? group.replace(/^each /, 'each other ') : group);
   const who = filt ? `${who0} (${filt} only)` : who0;
   switch (e.op) {

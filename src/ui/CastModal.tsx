@@ -128,7 +128,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
 /** One ability line, with whatever choice it needs. */
 function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: number; e: Effect; c?: Choice; set: (p: Partial<Choice>) => void; focus: (u: string | null) => void }) {
   const targets = e.who === 'target' && !e.ref ? targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self) : [];
-  const cells = e.who === 'atTarget' ? cellsFor(s, pl.d, i, pl.origins) : [];
+  const cells = e.who === 'atTarget' && !e.refCell ? cellsFor(s, pl.d, i, pl.origins) : [];
   const dirs = e.op === 'shoot' ? shotDirs(s, pl.p, pl.origins[0] ?? { c: 0, r: 'surface' }) : [];
   const DIR: Record<string, string> = { '0,-1': '↑ Up', '0,1': '↓ Down', '-1,0': '← Left', '1,0': '→ Right' };
   return (
@@ -138,7 +138,7 @@ function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: numbe
         <span className="what" style={c?.skip ? { textDecoration: 'line-through', opacity: 0.6 } : undefined}>{describe(e)}</span>
         {e.optional && <button className={`maybe ${c?.skip ? '' : 'on'}`} onClick={() => set({ skip: !c?.skip })} aria-pressed={!c?.skip} data-tip="The card says you may: choose whether this part happens">{c?.skip ? 'Skipped — do it' : 'You may: skip it'}</button>}
         {e.op === 'manual' && <small> — not automated: the hand tools open after it resolves</small>}
-        {e.who === 'atTarget' && (cells.length ? <div className="chips targets">{cells.map((cl) => {
+        {e.who === 'atTarget' && !e.refCell && (cells.length ? <div className="chips targets">{cells.map((cl) => {
           const here = Object.values(s.units).filter((u) => u.c === cl); const on = c?.cell === cl;
           return <button key={cl} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ cell: cl })} onPointerEnter={() => here[0] && focus(here[0].id)} onPointerLeave={() => focus(null)}>{sq(cl)}<small> {here.length ? here.map((u) => unitCard(s, u).name).join(', ') : s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'empty'}</small></button>;
         })}</div> : <small className="none"> — no location in range</small>)}

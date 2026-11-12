@@ -531,3 +531,4 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .incant .maybe { margin-left: 8px; padding: 2px 9px; font-size: 11.5px; } .incant .maybe.on { border-color: var(--brass-2); }
 .incant .peek { font-family: var(--display); color: #fff3d6; padding: 2px 8px; border: 1px dashed var(--line); border-radius: 6px; }
 .howto .fineprint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.spell-card .incant .chip.on { background: color-mix(in srgb, var(--sp) 38%, #1a1630); color: #fff; border-color: var(--sp); box-shadow: 0 0 10px -2px var(--sp); } .spell-card .incant .chip.on small { color: #f3ead2; }
