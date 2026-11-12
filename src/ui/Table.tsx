@@ -192,6 +192,7 @@ export function Table() {
   const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen
 
   const order = [...Array(CELLS).keys()]; if (flip) order.reverse();
+  const rubble = useMemo(() => Object.values(s.cards).find((c) => c.name.toLowerCase() === 'rubble'), [s.cards]);
   // How strongly each element reaches each square: every site radiates its threshold, falling off with distance.
   const voidTint = useMemo(() => {
     const src: { x: number; y: number; th: Record<string, number> }[] = [];
@@ -213,7 +214,7 @@ export function Table() {
   const leaveGame = () => { if (confirm('Leave this game?')) { useStore.getState().leave(); useStore.setState({ game: null }); } };
 
   return (
-    <div className={`table board-${boardSize}`} style={{ '--pace': pace } as React.CSSProperties}>
+    <div className={`table board-${boardSize} ${settings.infoPanel === false ? 'no-info' : ''}`} style={{ '--pace': pace } as React.CSSProperties}>
       <aside className="rail left">
         <PlayerPanel g={g} p={opp} manual={manual} />
         <LogPanel s={s} g={g} />
@@ -246,12 +247,14 @@ export function Table() {
             <svg className="rune-ring" viewBox="-100 -100 200 200" aria-hidden><RuneRing /></svg>
             {order.map((c, di) => {
               const site = s.sites[c]; const d = site?.inst ? cardOf(s, site.inst) : undefined; const hi = hiCells.get(c);
+              const rub = site && !site.inst ? rubble : undefined; // Rubble is a token card in the pool: show its art and let it be read like any card
               const tint = site ? undefined : voidTint[di];
               const [x, y] = xy(c); const mark = herald?.marks.get(c);
               return (
                 <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''} ${tint?.dom ? 'dom-' + tint.dom : ''}`}
-                  style={tint?.style} onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d)} data-cell={c}>
+                  style={tint?.style} onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d ?? rub)} data-cell={c}>
                   {d && <SiteArt id={d.id} />}
+                  {rub && <SiteArt id={rub.id} upright={rub.type !== 'Site'} />}
                   {d && <span className="site-flash" key={site!.inst} />}
                   {d && <div className="site-label"><span>{d.name}</span><Pips t={d.thresholds} /></div>}
                   {site && !site.inst && <div className="site-label"><span>Rubble</span></div>}
@@ -341,6 +344,7 @@ export function Table() {
       </main>
 
       <aside className="rail right">
+        <button className="ghost hide-info" onClick={() => useStore.getState().setSettings({ infoPanel: false })} data-tip="Hide this panel and give the board the room. It comes back from the ☰ menu.">Hide panel ›</button>
         <Preview />
         <div className="tools">
           <label className="switch" data-tip="For card text the app does not automate: adjust life and mana, damage or destroy units, right-click a hand card to discard. Everything manual is marked in the log."><input type="checkbox" checked={manual} onChange={(e) => setManual(e.target.checked)} /> Manual tools</label>
@@ -474,9 +478,9 @@ function ElementAura({ s, order }: { s: GameState; order: number[] }) {
     </div>
   );
 }
-function SiteArt({ id }: { id: string }) {
+function SiteArt({ id, upright }: { id: string; upright?: boolean }) {
   const art = useStore((st) => st.art[id]);
-  return art ? <div className="site-art-box"><img src={art} alt="" draggable={false} /></div> : null;
+  return art ? <div className={`site-art-box ${upright ? 'upright' : ''}`}><img src={art} alt="" draggable={false} /></div> : null;
 }
 
 /** Moving light on a hand card under the mouse, so it reads as a glossy physical card. */
@@ -563,6 +567,11 @@ export function TableOptions() {
   const pace = st.pace ?? 1;
   return (
     <div className="options">
+      <div className="opt wide-only">
+        <span>Card panel</span>
+        <div className="seg">{([[true, 'Shown'], [false, 'Hidden']] as const).map(([v, l]) => <button key={l} className={(st.infoPanel !== false) === v ? 'on' : ''} onClick={() => set({ infoPanel: v })}>{l}</button>)}</div>
+        <small>The panel on the right of the table. Hovering or right-clicking a card shows the same card, so it can be hidden to give the board more room.</small>
+      </div>
       <div className="opt">
         <span>Animation pace</span>
         <div className="seg">{PACES.map((x) => <button key={x.v} className={pace === x.v ? 'on' : ''} onClick={() => set({ pace: x.v })}>{x.label}</button>)}</div>

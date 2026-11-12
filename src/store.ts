@@ -11,6 +11,7 @@ export type Mode = 'ai' | 'hotseat' | 'online';
 export interface Settings { artChoice: Record<string, string>; zoom: number; name: string; supabaseUrl: string; supabaseKey: string; reduceMotion: boolean; showLegal: boolean;
   /** animation and opponent pacing: duration multiplier (bigger = slower) */ pace: number;
   /** board cell size: fit the screen, or larger cells that scroll */ boardSize: 'fit' | 'roomy' | 'spacious';
+  /** the card panel on the right of the table; off gives the board that width (the same card shows on hover and right-click) */ infoPanel?: boolean;
   /** pause after each opponent (AI) action until the player taps Continue */ stepOpponent: boolean }
 export interface Toast { id: number; text: string; keyword?: string; tone: 'info' | 'error' }
 export interface Game { state: GameState; mode: Mode; difficulty: Difficulty; local: PlayerId; names: [string, string]; n: number }

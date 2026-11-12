@@ -610,3 +610,9 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .cell.void.dom-earth::before { inset: 0; border-radius: inherit; opacity: calc(.35 + .65 * var(--ee)); background: radial-gradient(circle, #f3dc9a 0 1.3px, #0000 2.3px) 0 0 / 38px 32px, radial-gradient(circle, #b9d07a 0 1px, #0000 2px) 15px 21px / 31px 41px; animation: drift calc(16s * var(--pace, 1)) linear infinite; }
 @keyframes drift { from { background-position: 0 0, 15px 21px; } to { background-position: 76px 32px, 77px 62px; } }
 @media (prefers-reduced-motion: reduce) { .cell.void[class*='dom-']::before { animation: none !important; } }
+
+/* card panel can be put away: the board takes its width */
+.table.no-info { grid-template-columns: 250px minmax(0, 1fr); } .table.no-info .rail.right { display: none; }
+.hide-info { align-self: flex-end; font-size: 12px; padding: 2px 6px; margin: -4px -4px 0 0; }
+@media (max-width: 1100px) { .wide-only { display: none; } }
+.site-art-box.upright img { width: 100%; height: 100%; transform: translate(-50%, -50%); }

@@ -402,7 +402,8 @@ export function Settings() {
   const runArt = (get: () => Promise<Parameters<typeof importArt>[0]>) => { setErr(''); st.runArtJob(async (p) => importArt(await get(), cardList(), p)); };
   const artStats = useMemo(() => {
     const v = st.artVariants; const ids = Object.keys(v);
-    return { withArt: apiCards.filter((c) => v[c.id]).length, images: ids.reduce((n, id) => n + v[id].length, 0), alts: ids.filter((id) => v[id].length > 1).length };
+    const tokens = apiCards.filter((c) => c.category === 'Token');
+    return { tokens: tokens.length, tokensWithArt: tokens.filter((c) => v[c.id]).length, tokensMissing: tokens.filter((c) => !v[c.id]).map((c) => c.name), withArt: apiCards.filter((c) => v[c.id]).length, images: ids.reduce((n, id) => n + v[id].length, 0), alts: ids.filter((id) => v[id].length > 1).length };
   }, [st.artVariants, apiCards]);
   // feedback
   const [items, setItems] = useState<FeedbackItem[]>([]); const [kind, setKind] = useState<'wish' | 'problem'>('wish');
@@ -477,6 +478,7 @@ export function Settings() {
           <div><span className="big">{artStats.withArt.toLocaleString()} of {apiCards.length.toLocaleString()}</span><small>synced cards have art</small></div>
           <div><span className="big">{artStats.images.toLocaleString()}</span><small>images on this device</small></div>
           <div><span className="big">{artStats.alts.toLocaleString()}</span><small>cards with alternate art</small></div>
+          <div data-tip={artStats.tokensMissing.length ? `Without art: ${artStats.tokensMissing.join(', ')}` : 'Every token has art'}><span className="big">{artStats.tokensWithArt} of {artStats.tokens}</span><small>tokens have art (Rubble, Foot Soldier…)</small></div>
           <div><span className="big">{st.artSyncedAt ? ago(st.artSyncedAt) : 'never'}</span><small>{st.artSyncedAt ? `last art load, ${new Date(st.artSyncedAt).toLocaleString()}` : 'last art load'}</small></div>
         </div>
         <p>Art is read from zips or a folder on your own disk and kept in this browser. It is never uploaded. Large zips take several minutes; the load keeps running if you go to another screen, and art appears as it is read.</p>
