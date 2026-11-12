@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  type Action, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
+  type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, isDisabled, power, isWater, other, playableSiteCells, reach, responders,
   sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
 import { PACES } from '../store';
-import { CardFace, Pips, hoverProps, mainElement, useHover, useInspect } from './CardFace';
+import { CardFace, Pips, STATUSES, clearZoom, hoverProps, mainElement, useStatusPop, useHover, useInspect } from './CardFace';
 import { spring, usePace } from './pace';
 import { type CastReq, CastModal, abilityList } from './CastModal';
 import { HowItWorks } from './Explain';
@@ -496,8 +496,12 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
   const art = useStore((st) => st.art[d.id]);
   const atk = power(s, u); const def = defenseOf(s, u); const boosted = atk !== d.attack || !!u.mods?.length;
   const life = u.avatar ? s.players[u.owner].life : def - u.damage;
+  const disabled = isDisabled(s, u);
+  const tags = [u.ward && !disabled ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
+    ...new Set((u.mods ?? []).map((m) => m.kw ?? '').filter(Boolean))].filter(Boolean);
+  const lanceCard = u.lance ? Object.values(s.cards).find((c) => c.name === 'Lance' && c.category === 'Token') : undefined;
   return (
-    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${u.r === 'under' ? 'under' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
+    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${d.category === 'Token' ? 'token' : ''} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${u.r === 'under' ? 'under' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
       animate={{ rotate: u.tapped ? 90 : 0, scale: selected ? 1.12 : 1 }} transition={spring(pace)} onClick={onClick} {...hoverProps(d)}
       data-unit={u.id} aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
       <span className="unit-face">{art ? <img src={art} alt="" draggable={false} /> : <span className="unit-name">{d.name}</span>}</span>
@@ -506,8 +510,10 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
       {boosted && <span className="mods" data-tip={[...(u.mods ?? []).map((m) => `${m.kw ? m.kw : `${m.atk >= 0 ? '+' : ''}${m.atk} power`}${m.turn !== undefined ? ' this turn' : ''} (${m.from})`), atk !== d.attack + (u.mods ?? []).reduce((n, m) => n + m.atk, 0) ? 'boosted by a card nearby' : ''].filter(Boolean).join(', ')}>✦</span>}
       {carried.length > 0 && <span className="attached">{carried.map((m) => { const ac = cardOf(s, m.inst); return <AttachTab key={m.id} card={ac} />; })}</span>}
       {u.r === 'under' && <span className="under-tag">below</span>}
-      {u.ward && !isDisabled(s, u) && <span className="ward" data-tip="Ward: the first damage, destruction or enemy targeting breaks the Ward instead">◈</span>}
-      {summoningSick(s, u) && <span className="sick" data-tip="Entered this turn">z</span>}
+      {tags.length > 0 && <span className="tags">{tags.map((name) => { const st = STATUSES[name] ?? { tag: name.slice(0, 2), text: KEYWORD_HELP[name]?.text ?? `${name}, granted by an effect.` }; return (
+        <span key={name} className={`stag st-${name.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')}`} aria-label={name}
+          onMouseEnter={(e) => { clearZoom(); useStatusPop.setState({ name, text: st.text, card: name === 'Lance' ? lanceCard : undefined, rect: (e.currentTarget.closest('.unit') ?? e.currentTarget).getBoundingClientRect() }); }}
+          onMouseLeave={() => useStatusPop.setState(null)}>{st.tag}</span>); })}</span>}
       {art && <span className="plate">{d.name}</span>}
     </motion.button>
   );

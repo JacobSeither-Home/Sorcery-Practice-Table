@@ -5,7 +5,7 @@ import { useStore } from '../store';
 import { useAuth } from '../cloud/cloud';
 import { SignIn } from './Auth';
 import { Inspector, Table } from './Table';
-import { ZoomCard } from './CardFace';
+import { StatusPop, ZoomCard } from './CardFace';
 import { VoidBackdrop } from './VoidBackdrop';
 import { Decks, Library, Settings, Setup } from './Screens';
 
@@ -31,6 +31,7 @@ export function App() {
         {view === 'play' ? (game ? <Table /> : <Setup />) : view === 'decks' ? <Decks /> : view === 'library' ? <Library /> : <Settings />}
         <Inspector />
         <ZoomCard />
+        <StatusPop />
         <div className="toasts" aria-live="assertive">
           <AnimatePresence>{toasts.map((t) => (
             <motion.div key={t.id} className={`toast ${t.tone}`} initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }} role={t.tone === 'error' ? 'alert' : undefined}>

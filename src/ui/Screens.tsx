@@ -10,7 +10,7 @@ import { type ArtReport, OFFICIAL_ART_FOLDER, orderVariants, variantBlob, varian
 import { artDb } from '../data/db';
 import { COLLECTION_MAX, RARITIES, RARITY_LIMIT, constructedLegal, copiesOf, copyLimit, deckChecks, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
-import { CardFace, hoverProps } from './CardFace';
+import { CardFace, STATUS_CARDS, hoverProps } from './CardFace';
 import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, uploadCatalog, useAuth } from '../cloud/cloud';
 import { Preview, TableOptions } from './Table';
 
@@ -397,7 +397,7 @@ export function Settings() {
   const [folder, setFolder] = useState<string | null>(null); const [zipNames, setZipNames] = useState<string[]>([]);
   useEffect(() => { rememberedFolder().then((f) => setFolder(f?.name ?? null)); rememberedZips().then((z) => setZipNames(z?.names ?? [])); }, [rep, artBusy]);
   const dirInput = useRef<HTMLInputElement>(null);
-  const cardList = () => Object.values(useStore.getState().pool);
+  const cardList = () => [...Object.values(useStore.getState().pool), ...STATUS_CARDS]; // status images in the zips are cached too
   const runZips = (get: () => Promise<File[]>) => { setErr(''); get().then((zips) => { if (zips.length) st.runArtJob((p) => importZips(zips, cardList(), p)); }).catch((e) => { if ((e as Error).name !== 'AbortError') setErr((e as Error).message); }); };
   const runArt = (get: () => Promise<Parameters<typeof importArt>[0]>) => { setErr(''); st.runArtJob(async (p) => importArt(await get(), cardList(), p)); };
   const artStats = useMemo(() => {

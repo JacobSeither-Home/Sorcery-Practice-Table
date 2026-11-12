@@ -629,3 +629,15 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .deck-ends { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
 .deck-ends b { color: var(--parch); white-space: nowrap; } .deck-ends i { flex: 1; height: 2px; min-width: 30px; background: linear-gradient(90deg, var(--brass), #cfa64e22); border-radius: 2px; }
 .xpick.col { flex-direction: column; align-items: stretch; align-self: center; }
+
+/* token minions are small cards, as on a real table */
+.unit.token { --uw: calc(clamp(25px, min(calc(var(--cellw) * .29), calc(var(--cellh) * .31)), var(--umax)) * .8); }
+/* status tags along the left edge of a unit; the status card pops up above the unit on hover */
+.unit .tags { position: absolute; left: -7px; top: 12%; display: flex; flex-direction: column; gap: 2px; z-index: 2; }
+.stag { min-width: 15px; height: 15px; padding: 0 3px; border-radius: 4px; display: grid; place-items: center; font: 700 9.5px/1 var(--sans, sans-serif); color: #0c0f18; background: #cfd6e6; border: 1px solid #000a; box-shadow: 0 1px 3px #000a; cursor: help; }
+.st-ward { background: #9fd0ff; box-shadow: 0 0 6px #7fb8ff; } .st-stealth { background: #b9a6ff; } .st-disabled { background: #e58a7a; } .st-lance { background: #f0c24a; }
+.st-entered { background: #2a3350; color: #c9d2ea; } .st-wont { background: #e0b25a; } .st-controlled { background: #ff9ad5; }
+.statuspop { position: fixed; z-index: 95; pointer-events: none; filter: drop-shadow(0 14px 30px #000c); animation: zoomin .12s ease-out; }
+.statuspop .card { box-shadow: 0 0 0 1px #fff3; }
+.statuscard { background: var(--parch); color: var(--ink); border: 3px solid #5d6f9c; border-radius: 9px; padding: 9px 11px; font-family: var(--serif); }
+.statuscard b { display: block; font-size: 15px; margin-bottom: 3px; } .statuscard p { margin: 0; font-size: 12.5px; line-height: 1.35; }

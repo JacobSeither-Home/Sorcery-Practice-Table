@@ -7,7 +7,7 @@ export const useHover = create<{ card: CardDef | null; set: (c: CardDef | null) 
 /** The card shown enlarged beside whatever the mouse is resting on. */
 export const useZoom = create<{ card: CardDef | null; rect: DOMRect | null }>(() => ({ card: null, rect: null }));
 let zoomTimer = 0; let lastTouch = 0;
-const clearZoom = () => { clearTimeout(zoomTimer); if (useZoom.getState().card) useZoom.setState({ card: null, rect: null }); };
+export const clearZoom = () => { clearTimeout(zoomTimer); if (useZoom.getState().card) useZoom.setState({ card: null, rect: null }); };
 function startZoom(card: CardDef, el: Element) {
   clearTimeout(zoomTimer);
   if (Date.now() - lastTouch < 900) return; // a finger, not a cursor: long-press opens the inspector instead
@@ -87,4 +87,37 @@ export function ZoomCard() {
   if (left < rect.right && left + W > rect.left) top = rect.top - gap - H > 8 ? rect.top - gap - H : rect.bottom + gap; // overlapping column: sit above, else below
   top = Math.max(8, Math.min(innerHeight - H - 8, top));
   return <div className="zoomcard" style={{ left, top, ['--zw' as string]: `${wide ? W / 1.4 : W}px` }} aria-hidden><CardFace card={card} size="xl" /></div>;
+}
+
+// ---- status tags on units ----
+/** Conditions a unit can be under. Each gets a small tag on its card on the board; hovering the tag shows the status card above the unit. */
+export const STATUSES: Record<string, { tag: string; text: string }> = {
+  Ward: { tag: 'W', text: 'The first damage, destruction or enemy targeting breaks the Ward instead of affecting this unit.' },
+  Stealth: { tag: 'S', text: 'Cannot be targeted by enemy spells, intercepted, defended against or shot. Lost once it strikes.' },
+  Disabled: { tag: 'D', text: 'Loses its abilities, does not strike, and cannot act.' },
+  Lance: { tag: 'L', text: "Its next strike against units deals +1 damage and strikes first, then the Lance breaks." },
+  'Entered this turn': { tag: 'z', text: 'Summoning sickness: it cannot tap (move, attack, use abilities) until your next turn.' },
+  "Won't untap": { tag: '⏸', text: 'It skips its next untap.' },
+  Controlled: { tag: '⇄', text: 'An effect has changed who controls this unit.' },
+};
+/** Pretend cards for the statuses, so that a status image in the art zips (for example "ward.png") is cached and shown. */
+export const STATUS_CARDS: CardDef[] = Object.keys(STATUSES).filter((n) => /^[A-Z][a-z]+$/.test(n)).map((name) => ({
+  id: 'status:' + name.toLowerCase(), name, slug: name.toLowerCase(), type: 'Artifact', rarity: null, rules: STATUSES[name].text, cost: 0, attack: 0, defense: 0, life: 0,
+  thresholds: { air: 0, earth: 0, fire: 0, water: 0 }, subtypes: [], keywords: [], movement: 0, ranged: 0, typeline: 'Status', printings: [], source: 'custom', effects: [],
+} as unknown as CardDef));
+export const useStatusPop = create<{ name: string; text: string; card?: CardDef; rect: DOMRect } | null>(() => null);
+/** The status card, shown above the unit while one of its tags is hovered. */
+export function StatusPop() {
+  const pop = useStatusPop();
+  const art = useStore((s) => (pop ? s.art[pop.card?.id ?? 'status:' + pop.name.toLowerCase()] : undefined));
+  if (!pop) return null;
+  const W = 190, H = art || pop.card ? W * 1.4 : 118;
+  const left = Math.max(8, Math.min(innerWidth - W - 8, pop.rect.left + pop.rect.width / 2 - W / 2));
+  const top = pop.rect.top - H - 10 > 8 ? pop.rect.top - H - 10 : pop.rect.bottom + 10;
+  return (
+    <div className="statuspop" style={{ left, top, width: W, ['--zw' as string]: `${W}px` }} aria-hidden>
+      {art ? <div className="card xl art"><img src={art} alt="" /></div> : pop.card ? <CardFace card={pop.card} size="xl" />
+        : <div className="statuscard"><b>{pop.name}</b><p>{pop.text}</p></div>}
+    </div>
+  );
 }
