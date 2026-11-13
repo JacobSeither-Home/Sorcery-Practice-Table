@@ -21,6 +21,7 @@ npm run build      # static site in dist/
 - No scraping of sorcerytcg.com or curiosa.io.
 - Card art is never in this repo and never hosted. **Art Sync** reads a folder or zip on the user's own disk (the official public image folder is linked from api.sorcerytcg.com) and caches it in the browser.
 - Rules reminders link to the Codex at sorcerytcg.com/codex instead of restating rulings.
+- Settings → Official rules links to the official rulebook PDF ([December 2025](https://drive.google.com/file/d/1sgQo0xf0N2teIR0zlyl91g9j6LVncZnr/view), hosted by Erik's Curiosa on Google Drive; the current link is always on their [How to Play](https://www.sorcerytcg.com/how-to-play) page).
 - The app ships with no cards. Official precon decks are bundled as card names and counts only (`src/data/officialDecks.ts`) and become playable after Card Sync. Placeholder cards exist only as test fixtures in `tests/fixtures/`.
 
 ## Layout

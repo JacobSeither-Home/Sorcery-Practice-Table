@@ -2,6 +2,11 @@
 // sorcerytcg.com is the authority: every reminder links to its Codex entry instead of restating rulings.
 // Codex entry ids were read from the Codex index page (https://sorcerytcg.com/codex) on 2026-11-12.
 export const CODEX_INDEX = 'https://sorcerytcg.com/codex';
+// The official rulebook PDFs. Erik's Curiosa hosts them on Google Drive and links the current one from "Read the Rulebook" on
+// HOW_TO_PLAY; these are the December 2025 files, as linked from that page and from the December 2025 rulebook news post
+// (both read 2026-11-13). When a newer rulebook comes out, the file links change and HOW_TO_PLAY has the new one.
+export const HOW_TO_PLAY = 'https://www.sorcerytcg.com/how-to-play';
+export const RULEBOOK = { edition: 'December 2025', pdf: 'https://drive.google.com/file/d/1sgQo0xf0N2teIR0zlyl91g9j6LVncZnr/view', annotated: 'https://drive.google.com/file/d/1O4D5lL9gvPhARQQb3qlO37VJzWenJsX-/view' };
 export const CODEX_IDS: Record<string, string> = {
   Airborne: 'c7c182e2-629c-4e65-a9a0-97feff983a3d', Burrowing: '16ed5006-40f3-4df2-8b60-6d0b13bb35a8', Charge: '4cff66bd-45c0-452b-aaa8-18119accf443',
   Deathrite: '7bd846a2-c55b-42cc-915a-9861f2080202', Disabled: '08fff20b-76c1-45c3-b13f-989202cdacf0', Flood: '610226cf-24be-4d6b-885f-b466197672c5',

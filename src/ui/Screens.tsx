@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { type CardDef, type CardType, type Coverage, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, codexUrl, KEYWORDS as KW_ALL, TRIGGERS, effectsFromText, makeCard } from '../engine';
+import { type CardDef, type CardType, type Coverage, type DeckList, type Effect, ELEMENTS, KEYWORD_HELP, CODEX_INDEX, HOW_TO_PLAY, RULEBOOK, codexUrl, KEYWORDS as KW_ALL, TRIGGERS, effectsFromText, makeCard } from '../engine';
 import { OP_LABEL, TRIGGER_LABEL, WHO_LABEL, whoFor } from './abilityText';
 import { claudePrompt, coverage, download as downloadFile, cardsCsv, coverageMarkdown, pickCardFolder, rememberedCardFolder, reportGaps, saveToCardFolder, supportsSaveFolder } from '../data/coverage';
 import type { Difficulty } from '../ai/ai';
@@ -565,6 +565,16 @@ export function Settings() {
         </>)}
       </section>
 
+      <section className="panel">
+        <h2>Official rules</h2>
+        <p className="note">These open Erik's Curiosa's own files and pages; nothing is copied into this app.</p>
+        <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <a className="btnlink" href={RULEBOOK.pdf} target="_blank" rel="noreferrer" data-tip="Opens the official rulebook PDF on Google Drive, where it can be read or downloaded">Rulebook PDF ({RULEBOOK.edition}) ↗</a>
+          <a className="btnlink" href={RULEBOOK.annotated} target="_blank" rel="noreferrer" data-tip="The same rulebook with the designers' notes">Annotated rulebook ({RULEBOOK.edition}) ↗</a>
+          <a className="btnlink" href={CODEX_INDEX} target="_blank" rel="noreferrer" data-tip="The Codex: every keyword, rule term and ruling">Codex ↗</a>
+        </div>
+        <p className="note">The rulebook link is the {RULEBOOK.edition} edition. If a newer one is out, "Read the Rulebook" on the <a href={HOW_TO_PLAY} target="_blank" rel="noreferrer">How to Play page</a> has it.</p>
+      </section>
       <section className="panel about">
         <h2>About</h2>
         <p>Unofficial fan project, not affiliated with Erik's Curiosa. Free and non-commercial. Sorcery: Contested Realm is a trademark of Erik's Curiosa Limited. Card data comes from the official public API; card art is loaded by each player from their own disk. Version {__APP_VERSION__}.</p>
