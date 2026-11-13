@@ -25,7 +25,7 @@ export type Category =
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
-  prevent: 'Protection & restrictions', control: 'Movement & position', castRule: 'Costs & mana rules', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
+  prevent: 'Protection & restrictions', control: 'Movement & position', moveAura: 'Movement & position', castRule: 'Costs & mana rules', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
 };
 
 /** Guess what an unautomated sentence is about, so the coverage report can group it. */
@@ -398,6 +398,7 @@ export const RULES: Rule[] = [
     build: (m) => { const v = nounPhrase(m[2] ?? m[5]); if (!v || v.who === 'self') return null; const dest = /caster/i.test(m[3] ?? '') ? 'caster' : 'here'; return [{ op: 'teleport', ...v, move: /teleport/i.test(m[1] ?? '') ? 'teleport' : 'drag', dest }]; } },
   { id: 'teleport-all', label: 'Teleport any number of … to …', re: /^teleport (?:any number of|all) (.+?) (here|to the caster'?s location|to this location)\.$/i,
     build: (m) => { const v = nounPhrase('all ' + m[1]); return v && v.who !== 'target' ? [{ op: 'teleport', ...v, move: 'teleport', dest: /caster/i.test(m[2]) ? 'caster' : 'here' }] : null; } },
+  { id: 'aura-step', label: 'Move this aura one step', re: /^move (?:this|it) one step\.$/i, build: (_m, _on, type) => (type === 'Aura' ? [{ op: 'moveAura', who: 'self' }] : null) },
   { id: 'teleport-random', label: 'Teleport to a random site or void', re: /^(?:this )?teleports? (?:this )?to the top of a random site or void\.$/i, build: () => [{ op: 'teleport', who: 'self', move: 'teleport', dest: 'random' }] },
   { id: 'teleport-self-nearby', label: 'Teleport to another nearby location', re: /^(?:this )?(?:may )?teleports? to (?:another|a) nearby location(?: or void)?\.$/i, build: () => [{ op: 'teleport', who: 'self', move: 'teleport', dest: 'nearby' }] },
   { id: 'take-step', label: '… takes a step', re: /^(.+?) (?:may )?takes? a step\.$/i,
@@ -562,7 +563,12 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   const parts = sentence.replace(/\.$/, '').split(/,? (?:and )?then |, and (?=(?:you|deal|draw|gain|heal|untap|tap|kill|destroy|banish|summon|give|return|each|your)\b)| and (?=(?:you heal|you gain|draw|untap|tap|deal|make|may)\b)/i);
   if (parts.length > 1) {
     const all: Omit<Effect, 'on'>[] = []; const ids: string[] = [];
-    for (const part of parts) { const r = matchSentence(part.trim().replace(/^./, (c) => c.toUpperCase()) + '.', on, type, false); if (!r) return null; all.push(...r.got); ids.push(r.rule); }
+    for (const part of parts) {
+      // "…, then you may X": that half is the player's option
+      const opt = part.trim().match(/^you may (.+)$/i); const text = (opt ? opt[1] : part.trim()).replace(/^./, (c) => c.toUpperCase()) + '.';
+      const r = matchSentence(text, on, type, false); if (!r) return null;
+      all.push(...(opt ? r.got.map((e) => ({ ...e, optional: true })) : r.got)); ids.push((opt ? 'may+' : '') + r.rule);
+    }
     return { got: all, rule: ids.join('+') };
   }
   return null;

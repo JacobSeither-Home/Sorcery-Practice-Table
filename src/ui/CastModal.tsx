@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, Reorder, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, cardOf, casterOrigins, cellsFor, pickOptions, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, cellsFor, pickOptions, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, hoverProps, mainElement } from './CardFace';
@@ -181,6 +181,8 @@ function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: numbe
         {e.op === 'scry' && (() => { const top = s.players[pl.p][e.deck ?? 'spellbook'][0]; return top ? <div className="lookrow"><small>Only you see this. It is the top card of your {e.deck ?? 'spellbook'}.</small>
           <div className="look-cards"><div className="look-card" {...hoverProps(cardOf(s, top))}><CardFace card={cardOf(s, top)} size="md" /></div>
             <span className="xpick col"><button className={!c?.bottom ? 'on' : ''} onClick={() => set({ bottom: false })}>▲ Leave it on top</button><button className={c?.bottom ? 'on' : ''} onClick={() => set({ bottom: true })}>▼ Put it on the bottom</button></span></div></div> : <small className="none"> — the deck is empty</small>; })()}
+        {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);
+          return <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })} data-tip={`The joint between ${a.map(sq).join(', ')}`}>{sq(a[0])}–{sq(a[3])}<small> {a.map(sq).join(' ')}</small></button>; })}</div>}
         {e.op === 'teleport' && (c?.target || e.who === 'self') && (!e.dest || ['nearby', 'site', 'adjacent', 'toward', 'away'].includes(e.dest)) && (() => { const mover = c?.target ? s.units[c.target] : pl.self ? s.units[pl.self] : undefined; const tc = teleportCells(s, e, mover, pl.origins[0]); return tc.length ? <div className="chips targets"><small>Where to:</small>{tc.map((cl) => <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })}>{sq(cl)}<small> {s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'void'}</small></button>)}</div> : <small className="none"> — nowhere to go</small>; })()}
         {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
         {e.who === 'target' && !e.ref && (targets.length ? <div className="chips targets">{targets.map((id) => {

@@ -23,6 +23,8 @@ export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'acti
 /** Which events a reaction listens to, relative to the card that has it. */
 export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
+  /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
+  | 'moveAura'
   | 'damage' | 'heal' | 'loseLife' | 'draw' | 'mana' | 'destroy' | 'banish' | 'bounce'
   | 'tap' | 'untap' | 'buff' | 'grant' | 'discard'
   /** mana and/or threshold: static ("Provides (F)") or for this turn ("Genesis → Provides (A)(E) this turn") */

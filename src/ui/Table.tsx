@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
-  actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, isDisabled, power, isWater, other, playableSiteCells, reach, responders,
+  actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, isWater, other, playableSiteCells, reach, responders,
   sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
@@ -12,6 +12,9 @@ import { CardFace, Pips, STATUSES, clearZoom, hoverProps, mainElement, useStatus
 import { spring, usePace } from './pace';
 import { type CastReq, CastModal, abilityList } from './CastModal';
 import { HowItWorks } from './Explain';
+declare const __APP_VERSION__: string;
+import { submit as submitFeedback, recentErrors } from '../feedback/feedback';
+import { feedbackRemote, useAuth } from '../cloud/cloud';
 
 type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string };
 interface Opt { label: string; hint?: string; action: Action }
@@ -100,7 +103,7 @@ export function Table() {
       const needs = selCard.effects.some((e) => e.who === 'target' && e.on === (selCard.type === 'Magic' ? 'cast' : 'genesis'));
       if (selCard.type === 'Site') { if (!s.units[me.avatar].tapped) for (const c of playableSiteCells(s, who)) cells.set(c, 'place'); }
       else if (selCard.type === 'Magic') { if (needs) for (const id of validTargets(s, who, selCard)) units.add(id); }
-      else if (selCard.type === 'Aura') for (let c = 0; c < CELLS; c++) cells.set(c, 'place'); // auras can be conjured anywhere (Codex "Casting Auras")
+      else if (selCard.type === 'Aura') { /* auras go on a joint between four squares: the joint markers are drawn over the realm instead */ }
       else for (const c of sitesOf(s, who)) cells.set(c, 'place');
     }
     if (selUnit) {
@@ -142,7 +145,8 @@ export function Table() {
     if (sel?.k === 'hand' && selCard) {
       if (selCard.type === 'Site') { if (explain({ t: 'playSite', inst: sel.inst, c })) act({ t: 'playSite', inst: sel.inst, c }); return; }
       if (selCard.type === 'Magic') { play(sel.inst); return; }
-      if (selCard.type !== 'Aura' && s.sites[c]?.owner !== who) { explain({ t: 'cast', inst: sel.inst, c }); return; }
+      if (selCard.type === 'Aura') return; // an aura is placed on a joint, not a square
+      if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst: sel.inst, c }); return; }
       play(sel.inst, c);
       return;
     }
@@ -179,7 +183,8 @@ export function Table() {
   }
 
   // ---- dragging a hand card onto the realm ----
-  const [drag, setDrag] = useState<{ inst: string; c: number | null; unit: string | null } | null>(null);
+  const [drag, setDrag] = useState<{ inst: string; c: number | null; unit: string | null; j?: number | null } | null>(null);
+  const [hoverJoint, setHoverJoint] = useState<number | null>(null);
   const dragged = useRef(false);
   const under = (x: number, y: number) => {
     let c: number | null = null, unit: string | null = null;
@@ -191,21 +196,39 @@ export function Table() {
   };
   const canDrag = myInput && !s.pending && s.phase === 'main';
   function startDrag(inst: string) { dragged.current = true; setMenu(null); setSel({ k: 'hand', inst }); setDrag({ inst, c: null, unit: null }); }
-  function moveDrag(inst: string, x: number, y: number) { const u = under(x, y); setDrag((d) => (d && d.c === u.c && d.unit === u.unit ? d : { inst, ...u })); }
+  /** The joint (where four squares meet) nearest a point over the realm, as the engine's top-left square of that 2×2 area. */
+  const jointAt = (x: number, y: number): number | null => {
+    const mat = scroller.current?.querySelector<HTMLElement>('.mat'); if (!mat) return null;
+    const r = mat.getBoundingClientRect(); if (x < r.left || x > r.right || y < r.top || y > r.bottom) return null;
+    const gap = parseFloat(getComputedStyle(mat).paddingLeft) || 0;
+    const jx = Math.max(1, Math.min(COLS - 1, Math.round(((x - r.left - gap) / (r.width - 2 * gap)) * COLS)));
+    const jy = Math.max(1, Math.min(CELLS / COLS - 1, Math.round(((y - r.top - gap) / (r.height - 2 * gap)) * (CELLS / COLS))));
+    return jointCell(jx, jy);
+  };
+  function moveDrag(inst: string, x: number, y: number) {
+    if (cardOf(s, inst).type === 'Aura') { const j = jointAt(x, y); setDrag((d) => (d && d.j === j ? d : { inst, c: null, unit: null, j })); return; }
+    const u = under(x, y); setDrag((d) => (d && d.c === u.c && d.unit === u.unit ? d : { inst, ...u }));
+  }
   function dropHand(inst: string, x: number, y: number) {
     const { c, unit } = under(x, y);
     setDrag(null); setTimeout(() => { dragged.current = false; }, 0);
+    if (cardOf(s, inst).type === 'Aura') { const j = jointAt(x, y); if (j === null) setSel(null); else play(inst, j); return; }
     if (c === null) { setSel(null); return; } // let go outside the realm: back to hand
     const d = cardOf(s, inst);
     if (d.type === 'Site') { const a: Action = { t: 'playSite', inst, c }; if (explain(a)) act(a); else setSel(null); return; }
     if (d.type === 'Magic') { play(inst); return; }
     if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && s.sites[c]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) { play(inst, c, unit); return; } // dropped on one of your units: it carries the artifact
-    if (d.type !== 'Aura' && s.sites[c]?.owner !== who) { explain({ t: 'cast', inst, c }); setSel(null); return; }
+    if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst, c }); setSel(null); return; }
     play(inst, c);
   }
   const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen
 
   const order = [...Array(CELLS).keys()]; if (flip) order.reverse();
+  /** Joint jx,jy on screen (1-based, counted from the top-left) → the engine's top-left square of the four around it. */
+  function jointCell(jx: number, jy: number) { const di = (jy - 1) * COLS + (jx - 1); const o = [...Array(CELLS).keys()]; if (flip) o.reverse(); return Math.min(o[di], o[di + 1], o[di + COLS], o[di + COLS + 1]); }
+  const areaPos = (c: number) => { const idx = [c, c + 1, c + COLS, c + COLS + 1].map((x) => order.indexOf(x)); return { left: Math.min(...idx.map((i) => i % COLS)), top: Math.min(...idx.map((i) => Math.floor(i / COLS))) }; };
+  const placingAura = myInput && !s.pending && sel?.k === 'hand' && selCard?.type === 'Aura';
+  const auraAt = placingAura ? (drag ? drag.j ?? null : hoverJoint) : null;
   const rubble = useMemo(() => Object.values(s.cards).find((c) => c.name.toLowerCase() === 'rubble'), [s.cards]);
   const unitsByCell = useMemo(() => { const m = new Map<number, Unit[]>(); for (const u of Object.values(s.units)) { if (!m.has(u.c)) m.set(u.c, []); m.get(u.c)!.push(u); } return m; }, [s.units]);
   const pend = s.pending;
@@ -236,6 +259,7 @@ export function Table() {
           {herald ? <Herald h={herald} /> : <span className="hint">
             {s.phase === 'over' ? '' : !myInput ? (aiWaiting ? `${PNAME(g, who)} moved. Tap Continue for the next move.` : aiThinking ? `${PNAME(g, who)} is thinking…` : `Waiting for ${PNAME(g, who)}…`)
               : pend ? '' : s.phase === 'draw' ? 'Start of turn: draw one card from either deck.'
+              : placingAura ? 'An aura goes on a joint where four squares meet and affects those four. Choose a glowing joint, or drag the card to one.'
               : drag ? 'Drag onto a glowing square and let go.' : selCard ? (selCard.type === 'Site' ? 'Choose a glowing square for this site.' : selCard.type === 'Magic' ? 'Opening the spell…' : 'Choose one of your sites.')
               : selUnit ? 'Green squares: move. Red squares: something to attack.' : 'Drag a card onto the realm, or tap one of your units. Hold any card to read it.'}
           </span>}
@@ -290,6 +314,14 @@ export function Table() {
                 onClick={(e) => { if (manual) { e.stopPropagation(); act({ t: 'manual', op: 'destroyPerm', perm: m.id }); } }} data-tip={manual ? 'Manual: dispel' : `${pc.name}${lasts ? ` (${m.turns ?? 0} of ${lasts} turns)` : ''}`}>
                 <span className="aura-name">◌ {pc.name}{lasts ? ` · ${m.turns ?? 0}/${lasts}` : ''}</span>
               </div>;
+            })}
+            {placingAura && auraAt !== null && (() => { const a = areaPos(auraAt); return <div className="aura-area preview" style={{ '--ax': a.left, '--ay': a.top } as React.CSSProperties} aria-hidden />; })()}
+            {placingAura && Array.from({ length: (COLS - 1) * (CELLS / COLS - 1) }, (_, k) => {
+              const jx = (k % (COLS - 1)) + 1, jy = Math.floor(k / (COLS - 1)) + 1; const c = jointCell(jx, jy);
+              return <button key={k} className={`joint ${auraAt === c ? 'on' : ''}`} style={{ '--jx': jx, '--jy': jy } as React.CSSProperties} aria-label={`Place the aura on the joint between row ${jy} and ${jy + 1}, column ${jx} and ${jx + 1}`}
+                data-tip="Place the aura here: it affects the four squares around this joint"
+                onMouseEnter={() => setHoverJoint(c)} onMouseLeave={() => setHoverJoint((h) => (h === c ? null : h))}
+                onClick={(e) => { e.stopPropagation(); setHoverJoint(null); play(sel!.inst, c); }} />;
             })}
             {herald && herald.trails.length > 0 && (
               <svg key={herald.id} className={`trails mp${herald.p}`} viewBox={`0 0 ${COLS * 100} 400`} preserveAspectRatio="none" aria-hidden>
@@ -492,11 +524,12 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
   const atk = power(s, u); const def = defenseOf(s, u); const boosted = atk !== d.attack || !!u.mods?.length;
   const life = u.avatar ? s.players[u.owner].life : def - u.damage;
   const disabled = isDisabled(s, u);
-  const tags = [u.ward && !disabled ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
+  const below = u.r === 'under' ? (isWater(s, u.c) ? 'Submerged' : 'Burrowed') : ''; const flying = !u.avatar && u.r !== 'under' && has(s, u, 'Airborne');
+  const tags = [flying ? 'Airborne' : '', below, u.ward && !disabled ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
     ...new Set((u.mods ?? []).map((m) => m.kw ?? '').filter(Boolean))].filter(Boolean);
   const lanceCard = u.lance ? Object.values(s.cards).find((c) => c.name === 'Lance' && c.category === 'Token') : undefined;
   return (
-    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${d.category === 'Token' ? 'token' : ''} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${u.r === 'under' ? 'under' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
+    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${d.category === 'Token' ? 'token' : ''} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${below ? 'under ' + below.toLowerCase() : ''} ${flying ? 'airborne' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
       animate={{ rotate: u.tapped ? 90 : 0, scale: selected ? 1.12 : 1 }} transition={spring(pace)} onClick={onClick} {...hoverProps(d)}
       data-unit={u.id} aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
       <span className="unit-face">{art ? <img src={art} alt="" draggable={false} /> : <span className="unit-name">{d.name}</span>}</span>
@@ -504,7 +537,8 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
       {!u.avatar && <motion.span key={u.damage + ':' + life + ':' + atk} className={`badge ${u.damage ? 'hurt' : ''} ${atk > d.attack ? 'up' : atk < d.attack ? 'down' : ''}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{atk === def && !u.damage ? atk : `${atk}/${life}`}</motion.span>}
       {boosted && <span className="mods" data-tip={[...(u.mods ?? []).map((m) => `${m.kw ? m.kw : `${m.atk >= 0 ? '+' : ''}${m.atk} power`}${m.turn !== undefined ? ' this turn' : ''} (${m.from})`), atk !== d.attack + (u.mods ?? []).reduce((n, m) => n + m.atk, 0) ? 'boosted by a card nearby' : ''].filter(Boolean).join(', ')}>✦</span>}
       {carried.length > 0 && <span className="attached">{carried.map((m) => { const ac = cardOf(s, m.inst); return <AttachTab key={m.id} card={ac} />; })}</span>}
-      {u.r === 'under' && <span className="under-tag">below</span>}
+      {below && <span className="region-tag">{below === 'Submerged' ? '≈ Submerged' : '▼ Burrowed'}</span>}
+      {flying && <span className="region-tag air">▲ Airborne</span>}
       {tags.length > 0 && <span className="tags">{tags.map((name) => { const st = STATUSES[name] ?? { tag: name.slice(0, 2), text: KEYWORD_HELP[name]?.text ?? `${name}, granted by an effect.` }; return (
         <span key={name} className={`stag st-${name.split(' ')[0].toLowerCase().replace(/[^a-z]/g, '')}`} aria-label={name}
           onMouseEnter={(e) => { clearZoom(); useStatusPop.setState({ name, text: st.text, card: name === 'Lance' ? lanceCard : undefined, rect: (e.currentTarget.closest('.unit') ?? e.currentTarget).getBoundingClientRect() }); }}
@@ -677,10 +711,46 @@ export function Inspector() {
           <motion.div className="sheet" initial={{ y: 50, scale: 0.97 }} animate={{ y: 0, scale: 1 }} exit={{ y: 30, opacity: 0 }} onClick={(e) => e.stopPropagation()} role="dialog" aria-label={card.name}>
             <header><h2>{card.name}</h2><button className="iconbtn" onClick={close} aria-label="Close">✕</button></header>
             <Preview card={card} />
+            <RuleTicket key={card.id} card={card} />
           </motion.div>
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+/** A rule ticket: say what a card did wrong and why, straight from the card. It lands in the problem reports (Settings → Wishlist and problems)
+ *  with the card, how the app reads its text, and the last moves of the game attached. */
+function RuleTicket({ card }: { card: CardDef }) {
+  const [open, setOpen] = useState(false); const [what, setWhat] = useState(''); const [should, setShould] = useState(''); const [note, setNote] = useState(''); const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true); setNote('');
+    try {
+      const { game: g, settings } = useStore.getState(); const email = useAuth.getState().email;
+      const remote = await feedbackRemote();
+      await submitFeedback({
+        kind: 'problem', title: `Rule ticket: ${card.name}`,
+        details: `What happened:\n${what.trim()}${should.trim() ? `\n\nWhat it should do, and why:\n${should.trim()}` : ''}`,
+        submitted_by: email ?? (settings.name || null),
+        context: {
+          ticket: 'rule', card: { id: card.id, name: card.name, type: card.type, cost: card.cost, rules: card.rules, keywords: card.keywords },
+          read_as: card.effects.map((e) => ({ on: e.on, op: e.op, who: e.who, rule: e.rule ?? null, by_hand: e.op === 'manual', text: e.text ?? null })),
+          game: g ? { mode: g.mode, difficulty: g.difficulty, turn: g.state.turn, phase: g.state.phase, log: g.state.log.slice(-25).map((l) => l.text) } : null,
+          errors: recentErrors(), version: __APP_VERSION__, at: new Date().toISOString(),
+        },
+      }, remote);
+      setWhat(''); setShould(''); setNote(remote ? 'Ticket saved and sent. It is in Settings → Wishlist and problems.' : 'Ticket saved on this device. It is in Settings → Wishlist and problems.');
+    } catch (e) { setNote(`Saved on this device, but not sent: ${(e as Error).message}`); }
+    setBusy(false);
+  };
+  if (!open) return <div className="ticket"><button className="ticket-open" onClick={() => setOpen(true)} data-tip="Report that this card is not working the way it should">🎫 Rule ticket</button>{note && <small className="ticket-note">{note}</small>}</div>;
+  return (
+    <form className="ticket open" onSubmit={(e) => { e.preventDefault(); if (what.trim() && !busy) void send().then(() => setOpen(false)); }}>
+      <strong>Rule ticket for {card.name}</strong>
+      <label>What happened?<textarea value={what} onChange={(e) => setWhat(e.target.value)} rows={3} autoFocus placeholder="What the card did (or didn't do) in the app" /></label>
+      <label>What should it do, and why?<textarea value={should} onChange={(e) => setShould(e.target.value)} rows={3} placeholder="How it should work, and the card text or rule that says so" /></label>
+      <small className="fineprint">The card, how the app currently reads its text, and the last 25 lines of the game log go with the ticket.</small>
+      <div className="row"><button type="button" onClick={() => setOpen(false)}>Cancel</button><button type="submit" className="primary" disabled={!what.trim() || busy}>{busy ? 'Sending…' : 'File ticket'}</button></div>
+    </form>
   );
 }
 export { cell, COLS };

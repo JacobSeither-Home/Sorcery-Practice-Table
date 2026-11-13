@@ -70,8 +70,11 @@ function drawChoice(s: GameState, me: PlayerId, acts: Action[]): Action {
   const pl = s.players[me];
   const sitesInHand = pl.hand.filter((i) => cardOf(s, i).type === 'Site').length;
   const mine = sitesOf(s, me).length;
-  const cheapest = Math.min(99, ...pl.hand.map((i) => cardOf(s, i)).filter((c) => c.type !== 'Site').map((c) => c.cost));
-  const wantSite = sitesInHand === 0 && (mine < 7 || cheapest > mine + 1);
+  const spells = pl.hand.map((i) => cardOf(s, i)).filter((c) => c.type !== 'Site');
+  const cheapest = Math.min(99, ...spells.map((c) => c.cost));
+  // A site only when there is none to play this turn, and only while the hand still holds spells to spend the mana on:
+  // drawing a site every turn (and playing it at once) would leave the hand with nothing but what it started with.
+  const wantSite = sitesInHand === 0 && pl.atlas.length > 0 && (mine < 2 || (spells.length >= 2 && (mine < 7 || cheapest > mine + 1)) || !pl.spellbook.length);
   return acts.find((a) => a.t === 'draw' && a.deck === (wantSite ? 'atlas' : 'spellbook')) ?? acts[0];
 }
 function mulliganChoice(s: GameState, me: PlayerId): Action {

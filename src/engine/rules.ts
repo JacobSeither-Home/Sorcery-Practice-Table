@@ -95,6 +95,8 @@ export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc 
   }
   return w.not ? !r : r;
 }
+/** Where an aura at top-left square `c` can go in one step: the joints next to its own, up, down, left or right. */
+export function auraSteps(c: number): number[] { const [x, y] = xy(c); return [[x, y - 1], [x - 1, y], [x + 1, y], [x, y + 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= COLS - 2 && b <= ROWS - 2).map(([a, b]) => cell(a, b)); }
 /** The four squares an aura at top-left square `c` covers (Codex "Casting Auras"). */
 export function auraArea(c: number): number[] { const [x, y] = xy(c); return [cell(x, y), cell(x + 1, y), cell(x, y + 1), cell(x + 1, y + 1)].filter((n) => n >= 0); }
 const AURA_HERE: Partial<Record<Effect['who'], Effect['who']>> = { unitsHere: 'affected', minionsHere: 'affected', enemiesHere: 'affected', alliesHere: 'affected' };
@@ -380,7 +382,7 @@ function inRange(from: Loc, to: Loc, range: Effect['range'], sameRegion = false)
   return nearby(from.c).includes(to.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => e.op === 'moveAura' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -498,6 +500,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
+    if (e.op === 'moveAura' && (c?.cell === undefined || !origins[0] || !auraSteps(origins[0].c).includes(c.cell))) return no('Choose a neighbouring joint for the aura, or skip the move.', 'Aura');
     if (e.op === 'teleport' && chosenDest(e) && (e.who === 'target' || e.who === 'self')) { const u = c?.target ? s.units[c.target] : self ? s.units[self] : undefined; if (c?.cell === undefined || !teleportCells(s, e, u, origins[0]).includes(c.cell)) return no('Choose where it goes.'); }
   }
   return { ok: true };
@@ -735,6 +738,11 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
+      case 'moveAura': {
+        const m = src && 'perm' in src ? s.perms.find((x) => x.id === src.perm) : undefined;
+        if (m && m.kind === 'aura' && c?.cell !== undefined && auraSteps(m.c).includes(c.cell)) { m.c = c.cell; log(s, `${pname(p)} moves ${d.name} one step.`, p); }
+        break;
+      }
       case 'teleport': {
         // Codex "Forced Movement" / "Teleport": the unit is put at the destination; a step needs it to be able to step
         const mover = e.dest === 'to' ? (self ? s.units[self] : undefined) : undefined;
@@ -1440,6 +1448,7 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
     if (e.who === 'target' && !e.ref) { const t = targetsFor(s, p, d, i, origins, self); if (!t.length) return []; if (spread < 0) spread = i; base[i] = { target: t[0] }; }
     if (e.x) base[i] = { ...(base[i] ?? {}), n: 1 };
     if (e.op === 'draw' && !e.deck) base[i] = { ...(base[i] ?? {}), deck: 'spellbook' };
+    if (e.op === 'moveAura') base[i] = e.optional ? { skip: true } : { cell: origins[0] ? auraSteps(origins[0].c)[0] : undefined }; // the AI leaves its auras where they are
     if (e.who === 'atTarget' && !e.refCell && !['damage', 'destroy', 'banish', 'strike', 'tap', 'sink', 'choose'].includes(e.op)) { const cl = cellsFor(s, d, i, origins); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }
     else if (e.who === 'atTarget' && !e.refCell) {
       // the AI aims area effects at squares with more enemies than allies

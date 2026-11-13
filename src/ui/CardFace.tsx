@@ -92,6 +92,9 @@ export function ZoomCard() {
 // ---- status tags on units ----
 /** Conditions a unit can be under. Each gets a small tag on its card on the board; hovering the tag shows the status card above the unit. */
 export const STATUSES: Record<string, { tag: string; text: string }> = {
+  Airborne: { tag: '▲', text: 'In the air above the site. See the Codex entry for Airborne for what can reach it.' },
+  Burrowed: { tag: '▼', text: 'Underground, beneath this land site, in a different region from units on the surface.' },
+  Submerged: { tag: '≈', text: 'Underwater, beneath this water site, in a different region from units on the surface.' },
   Ward: { tag: 'W', text: 'The first damage, destruction or enemy targeting breaks the Ward instead of affecting this unit.' },
   Stealth: { tag: 'S', text: 'Cannot be targeted by enemy spells, intercepted, defended against or shot. Lost once it strikes.' },
   Disabled: { tag: 'D', text: 'Loses its abilities, does not strike, and cannot act.' },
