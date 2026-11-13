@@ -93,18 +93,21 @@ export function Setup() {
 
 // ---------------------------------------------------------------- shared card search
 function useSearch(pool: Record<string, CardDef>, types?: CardType[]) {
-  const [q, setQ] = useState(''); const [type, setType] = useState<string>(''); const [rarity, setRarity] = useState<string>('');
+  const [q, setQ] = useState(''); const [type, setType] = useState<string>(''); const [rarity, setRarity] = useState<string>(''); const [set, setSet] = useState<string>('');
+  // the sets the synced cards were printed in, in the order the card data first mentions them
+  const sets = useMemo(() => [...new Set(Object.values(pool).flatMap((c) => (c.printings ?? []).map((p) => p.set).filter(Boolean)))] as string[], [pool]);
   const zoom = useStore((s) => s.settings.zoom ?? 1); const setSettings = useStore((s) => s.setSettings);
   const list = useMemo(() => {
     const k = q.trim().toLowerCase();
-    return Object.values(pool).filter((c) => (!types || types.includes(c.type)) && (!type || c.type === type) && (!rarity || c.rarity === rarity) && (!k || c.name.toLowerCase().includes(k) || c.rules.toLowerCase().includes(k) || c.subtypes.join(' ').toLowerCase().includes(k)))
+    return Object.values(pool).filter((c) => (!types || types.includes(c.type)) && (!type || c.type === type) && (!rarity || c.rarity === rarity) && (!set || (c.printings ?? []).some((p) => p.set === set)) && (!k || c.name.toLowerCase().includes(k) || c.rules.toLowerCase().includes(k) || c.subtypes.join(' ').toLowerCase().includes(k)))
       .sort((x, y) => x.name.localeCompare(y.name));
-  }, [pool, q, type, rarity]);
+  }, [pool, q, type, rarity, set]);
   const bar = (
     <div className="searchbar">
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, rules text or subtype" aria-label="Search cards" />
       <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Card type"><option value="">All types</option>{['Avatar', 'Site', 'Minion', 'Magic', 'Aura', 'Artifact'].map((t) => <option key={t}>{t}</option>)}</select>
       <select value={rarity} onChange={(e) => setRarity(e.target.value)} aria-label="Rarity"><option value="">All rarities</option>{RARITIES.map((r) => <option key={r} value={r}>{r} (up to {RARITY_LIMIT[r]})</option>)}</select>
+      {sets.length > 0 && <select value={set} onChange={(e) => setSet(e.target.value)} aria-label="Set" data-tip="Cards printed in this set"><option value="">All sets</option>{sets.map((x) => <option key={x}>{x}</option>)}</select>}
       <label className="zoom" data-tip="Card size"><span aria-hidden>−</span><input type="range" min={0.6} max={3} step={0.1} value={zoom} onChange={(e) => setSettings({ zoom: Number(e.target.value) })} aria-label="Card size" /><span aria-hidden>+</span></label>
       <span className="count">{list.length.toLocaleString()} cards</span>
     </div>
@@ -259,7 +262,7 @@ export function Library() {
             <div className="row"><button type="button" onClick={() => setDraft(null)}>Cancel</button><button className="primary" type="submit">Save card</button></div>
           </form>
         ) : card ? (<>
-          <Preview />
+          <Preview card={card} />
           <div className="row"><b>{card.name}</b>{card.source === 'custom' && <><button onClick={() => setDraft(card)}>Edit</button><button onClick={() => { if (confirm(`Delete ${card.name}?`)) { deleteCustom(card.id); setId(null); } }}>Delete</button></>}</div>
           <ArtChooser card={card} />
           <h3>Automated effects</h3>
@@ -290,7 +293,7 @@ export function Library() {
               <button className="ghost" onClick={() => setFx(effectsFromText(card.type, card.rules, card.name))} data-tip="Throw away hand-made changes and read the card text again">Read from card text</button>
             </div>
           </>)}
-        </>) : <><Preview /><p className="note">Select a card to see it and set up automated effects, or add a card of your own.</p></>}
+        </>) : <><p className="note">Select a card to see it and set up automated effects, or add a card of your own.</p></>}
       </aside>
     </div>
   );
