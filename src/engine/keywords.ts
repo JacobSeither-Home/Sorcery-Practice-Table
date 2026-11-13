@@ -32,7 +32,7 @@ export const KEYWORD_HELP: Record<string, { text: string; enforced: boolean }> =
   Spellcaster: { text: 'Can cast spells. Avatars are always spellcasters. Targeted magic is measured from a spellcaster you control.', enforced: true },
   Stealth: { text: 'Until it interacts with the realm: the opponent cannot target it, defend against or intercept it, or hit it with projectiles.', enforced: true },
   Submerge: { text: 'Can step between the surface and underwater of a water site, and between neighbouring underwater locations.', enforced: true },
-  Voidwalk: { text: 'Can enter and survive in the void; any other minion there is banished.', enforced: true },
+  Voidwalk: { text: 'Can be summoned to, enter and survive in the void; any other minion there is banished.', enforced: true },
   Ward: { text: 'Enters with a Ward. The first time it would be damaged, destroyed, or targeted by the opponent, the Ward breaks instead.', enforced: true },
   Waterbound: { text: 'Disabled while it is not on a water location.', enforced: true },
   Threshold: { text: 'The element symbols on sites you control. A card needs at least its printed threshold; threshold is not spent.', enforced: true },

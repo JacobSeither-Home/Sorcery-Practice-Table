@@ -116,6 +116,15 @@ describe('movement and keywords', () => {
     expect(reach(s, s.units[courier]).size).toBe(12); // radius-2 diamond clipped by the board edge
     expect(reason(s, { t: 'move', unit: brute, path: [{ c: cell(2, 1), r: 'surface' }, { c: cell(2, 0), r: 'surface' }] })).toMatch(/1 step/);
   });
+  it('a minion with Voidwalk can be summoned to a void square; other minions cannot (Codex "Voidwalk")', () => {
+    const s = rig(); s.players[0].mana = 9;
+    const walker = give(s, 0, T('Test Void Summon', 'Minion', { attack: 1, defense: 1, cost: 0, keywords: ['Voidwalk'] }));
+    const plain = give(s, 0, T('Test Plain Summon', 'Minion', { attack: 1, defense: 1, cost: 0 }));
+    expect(reason(s, { t: 'cast', inst: plain, c: cell(0, 0) })).toMatch(/site you control/);
+    expect(check(s, { t: 'cast', inst: walker, c: cell(0, 0) }).ok).toBe(true);
+    const s2 = apply(s, { t: 'cast', inst: walker, c: cell(0, 0) });
+    expect(Object.values(s2.units).some((u) => u.inst === walker && u.c === cell(0, 0))).toBe(true);
+  });
   it('void is closed to units without Voidwalk; going under needs Burrowing/Submerge on the right terrain', () => {
     const s = rig();
     const brute = unit(s, 0, cell(0, 1), id('Kiln Brute'));

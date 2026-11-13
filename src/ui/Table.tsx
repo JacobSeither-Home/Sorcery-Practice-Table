@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
-  actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, isWater, other, playableSiteCells, reach, responders,
+  actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
   sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
@@ -104,7 +104,7 @@ export function Table() {
       if (selCard.type === 'Site') { if (!s.units[me.avatar].tapped) for (const c of playableSiteCells(s, who)) cells.set(c, 'place'); }
       else if (selCard.type === 'Magic') { if (needs) for (const id of validTargets(s, who, selCard)) units.add(id); }
       else if (selCard.type === 'Aura') { /* auras go on a joint between four squares: the joint markers are drawn over the realm instead */ }
-      else for (const c of sitesOf(s, who)) cells.set(c, 'place');
+      else for (const c of summonCells(s, who, selCard)) cells.set(c, 'place');
     }
     if (selUnit) {
       for (const path of reach(s, selUnit).values()) {
@@ -146,7 +146,7 @@ export function Table() {
       if (selCard.type === 'Site') { if (explain({ t: 'playSite', inst: sel.inst, c })) act({ t: 'playSite', inst: sel.inst, c }); return; }
       if (selCard.type === 'Magic') { play(sel.inst); return; }
       if (selCard.type === 'Aura') return; // an aura is placed on a joint, not a square
-      if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst: sel.inst, c }); return; }
+      if (!summonCells(s, who, selCard).includes(c)) { explain({ t: 'cast', inst: sel.inst, c }); return; }
       play(sel.inst, c);
       return;
     }
@@ -218,7 +218,7 @@ export function Table() {
     if (d.type === 'Site') { const a: Action = { t: 'playSite', inst, c }; if (explain(a)) act(a); else setSel(null); return; }
     if (d.type === 'Magic') { play(inst); return; }
     if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && s.sites[c]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) { play(inst, c, unit); return; } // dropped on one of your units: it carries the artifact
-    if (s.sites[c]?.owner !== who) { explain({ t: 'cast', inst, c }); setSel(null); return; }
+    if (!summonCells(s, who, d).includes(c)) { explain({ t: 'cast', inst, c }); setSel(null); return; }
     play(inst, c);
   }
   const bottomPlayer: PlayerId = flip ? 1 : 0; // whose home row is at the bottom of the screen

@@ -95,6 +95,16 @@ export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc 
   }
   return w.not ? !r : r;
 }
+/** The squares a minion or artifact can be summoned or conjured to: sites its caster controls; any site for "may be summoned to any site";
+ *  and, for a minion with Voidwalk, any void square (Codex "Voidwalk": such a minion can be summoned to void locations). */
+export function summonCells(s: GameState, p: PlayerId, d: CardDef): number[] {
+  const out: number[] = [];
+  for (let c = 0; c < CELLS; c++) {
+    const site = s.sites[c];
+    if (site?.owner === p || (d.type === 'Minion' && ((site?.inst && allows(d, 'Summon to any site')) || (!site && d.keywords.includes('Voidwalk'))))) out.push(c);
+  }
+  return out;
+}
 /** Where an aura at top-left square `c` can go in one step: the joints next to its own, up, down, left or right. */
 export function auraSteps(c: number): number[] { const [x, y] = xy(c); return [[x, y - 1], [x - 1, y], [x + 1, y], [x, y + 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= COLS - 2 && b <= ROWS - 2).map(([a, b]) => cell(a, b)); }
 /** The four squares an aura at top-left square `c` covers (Codex "Casting Auras"). */
@@ -1174,7 +1184,7 @@ export function check(s: GameState, a: Action): Check {
       if (d.type === 'Avatar') return no('Avatars are not cast.');
       const aff = affordable(s, p, d); if (!aff.ok) return aff;
       if (d.type === 'Minion' || d.type === 'Artifact') {
-        if (a.c === undefined || !(s.sites[a.c]?.owner === p || (d.type === 'Minion' && allows(d, 'Summon to any site') && s.sites[a.c]?.inst))) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control.`, 'Casting spells');
+        if (a.c === undefined || !summonCells(s, p, d).includes(a.c)) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control${d.type === 'Minion' ? ' (a minion with Voidwalk can also be summoned to the void)' : ''}.`, d.type === 'Minion' && !s.sites[a.c ?? -1] ? 'Voidwalk' : 'Casting spells');
       } else if (d.type === 'Aura') {
         if (a.c === undefined || a.c < 0 || a.c >= CELLS) return no('Choose where the aura goes.');
         if (xy(a.c)[0] > COLS - 2 || xy(a.c)[1] > ROWS - 2) return no('An aura sits where four squares meet (a 2×2 area); choose the top-left square of that area.', 'Aura');
@@ -1513,7 +1523,7 @@ export function legalActions(s: GameState): Action[] {
     if (d.type === 'Magic') {
       for (const choices of choiceSets(s, p, d, effectsOn(d, 'cast'), castOrigins(s, p, d))) out.push({ t: 'cast', inst, ...(choices.length ? { choices } : {}) });
     } else {
-      const places = d.type === 'Aura' ? [...Array(CELLS).keys()].filter((c) => xy(c)[0] <= COLS - 2 && xy(c)[1] <= ROWS - 2) : mine;
+      const places = d.type === 'Aura' ? [...Array(CELLS).keys()].filter((c) => xy(c)[0] <= COLS - 2 && xy(c)[1] <= ROWS - 2) : summonCells(s, p, d);
       for (const c of places) for (const choices of choiceSets(s, p, d, effectsOn(d, 'genesis'), [{ c, r: 'surface', ...(d.type === 'Aura' ? { aura: true } : {}) }])) out.push({ t: 'cast', inst, c, ...(choices.length ? { choices } : {}) });
     }
   }
