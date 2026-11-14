@@ -252,3 +252,25 @@ describe('AUDIT: card text readings', () => {
     expect(grants.every((e) => e.when === undefined)).toBe(true);   // no condition attached
   });
 });
+
+describe('projectiles', () => {
+  it('the shooter chooses among several units where the projectile lands (p34 "Projectiles")', () => {
+    let s = start(0);
+    site(s, 0, cell(2, 3)); site(s, 1, cell(2, 2), 'Mill Pond');
+    const archer = unit(s, 0, cell(2, 3), id('Ash Archer'));          // Ranged 1, 2 power
+    const a = unit(s, 1, cell(2, 2), id('Kiln Brute'));
+    const b = unit(s, 1, cell(2, 2), id('Ember Runner'));
+    const shots = legalActions(s).filter((x) => x.t === 'shoot' && x.unit === archer);
+    expect(shots.map((x) => (x as { hit?: string }).hit).sort()).toEqual([a, b].sort());
+    s = apply(s, { t: 'shoot', unit: archer, dx: 0, dy: -1, hit: b });
+    expect(s.units[b]).toBeUndefined();                                  // 2 damage kills the 2/2
+    expect(s.units[a].damage).toBe(0);
+  });
+  it('a projectile stays in its region: it flies over a submerged unit (p34, p13)', () => {
+    let s = start(0);
+    site(s, 0, cell(2, 3)); site(s, 1, cell(2, 2), 'Mill Pond');
+    const archer = unit(s, 0, cell(2, 3), id('Ash Archer'));
+    unit(s, 1, cell(2, 2), id('Reed Lurker'), { r: 'under' });
+    expect(check(s, { t: 'shoot', unit: archer, dx: 0, dy: -1 }).ok).toBe(false);
+  });
+});

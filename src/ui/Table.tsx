@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
-  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf,
+  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
@@ -135,7 +135,12 @@ export function Table() {
     if (unitCard(s, u).ranged) {
       const [ux, uy] = xy(u.c), [cx, cy] = xy(c);
       const dx = Math.sign(cx - ux), dy = Math.sign(cy - uy);
-      if ((dx === 0) !== (dy === 0)) { const a: Action = { t: 'shoot', unit: u.id, dx, dy }; if (check(s, a).ok) opts.push({ label: 'Shoot in this direction', hint: 'No strike back', action: a }); }
+      if ((dx === 0) !== (dy === 0)) {
+        const there = shotCandidates(s, u, dx, dy);
+        // rulebook p34: when several units are where the projectile lands, the shooter chooses which it hits
+        if (there.length > 1) for (const h of there) opts.push({ label: `Shoot ${unitCard(s, h).name}`, hint: `${h.owner === u.owner ? 'Your own unit · ' : ''}it lands at ${'ABCDE'[xy(h.c)[0]]}${4 - xy(h.c)[1]}; no strike back`, action: { t: 'shoot', unit: u.id, dx, dy, hit: h.id } });
+        else { const a: Action = { t: 'shoot', unit: u.id, dx, dy }; if (check(s, a).ok) opts.push({ label: `Shoot${there[0] ? ' ' + unitCard(s, there[0]).name : ' in this direction'}`, hint: 'No strike back', action: a }); }
+      }
     }
     return opts;
   }

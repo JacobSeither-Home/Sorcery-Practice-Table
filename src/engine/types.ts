@@ -190,7 +190,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number] }
+export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -366,7 +366,8 @@ export type Action =
    *  waiting abilities from the front of the queue (rulebook p31: a player orders their own simultaneous events) */
   | { t: 'trigger'; id?: string; choices?: Choice[]; skip?: boolean }
   | { t: 'move'; unit: string; path: Loc[]; attack?: { unit?: string; site?: boolean } }
-  | { t: 'shoot'; unit: string; dx: number; dy: number }
+  /** Ranged: shoot in a direction; `hit` picks the unit when several are where the projectile lands (rulebook p34) */
+  | { t: 'shoot'; unit: string; dx: number; dy: number; hit?: string }
   | { t: 'respond'; units: string[]; removeOriginal?: boolean }
   /** split the attacker's strike among the enemies in a fight: damage per enemy unit id, adding up to its strike */
   | { t: 'allocate'; split: Record<string, number> }

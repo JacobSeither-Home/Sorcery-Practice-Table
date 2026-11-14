@@ -462,15 +462,22 @@ const chosenDest = (e: Effect) => !e.dest || e.dest === 'nearby' || e.dest === '
 export function shotDirs(s: GameState, p: PlayerId, from: Loc, steps = 9): [number, number][] {
   return ([[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]).filter(([dx, dy]) => !!projectileHit(s, p, from, dx, dy, steps));
 }
-function projectileHit(s: GameState, p: PlayerId, from: Loc, dx: number, dy: number, steps: number, self?: string): Unit | null {
-  const [x, y] = xy(from.c);
+/** Where a projectile lands (rulebook p34 "Projectiles"; Codex "Projectile"): it flies from `from` in a cardinal
+ *  direction within the same region and stops at the first square holding a unit it can hit, ignoring the shooter,
+ *  allies at its starting square, and Stealthed minions (p34 "Stealth"). Returns every unit it could hit there:
+ *  when there are several, the shooter chooses. */
+export function projectileCandidates(s: GameState, p: PlayerId, from: Loc, dx: number, dy: number, steps: number, self?: string): Unit[] {
+  const [x, y] = xy(from.c); const region = regionOf(s, from);
   for (let i = 0; i <= steps; i++) {
-    const c = cell(x + dx * i, y + dy * i); if (c < 0) return null;
-    const there = unitsAt(s, { c, r: from.r }).filter((e) => e.id !== self && !(i === 0 && e.owner === p) && !hasStealth(s, e));
-    const hit = there.find((e) => e.owner !== p) ?? there[0];
-    if (hit) return hit;
+    const c = cell(x + dx * i, y + dy * i); if (c < 0) return [];
+    const there = Object.values(s.units).filter((e) => e.c === c && regionOf(s, e) === region && e.id !== self && !(i === 0 && e.owner === p) && !hasStealth(s, e));
+    if (there.length) return there.sort((a, b) => Number(a.owner === p) - Number(b.owner === p)); // enemies listed first
   }
-  return null;
+  return [];
+}
+function projectileHit(s: GameState, p: PlayerId, from: Loc, dx: number, dy: number, steps: number, self?: string, pick?: string): Unit | null {
+  const there = projectileCandidates(s, p, from, dx, dy, steps, self);
+  return there.find((u) => u.id === pick) ?? there[0] ?? null;
 }
 /** Indices of a card's effects that happen on `on` (and, for activated abilities, come from the same line as effect `fx`). */
 export function effectsOn(d: CardDef, on: Trigger, fx?: number): number[] {
@@ -527,6 +534,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
+    if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
     if (e.op === 'moveAura' && (c?.cell === undefined || !origins[0] || !auraSteps(origins[0].c).includes(c.cell))) return no('Choose a neighbouring joint for the aura, or skip the move.', 'Aura');
     if (e.op === 'teleport' && chosenDest(e) && (e.who === 'target' || e.who === 'self')) { const u = c?.target ? s.units[c.target] : self ? s.units[self] : undefined; if (c?.cell === undefined || !teleportCells(s, e, u, origins[0]).includes(c.cell)) return no('Choose where it goes.'); }
   }
@@ -683,14 +691,14 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (!loc || !c?.dir) break;
         if (e.pierce) { // a piercing projectile hits every unit along its path
           const [x0, y0] = xy(loc.c); const hits: Unit[] = [];
-          for (let k = 0; k < 9; k++) { const cc = cell(x0 + c.dir[0] * k, y0 + c.dir[1] * k); if (cc < 0) break; hits.push(...unitsAt(s, { c: cc, r: loc.r }).filter((u) => u.id !== self && !(k === 0 && u.owner === p) && !hasStealth(s, u))); }
+          for (let k = 0; k < 9; k++) { const cc = cell(x0 + c.dir[0] * k, y0 + c.dir[1] * k); if (cc < 0) break; hits.push(...Object.values(s.units).filter((u) => u.c === cc && sameRegion(s, u, loc!) && u.id !== self && !(k === 0 && u.owner === p) && !hasStealth(s, u))); }
           if (!hits.length) log(s, `${d.name}'s projectile hits nothing.`, p);
           for (const h of hits) { log(s, `${d.name}'s projectile hits ${nm(h)} for ${n}.`, p); damageUnit(s, h, n, false, { card: d }); }
           break;
         }
         const shots = e.shots === -1 ? Math.max(1, c?.n ?? 1) : e.shots ?? 1;
         for (let k = 0; k < shots && (s.phase as string) !== 'over'; k++) {
-          const hit = projectileHit(s, p, loc, c.dir[0], c.dir[1], 9, self);
+          const hit = projectileHit(s, p, loc, c.dir[0], c.dir[1], 9, self, k === 0 ? c.hit : undefined);
           if (!hit) { log(s, `${d.name}'s projectile hits nothing.`, p); break; }
           const at: Loc = { c: hit.c, r: hit.r };
           log(s, `${d.name}'s projectile hits ${nm(hit)} for ${n}.`, p); damageUnit(s, hit, n, false, { card: d });
@@ -1329,7 +1337,9 @@ export function check(s: GameState, a: Action): Check {
       if (!rangedOf(s, u)) return no(`${unitCard(s, u).name} is not Ranged.`, 'Ranged');
       const can = canAct(s, u); if (!can.ok) return can;
       if (Math.abs(a.dx) + Math.abs(a.dy) !== 1) return no('Projectiles travel in a straight line along the grid.', 'Projectile');
-      if (!shotTarget(s, u, a.dx, a.dy)) return no('No unit would be hit in that direction within range.', 'Ranged');
+      const there = shotCandidates(s, u, a.dx, a.dy);
+      if (!there.length) return no('No unit would be hit in that direction within range.', 'Ranged');
+      if (a.hit && !there.some((x) => x.id === a.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
       return { ok: true };
     }
     default: return no('Unknown action.');
@@ -1337,15 +1347,10 @@ export function check(s: GameState, a: Action): Check {
 }
 /** Codex "Projectile": it starts at the shooter's location (allies there are ignored) and stops at the
  *  first unit it reaches, ally or enemy. Stealthed minions are not hit. Ranged X: it stops after X steps. */
-function shotTarget(s: GameState, u: Unit, dx: number, dy: number): Unit | null {
-  const [x, y] = xy(u.c);
-  for (let i = 0; i <= rangedOf(s, u); i++) {
-    const c = cell(x + dx * i, y + dy * i); if (c < 0) return null;
-    const there = unitsAt(s, { c, r: u.r }).filter((e) => e.id !== u.id && !(i === 0 && e.owner === u.owner) && !(e.owner !== u.owner && hasStealth(s, e)) && !(e.owner === u.owner && hasStealth(s, e)));
-    const hit = there.find((e) => e.owner !== u.owner) ?? there[0]; // the shooter chooses among several: an enemy first
-    if (hit) return hit;
-  }
-  return null;
+/** Ranged X: a projectile that stops after X steps (rulebook p34 "Ranged X"). */
+export const shotCandidates = (s: GameState, u: Unit, dx: number, dy: number) => projectileCandidates(s, u.owner, { c: u.c, r: u.r }, dx, dy, rangedOf(s, u), u.id);
+function shotTarget(s: GameState, u: Unit, dx: number, dy: number, pick?: string): Unit | null {
+  const there = shotCandidates(s, u, dx, dy); return there.find((e) => e.id === pick) ?? there[0] ?? null;
 }
 
 // ---------- apply ----------
@@ -1480,7 +1485,7 @@ export function apply(state: GameState, a: Action): GameState {
     case 'respond': resolvePending(s, a.units, !!a.removeOriginal); break;
     case 'allocate': { const pd = s.pending!; s.pending = null; fight(s, pd.attacker, pd.foes ?? [], null, a.split); break; }
     case 'shoot': {
-      const u = s.units[a.unit]; const t = shotTarget(s, u, a.dx, a.dy)!;
+      const u = s.units[a.unit]; const t = shotTarget(s, u, a.dx, a.dy, a.hit)!;
       u.tapped = true; u.stealthLost = true;
       log(s, `${unitCard(s, u).name} shoots ${unitCard(s, t).name} for ${power(s, u)}.`);
       damageUnit(s, t, power(s, u), has(s, u, 'Lethal') && !t.avatar, { unit: u });
@@ -1653,7 +1658,7 @@ export function legalActions(s: GameState): Action[] {
       for (const attack of attackTargets(s, u, end)) out.push({ t: 'move', unit: u.id, path, attack });
       if (path.length) out.push({ t: 'move', unit: u.id, path });
     }
-    if (rangedOf(s, u)) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) if (shotTarget(s, u, dx, dy)) out.push({ t: 'shoot', unit: u.id, dx, dy });
+    if (rangedOf(s, u)) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const there = shotCandidates(s, u, dx, dy); if (there.length === 1) out.push({ t: 'shoot', unit: u.id, dx, dy }); else for (const h of there) out.push({ t: 'shoot', unit: u.id, dx, dy, hit: h.id }); }
   }
   out.push({ t: 'endTurn' });
   return out;
