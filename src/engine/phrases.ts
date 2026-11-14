@@ -446,6 +446,11 @@ export const RULES: Rule[] = [
     build: (_m, on) => (on !== 'static' ? [{ op: 'moveSite', who: 'siteHere', dest: 'nearbyVoid' }] : null) },
   { id: 'chain', label: 'Any number of times, spend ② to also target a new unit nearby the previous one', re: /^any number of times, you may spend ([①-⑳]|\(\d+\)) to additionally target a new (unit|minion) nearby the previous one\.$/i,
     build: (m, on) => (on !== 'static' ? [{ op: 'chain', who: 'controller', range: 'nearby', targets: true, pay: manaOf(m[1]), ...(m[2].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}) }] : null) },
+  // follow-up actions (the engine offers them right after the triggering action)
+  { id: 'step-after-shot', label: 'After a ranged strike, this may take a step', re: /^immediately after performing a ranged strike, this may take a step\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Steps after shooting', until: 'permanent' }] : null) },
+  { id: 'shoot-while-moving', label: 'During basic movement, this may shoot from along its path', re: /^during basic movement, this may perform a ranged strike from any location along (?:their|its|the) path\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Shoots while moving', until: 'permanent' }] : null) },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,

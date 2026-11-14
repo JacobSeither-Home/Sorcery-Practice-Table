@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
-  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded,
+  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded, followUps,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
@@ -72,7 +72,7 @@ export function Table() {
   }, [boardSize, settings.infoPanel]);
 
   // clear transient UI whenever the game state moves on
-  useEffect(() => { setSel(null); setMenu(null); setPicks([]); setRemoveOrig(false); setMull([]); setSplit(s.pending?.kind === 'allocate' ? autoSplit(s, s.pending.attacker, s.pending.foes ?? []) : {}); }, [s]);
+  useEffect(() => { const fu = Object.values(s.units).find((u) => u.owner === actor(s) && followUps(s, u).length); setSel(fu ? { k: 'unit', id: fu.id } : null); setMenu(null); setPicks([]); setRemoveOrig(false); setMull([]); setSplit(s.pending?.kind === 'allocate' ? autoSplit(s, s.pending.attacker, s.pending.foes ?? []) : {}); }, [s]);
   // a triggered ability waiting for this player opens the pop-up by itself
   const q0 = s.queue?.[0];
   useEffect(() => { if (q0 && !s.pending && (hot || q0.by === g.local) && (!cast || cast.k === 'hand')) { if (!cast) setCast({ k: 'trigger', id: q0.id }); } }, [q0?.id, cast]);
@@ -108,6 +108,7 @@ export function Table() {
       else for (const c of summonCells(s, who, selCard)) cells.set(c, 'place');
     }
     if (selUnit) {
+      for (const f of followUps(s, selUnit)) { if (f.t === 'step') cells.set(f.to.c, 'go'); if (f.t === 'shoot' && f.hit) cells.set(s.units[f.hit].c, 'hit'); }
       for (const path of reach(s, selUnit).values()) {
         const end: Loc = path.length ? path[path.length - 1] : { c: selUnit.c, r: selUnit.r };
         const hits = attackTargets(s, selUnit, end);
@@ -121,6 +122,11 @@ export function Table() {
 
   function unitOptions(u: Unit, c: number): Opt[] {
     const opts: Opt[] = [];
+    const sqn = (x: number) => `${'ABCDE'[xy(x)[0]]}${4 - xy(x)[1]}`;
+    for (const f of followUps(s, u)) { // a follow-up offered straight after a shot or a move
+      if (f.t === 'step' && f.to.c === c) opts.push({ label: `Take a step here${f.to.r === 'under' ? (isWater(s, c) ? ' (underwater)' : ' (underground)') : ''}`, hint: `${unitCard(s, u).name} may step right after its ranged strike`, action: f });
+      if (f.t === 'shoot' && f.hit && s.units[f.hit]?.c === c) opts.push({ label: `Shoot ${unitCard(s, s.units[f.hit]).name} from ${sqn(u.follow!.from![f.from!].c)}`, hint: 'A ranged strike from a square on the path it just took', action: f });
+    }
     for (const path of reach(s, u).values()) {
       const end: Loc = path.length ? path[path.length - 1] : { c: u.c, r: u.r };
       if (end.c !== c) continue;
@@ -174,7 +180,7 @@ export function Table() {
     if (u.owner === who && !(selUnit && selUnit.id !== u.id && hiCells.get(u.c) === 'hit')) {
       if (selUnit?.id === u.id) { clickCell(u.c); return; }
       setMenu(null); setSel({ k: 'unit', id: u.id });
-      const why = u.tapped ? `${unitCard(s, u).name} is tapped.` : summoningSick(s, u) ? `${unitCard(s, u).name} entered this turn. It can act next turn (summoning sickness).` : isDisabled(s, u) ? `${unitCard(s, u).name} is disabled.` : '';
+      const why = followUps(s, u).length ? `${unitCard(s, u).name} may ${u.follow?.kind === 'step' ? 'take a step now' : 'shoot from a square on its path now'}: choose a glowing square, or do something else to skip it.` : u.tapped ? `${unitCard(s, u).name} is tapped.` : summoningSick(s, u) ? `${unitCard(s, u).name} entered this turn. It can act next turn (summoning sickness).` : isDisabled(s, u) ? `${unitCard(s, u).name} is disabled.` : '';
       if (why) toast(why);
       return;
     }

@@ -1157,6 +1157,14 @@ function stepWhyNot(s: GameState, u: Unit, from: Loc, to: Loc): Check {
   if (from.c !== to.c && rf !== rt && rf !== 'void') return no('A step stays in one region: from the surface to the surface, underground to underground, underwater to underwater.', 'Region');
   return no('A step goes to a bordering square. Diagonal steps need Airborne.', 'Airborne');
 }
+/** The follow-up actions a unit may take right now (Kite Archer's step, Skirmishers of Mu's shot along its path). */
+export function followUps(s: GameState, u: Unit): Action[] {
+  const f = u.follow; if (!f || f.turn !== s.turn) return [];
+  const out: Action[] = [];
+  if (f.kind === 'step') { const at: Loc = { c: u.c, r: u.r }; for (const c of nearby(u.c)) for (const r of ['surface', 'under'] as const) { const to = { c, r }; if ((c !== u.c || r !== u.r) && stepOk(s, u, at, to)) out.push({ t: 'step', unit: u.id, to }); } }
+  if (f.kind === 'shot') (f.from ?? []).forEach((at, i) => { for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const th = projectileCandidates(s, u.owner, at, dx, dy, rangedOf(s, u), u.id); for (const h of th) out.push({ t: 'shoot', unit: u.id, dx, dy, from: i, hit: h.id }); } });
+  return out;
+}
 /** What a step costs against the unit's steps: 0 when it "moves freely" (rulebook p34 "Moves Freely": the step's
  *  start and end satisfy the condition), e.g. an Airborne minion leaving a site that lets it move freely away. */
 export function stepCost(s: GameState, u: Unit, from: Loc, to: Loc): number {
@@ -1468,12 +1476,27 @@ export function check(s: GameState, a: Action): Check {
       }
       return { ok: true };
     }
+    case 'step': {
+      const u = s.units[a.unit];
+      if (!u || u.owner !== p) return no('That is not your unit.');
+      if (u.follow?.kind !== 'step' || u.follow.turn !== s.turn) return no(`${unitCard(s, u).name} has no step to take right now.`, 'Step');
+      if (isDisabled(s, u) || has(s, u, 'Immobile')) return no(`${unitCard(s, u).name} can't take steps.`, 'Immobile'); // rulebook p28: a unit that can't move itself can't take granted steps
+      if (!stepOk(s, u, { c: u.c, r: u.r }, a.to)) return stepWhyNot(s, u, { c: u.c, r: u.r }, a.to);
+      return { ok: true };
+    }
     case 'shoot': {
       const u = s.units[a.unit];
       if (!u || u.owner !== p) return no('That is not your unit.');
       if (!rangedOf(s, u)) return no(`${unitCard(s, u).name} is not Ranged.`, 'Ranged');
-      const can = canAct(s, u); if (!can.ok) return can;
       if (Math.abs(a.dx) + Math.abs(a.dy) !== 1) return no('Projectiles travel in a straight line along the grid.', 'Projectile');
+      if (a.from !== undefined) { // a follow-up shot from a location it moved through
+        const f = u.follow; if (f?.kind !== 'shot' || f.turn !== s.turn || !f.from?.[a.from]) return no(`${unitCard(s, u).name} has no shot to take from there.`, 'Ranged');
+        const th = projectileCandidates(s, u.owner, f.from[a.from], a.dx, a.dy, rangedOf(s, u), u.id);
+        if (!th.length) return no('No unit would be hit in that direction within range.', 'Ranged');
+        if (a.hit && !th.some((x) => x.id === a.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
+        return { ok: true };
+      }
+      const can = canAct(s, u); if (!can.ok) return can;
       const there = shotCandidates(s, u, a.dx, a.dy);
       if (!there.length) return no('No unit would be hit in that direction within range.', 'Ranged');
       if (a.hit && !there.some((x) => x.id === a.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
@@ -1496,6 +1519,8 @@ export function apply(state: GameState, a: Action): GameState {
   if (!chk.ok) throw new Error(chk.reason);
   const s = clone(state);
   const p = actor(s); const pl = s.players[p];
+  // a follow-up is offered only straight after the action that granted it
+  if (!(a.t === 'step' || (a.t === 'shoot' && a.from !== undefined) || a.t === 'respond' || a.t === 'allocate' || a.t === 'trigger')) for (const u of Object.values(s.units)) if (u.follow && u.owner === p) delete u.follow;
   switch (a.t) {
     case 'mulligan': {
       if (a.cards.length) {
@@ -1596,7 +1621,7 @@ export function apply(state: GameState, a: Action): GameState {
       u.tapped = true;
       // Rulebook p21: resolve the declared steps one at a time, confirming each is legal at that moment; an illegal
       // step is skipped and the rest continue. p28: a unit enters every location it passes, even for a moment.
-      let took = 0;
+      let took = 0; const passed: Loc[] = [{ c: u.c, r: u.r }];
       for (const to of a.path) {
         if (!s.units[u.id] || u.halted) break;
         const from: Loc = { c: u.c, r: u.r };
@@ -1604,9 +1629,10 @@ export function apply(state: GameState, a: Action): GameState {
         // "Minions here can traverse the void, gaining Voidwalk until leaving it" (Planar Gate)
         if (!s.sites[to.c] && s.sites[from.c]?.inst && cardOf(s, s.sites[from.c]!.inst!).effects.some((e) => e.keyword === 'Void gate') && !u.mods?.some((m) => m.void)) (u.mods ??= []).push({ atk: 0, def: 0, kw: 'Voidwalk', void: true, from: cardOf(s, s.sites[from.c]!.inst!).name });
         if (s.sites[to.c] && u.mods?.some((m) => m.void)) { u.mods = u.mods.filter((m) => !m.void); if (!u.mods.length) delete u.mods; }
-        u.c = to.c; u.r = to.r; took++;
+        u.c = to.c; u.r = to.r; took++; passed.push({ ...to });
         if (to.c !== from.c) react(s, 'enters', u);
       }
+      if (s.units[u.id] && took && rangedOf(s, u) && has(s, u, 'Shoots while moving')) s.units[u.id].follow = { turn: s.turn, kind: 'shot', from: passed };
       if (s.units[u.id]) delete s.units[u.id].halted;
       if (!s.units[u.id]) break; // a reaction to it entering killed it
       if (a.path.length && !took) log(s, `${unitCard(s, u).name} takes no steps, so it has not moved.`);
@@ -1630,9 +1656,25 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'respond': resolvePending(s, a.units, !!a.removeOriginal); break;
     case 'allocate': { const pd = s.pending!; s.pending = null; fight(s, pd.attacker, pd.foes ?? [], null, a.split); break; }
+    case 'step': {
+      const u = s.units[a.unit]; const from = u.c; delete u.follow;
+      u.c = a.to.c; u.r = a.to.r; log(s, `${unitCard(s, u).name} takes a step.`);
+      if (a.to.c !== from) react(s, 'enters', u);
+      break;
+    }
     case 'shoot': {
-      const u = s.units[a.unit]; const t = shotTarget(s, u, a.dx, a.dy, a.hit)!;
+      const u = s.units[a.unit];
+      if (a.from !== undefined) {
+        const at = u.follow!.from![a.from]; delete u.follow;
+        const th = projectileCandidates(s, u.owner, at, a.dx, a.dy, rangedOf(s, u), u.id); const t = th.find((x) => x.id === a.hit) ?? th[0];
+        u.stealthLost = true;
+        log(s, `${unitCard(s, u).name} shoots from ${'ABCDE'[xy(at.c)[0]]}${4 - xy(at.c)[1]} on its path, hitting ${unitCard(s, t).name} for ${power(s, u)}.`);
+        damageUnit(s, t, power(s, u), has(s, u, 'Lethal') && !t.avatar, { unit: u });
+        break;
+      }
+      const t = shotTarget(s, u, a.dx, a.dy, a.hit)!;
       u.tapped = true; u.stealthLost = true;
+      if (has(s, u, 'Steps after shooting')) u.follow = { turn: s.turn, kind: 'step' };
       log(s, `${unitCard(s, u).name} shoots ${unitCard(s, t).name} for ${power(s, u)}.`);
       damageUnit(s, t, power(s, u), has(s, u, 'Lethal') && !t.avatar, { unit: u });
       break;
@@ -1799,6 +1841,7 @@ export function legalActions(s: GameState): Action[] {
     });
   }
   for (const u of Object.values(s.units)) {
+    if (u.owner === p) for (const f of followUps(s, u)) out.push(f);
     if (u.owner !== p || !canAct(s, u).ok) continue;
     for (const path of reach(s, u).values()) {
       const end = path.length ? path[path.length - 1] : { c: u.c, r: u.r };

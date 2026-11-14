@@ -247,6 +247,9 @@ export interface Unit {
   stealthLost: boolean;
   /** set by an effect that stops the unit's movement part-way (rulebook p33 "Movement +X": triggers may stop the motion) */
   halted?: boolean;
+  /** a follow-up it may take straight away: a step after a ranged strike (Kite Archer), or a ranged strike from a
+   *  location it passed while moving (Skirmishers of Mu). Ends when its controller does anything else. */
+  follow?: { turn: number; kind: 'step' | 'shot'; from?: Loc[] };
   lance: boolean;
   /** control taken by an effect: who controlled it before, and until when ("this turn") */
   ctrl?: { was: PlayerId; turn?: number };
@@ -385,7 +388,9 @@ export type Action =
   | { t: 'trigger'; id?: string; choices?: Choice[]; skip?: boolean }
   | { t: 'move'; unit: string; path: Loc[]; attack?: { unit?: string; site?: boolean } }
   /** Ranged: shoot in a direction; `hit` picks the unit when several are where the projectile lands (rulebook p34) */
-  | { t: 'shoot'; unit: string; dx: number; dy: number; hit?: string }
+  | { t: 'shoot'; unit: string; dx: number; dy: number; hit?: string; /** a follow-up shot: from this location of the move it just made */ from?: number }
+  /** a follow-up step ("may take a step" right after something) */
+  | { t: 'step'; unit: string; to: Loc }
   | { t: 'respond'; units: string[]; removeOriginal?: boolean }
   /** split the attacker's strike among the enemies in a fight: damage per enemy unit id, adding up to its strike */
   | { t: 'allocate'; split: Record<string, number> }

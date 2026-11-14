@@ -5,12 +5,12 @@ import { describe, expect, it } from 'vitest';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
 import type { CardDef, GameState, PlayerId, Unit } from '../src/engine/types';
 import { makeCard } from '../src/engine/cards';
-import { apply, check, createGame, legalActions, targetsFor, cell, regionOf } from '../src/engine/rules';
+import { apply, check, createGame, legalActions, targetsFor, cell, regionOf, forgetStatics } from '../src/engine/rules';
 
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
 const id = (name: string) => PRACTICE_CARDS.find((c) => c.name === name)!.id;
 const T = (name: string, type: CardDef['type'], extra: Partial<CardDef> = {}) => {
-  const c = makeCard({ name, type, ...extra }); cards[c.id] = c; return c.id;
+  const c = makeCard({ name, type, ...extra }); cards[c.id] = c; forgetStatics(cards); return c.id;
 };
 function start(first: PlayerId = 0): GameState {
   let s = createGame(cards, [PRACTICE_DECKS[0], PRACTICE_DECKS[1]], 42, first);
@@ -416,6 +416,30 @@ describe('Beta Air minions and spells', () => {
     expect(s.players[0].cemetery).toContain(spell);
     expect(s.units[foe].damage).toBe(3);                                                  // the only other unit here
     expect(s.units[j].tapped).toBe(false);                                                // no tap: it can be used again
+  });
+  it('Kite Archer: right after its ranged strike it may take a step; anything else ends the chance', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(1, 3), cell(1, 2), cell(0, 3)]) site(s, 0, c);
+    const kite = T('Test Kite', 'Minion', { attack: 1, keywords: ['Ranged'], ranged: 1, rules: 'Ranged\n\nImmediately after performing a ranged strike, Test Kite may take a step.', effects: effectsFromText('Minion', 'Ranged\n\nImmediately after performing a ranged strike, Test Kite may take a step.', 'Test Kite') });
+    const k = unit(s, 0, cell(1, 3), kite); const foe = unit(s, 1, cell(1, 2), id('Kiln Brute'));
+    s = apply(s, { t: 'shoot', unit: k, dx: 0, dy: -1 });
+    expect(s.units[foe].damage).toBe(1);
+    expect(check(s, { t: 'step', unit: k, to: { c: cell(0, 3), r: 'surface' } }).ok).toBe(true);
+    const s2 = apply(s, { t: 'step', unit: k, to: { c: cell(0, 3), r: 'surface' } });
+    expect(s2.units[k].c).toBe(cell(0, 3));
+    expect(check(s2, { t: 'step', unit: k, to: { c: cell(1, 3), r: 'surface' } }).ok).toBe(false);         // one step only
+    const s3 = apply(s, { t: 'manual', op: 'note', text: 'x' }); void s3;
+  });
+  it('Skirmishers of Mu: after moving, a ranged strike from a square on the path', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(0, 3), cell(1, 3), cell(1, 2)]) site(s, 0, c);
+    const txt = 'Ranged\n\nDuring basic movement, Test Skirm may perform a ranged strike from any location along their path.';
+    const sk = T('Test Skirm', 'Minion', { attack: 2, keywords: ['Ranged'], ranged: 1, rules: txt, effects: effectsFromText('Minion', txt, 'Test Skirm') });
+    const u = unit(s, 0, cell(0, 3), sk); const foe = unit(s, 1, cell(0, 2), id('Ember Runner'));  // in line with the start square only
+    s.sites[cell(0, 2)] = { inst: s.sites[cell(1, 3)]!.inst, owner: 1 };
+    s = apply(s, { t: 'move', unit: u, path: [{ c: cell(1, 3), r: 'surface' }] });
+    s = apply(s, { t: 'shoot', unit: u, dx: 0, dy: -1, from: 0, hit: foe });                   // from where it started
+    expect(s.units[foe]).toBeUndefined();
   });
   it('Chain Lightning: each extra target is new, nearby the previous one, and costs ②', async () => {
     const { effectsFromText } = await import('../src/engine/cards');
