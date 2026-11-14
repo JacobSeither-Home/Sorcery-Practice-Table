@@ -230,6 +230,8 @@ export interface Unit {
   enteredTurn: number;
   avatar: boolean;
   stealthLost: boolean;
+  /** set by an effect that stops the unit's movement part-way (rulebook p33 "Movement +X": triggers may stop the motion) */
+  halted?: boolean;
   lance: boolean;
   /** control taken by an effect: who controlled it before, and until when ("this turn") */
   ctrl?: { was: PlayerId; turn?: number };

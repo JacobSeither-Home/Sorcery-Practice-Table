@@ -87,15 +87,18 @@ describe('AUDIT: regions', () => {
 });
 
 describe('AUDIT: movement', () => {
-  it('refuses a whole declared path when one step is illegal (rulebook p21: skip that step, continue)', () => {
-    const s = start(0);
+  it('takes the legal steps of a declared path and skips an illegal one (p21)', () => {
+    let s = start(0);
     site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2), 'Cinder Field');
     const u = unit(s, 0, cell(2, 3), id('Sky Courier'));  // Movement +1 => 2 steps
     const r = check(s, { t: 'move', unit: u, path: [{ c: cell(2, 2), r: 'surface' }, { c: cell(2, 1), r: 'surface' }] });
-    expect(r.ok).toBe(false);                 // cell(2,1) is void; the legal first step is refused too
+    expect(r.ok).toBe(true);                  // cell(2,1) is void: that step will be skipped
+    s = apply(s, { t: 'move', unit: u, path: [{ c: cell(2, 2), r: 'surface' }, { c: cell(2, 1), r: 'surface' }] });
+    expect(s.units[u].c).toBe(cell(2, 2));    // took the first step only
+    expect(check(s, { t: 'move', unit: unit(s, 0, cell(2, 2), id('Kiln Brute')), path: [{ c: cell(2, 1), r: 'surface' }] }).ok).toBe(false); // nothing legal: refused, with the reason
   });
 
-  it('does not fire "enters" for squares passed through (rulebook p28: entered even momentarily)', () => {
+  it('fires "enters" for squares passed through (p28: entered even momentarily)', () => {
     let s = start(0);
     const sentry = T('Sentry', 'Minion', {
       attack: 1, defense: 1,
@@ -106,16 +109,18 @@ describe('AUDIT: movement', () => {
     const u = unit(s, 0, cell(2, 3), id('Sky Courier'));
     s = apply(s, { t: 'move', unit: u, path: [{ c: cell(2, 2), r: 'surface' }, { c: cell(2, 1), r: 'surface' }] });
     expect(s.units[u].c).toBe(cell(2, 1));
-    expect(s.queue?.length ?? 0).toBe(0);     // the sentry never saw it  <-- deviation
+    expect(s.queue?.length ?? 0).toBe(1);     // the sentry saw it pass
   });
 
-  it('forbids revisiting a location, not repeating a step (rulebook p21)', () => {
+  it('allows coming back to a location; only repeating a step is refused (p21)', () => {
     const s = start(0);
     for (const c of [cell(2, 3), cell(1, 3), cell(1, 2), cell(2, 2)]) site(s, 0, c, 'Cinder Field');
     const u = unit(s, 0, cell(2, 3), id('Sky Courier'), { mods: [{ atk: 0, def: 0, move: 2, from: 'test' }] });
-    // a 4-step loop back to the start repeats no step, but is refused
+    // a 4-step loop back to the start repeats no step
     const loop = [cell(1, 3), cell(1, 2), cell(2, 2), cell(2, 3)].map((c) => ({ c, r: 'surface' as const }));
-    expect(check(s, { t: 'move', unit: u, path: loop }).ok).toBe(false);
+    expect(check(s, { t: 'move', unit: u, path: loop }).ok).toBe(true);
+    const back = [cell(1, 3), cell(2, 3), cell(1, 3)].map((c) => ({ c, r: 'surface' as const })); // repeats the step 2,3 -> 1,3
+    expect(check(s, { t: 'move', unit: u, path: back }).ok).toBe(false);
   });
 });
 

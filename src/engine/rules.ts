@@ -1027,6 +1027,16 @@ function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
   if (rf !== rt) return false;
   return canOperate(s, u, rt);
 }
+/** Why a step can't be taken now, for the warning. */
+function stepWhyNot(s: GameState, u: Unit, from: Loc, to: Loc): Check {
+  const name = unitCard(s, u).name;
+  if (from.c !== to.c && entryBlocked(s, u, to.c)) return no(`${name} can't enter that site: a card there keeps it out.`);
+  if (!s.sites[to.c]) return no(u.avatar ? 'An Avatar can never enter the void.' : 'That square is void. A minion entering the void is banished unless it has Voidwalk.', 'Voidwalk');
+  const rt = regionOf(s, to), rf = regionOf(s, from);
+  if (rt === 'underground' || rt === 'underwater') if (!canOperate(s, u, rt)) return no(`Only ${rt === 'underwater' ? 'Submerge units can go underwater' : 'Burrowing units can go underground'}.`, rt === 'underwater' ? 'Submerge' : 'Burrowing');
+  if (from.c !== to.c && rf !== rt && rf !== 'void') return no('A step stays in one region: from the surface to the surface, underground to underground, underwater to underwater.', 'Region');
+  return no('A step goes to a bordering square. Diagonal steps need Airborne.', 'Airborne');
+}
 /** Every location the unit can end a move on, with one path to it. Includes staying put (empty path). */
 export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const out = new Map<string, Loc[]>();
@@ -1268,16 +1278,18 @@ export function check(s: GameState, a: Action): Check {
       if (!a.path.length && !a.attack) return no('Choose a square to move to or something to attack.', 'Move and Attack');
       if (a.path.length > 1 + moveOf(s, u)) return no(`${unitCard(s, u).name} can take ${1 + moveOf(s, u)} step(s) per move.`, 'Movement');
       if (a.path.length && unitCard(s, u).keywords.includes('Immobile')) return no(`${unitCard(s, u).name} is Immobile and cannot take steps.`, 'Immobile');
-      let from: Loc = { c: u.c, r: u.r }; const seen = new Set([locKey(from)]);
+      // Rulebook p21: declare every step, then resolve them in order. The only limit on declaring is that a step
+      // (from one location to the next) is not repeated; each step is checked as it resolves and an illegal one is
+      // skipped. A declaration with no step that could be taken right now is refused, with the reason.
+      const start: Loc = { c: u.c, r: u.r }; const used = new Set<string>();
+      let from = start, decl = start, firstBad: Check | null = null;
       for (const to of a.path) {
-        if (seen.has(locKey(to))) return no('A path cannot repeat a location.', 'Path');
-        if (!stepOk(s, u, from, to)) {
-          if (from.c !== to.c && !s.sites[to.c]) return no('That square is void. A unit entering the void is banished unless it has Voidwalk.', 'Voidwalk');
-          if (to.r === 'under') return no('Only Burrowing (land) or Submerge (water) units can go below the surface.', isWater(s, to.c) ? 'Submerge' : 'Burrowing');
-          return no('A step goes to a bordering square. Diagonal steps need Airborne.', 'Airborne');
-        }
-        seen.add(locKey(to)); from = to;
+        const k = locKey(decl) + '>' + locKey(to);
+        if (used.has(k)) return no('A path may not repeat a step (the same move from one location to the same next one). Coming back to a square is fine.', 'Move and Attack');
+        used.add(k); decl = to;
+        if (stepOk(s, u, from, to)) from = to; else firstBad ??= stepWhyNot(s, u, from, to);
       }
+      if (a.path.length && from === start && firstBad) return firstBad;
       if (a.attack) {
         const ts = attackTargets(s, u, from);
         if (a.attack.site) { if (!ts.some((t) => t.site)) return no('There is no enemy site surface to attack at that location.', 'Move and Attack'); }
@@ -1413,10 +1425,24 @@ export function apply(state: GameState, a: Action): GameState {
     case 'move': {
       const u = s.units[a.unit];
       u.tapped = true;
-      if (a.path.length) { const end = a.path[a.path.length - 1]; const from = u.c; u.c = end.c; u.r = end.r; if (end.c !== from) react(s, 'enters', u); }
+      // Rulebook p21: resolve the declared steps one at a time, confirming each is legal at that moment; an illegal
+      // step is skipped and the rest continue. p28: a unit enters every location it passes, even for a moment.
+      let took = 0;
+      for (const to of a.path) {
+        if (!s.units[u.id] || u.halted) break;
+        const from: Loc = { c: u.c, r: u.r };
+        if (!stepOk(s, u, from, to)) { log(s, `${unitCard(s, u).name} can't take a step it declared (${(stepWhyNot(s, u, from, to) as { reason: string }).reason}); it skips it.`); continue; }
+        u.c = to.c; u.r = to.r; took++;
+        if (to.c !== from.c) react(s, 'enters', u);
+      }
+      if (s.units[u.id]) delete s.units[u.id].halted;
       if (!s.units[u.id]) break; // a reaction to it entering killed it
+      if (a.path.length && !took) log(s, `${unitCard(s, u).name} takes no steps, so it has not moved.`);
       const at: Loc = { c: u.c, r: u.r };
-      if (a.attack) {
+      // rulebook p23: as the attack resolves, confirm the target is legal at that moment; if not, the unit has not attacked
+      const attackOk = !!a.attack && attackTargets(s, u, at).some((t) => (a.attack!.site ? t.site : t.unit === a.attack!.unit));
+      if (a.attack && !attackOk) log(s, `${unitCard(s, u).name}'s attack target can't be attacked from where it ended up, so it does not attack.`);
+      if (a.attack && attackOk) {
         react(s, 'attacks', u);
         if (!s.units[u.id] || (a.attack.unit && !s.units[a.attack.unit])) break;
         const what = a.attack.site ? 'the site' : unitCard(s, s.units[a.attack.unit!]).name;
