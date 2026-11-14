@@ -651,3 +651,21 @@ describe('Ice Lance', () => {
     expect([a, b, b2, c].map((x) => s.units[x].damage)).toEqual([2, 0, 1, 0]); // location 1 is the caster's square
   });
 });
+describe('Brobdingnag Bullfrog', () => {
+  it('swallows a minion here, carries it disabled, and lets it go when it leaves the realm', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const { isDisabled } = await import('../src/engine/rules');
+    let s = start(0); for (const c of [cell(1, 3), cell(1, 2)]) site(s, 0, c);
+    const frog = T('Test Frog', 'Minion', { attack: 4, cost: 0, effects: effectsFromText('Minion', 'Genesis → Test Frog swallows another target minion here. He carries it disabled in his belly until he leaves the realm.', 'Test Frog') });
+    const foe = unit(s, 1, cell(1, 3), id('Kiln Brute'));
+    const fi = give(s, 0, frog);
+    s = apply(s, { t: 'cast', inst: fi, c: cell(1, 3), choices: [{ target: foe }] });
+    const f = Object.values(s.units).find((u) => u.inst === fi)!.id;
+    expect(isDisabled(s, s.units[foe])).toBe(true);
+    s.units[f].enteredTurn = -1;
+    s = apply(s, { t: 'move', unit: f, path: [{ c: cell(1, 2), r: 'surface' }] });
+    expect(s.units[foe].c).toBe(cell(1, 2));
+    s = apply(s, { t: 'manual', op: 'destroy', unit: f });
+    expect(isDisabled(s, s.units[foe])).toBe(false);
+  });
+});

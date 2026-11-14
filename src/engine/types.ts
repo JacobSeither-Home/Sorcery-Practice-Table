@@ -25,6 +25,8 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** this unit swallows the target: carries it disabled until it leaves the realm */
+  | 'swallow'
   /** the unit (self) comes up from the subsurface to the surface of its site */
   | 'surface'
   /** pull: a unit adjacent to the chosen water site / each minion in this body of water moves one step toward it (forced) */
@@ -280,6 +282,8 @@ export interface Unit {
   halted?: boolean;
   /** corners of the realm it has entered (Wayfaring Pilgrim) */
   corners?: number[];
+  /** swallowed: carried, disabled, by this unit until it leaves the realm (Brobdingnag Bullfrog) */
+  belly?: string;
   /** a follow-up it may take straight away: a step after a ranged strike (Kite Archer), or a ranged strike from a
    *  location it passed while moving (Skirmishers of Mu). Ends when its controller does anything else. */
   follow?: { turn: number; kind: 'step' | 'shot'; from?: Loc[] };

@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  swallow: 'Removal',
   surface: 'Movement & position', pull: 'Movement & position',
   regenesis: 'Other',
   fight: 'Damage',
@@ -519,6 +520,10 @@ export const RULES: Rule[] = [
     build: () => [{ op: 'teleport', who: 'target', range: 'any', targets: true, dest: 'adjacent', inBody: true }] },
   { id: 'submerge-it-return', label: 'Submerge it and return this to its owner\'s hand', re: /^submerge it and return this to its owner'?s hand\.$/i,
     build: () => [{ op: 'sink', who: 'target', ref: true }, { op: 'bounce', who: 'self' }] },
+  { id: 'swallow', label: 'This swallows another target minion here', re: /^this swallows another target minion here\.$/i,
+    build: () => [{ op: 'swallow', who: 'target', range: 'here', only: 'minion', other: true, targets: true }] },
+  { id: 'belly', label: 'He carries it disabled in his belly until he leaves the realm', re: /^(?:he|she|it|they) carr(?:y|ies) it disabled in (?:his|her|its|their) belly until (?:he|she|it|they) leaves? the realm\.$/i,
+    build: () => [] }, // part of the swallow: the engine carries and disables it
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,

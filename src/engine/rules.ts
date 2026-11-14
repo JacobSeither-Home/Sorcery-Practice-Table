@@ -245,6 +245,7 @@ let disabledDepth = 0;
 export function isDisabled(s: GameState, u: Unit): boolean {
   const k = unitCard(s, u).keywords;
   if (k.includes('Disabled') || (u.mods?.some((m) => m.kw === 'Disabled') && !unmodifiable(unitCard(s, u)))) return true;
+  if (u.belly && s.units[u.belly]) return true; // swallowed
   // disabled by another card's always-on text ("Other minions at rest here … are disabled")
   if (!u.avatar && disablers(s) && disabledDepth === 0) { disabledDepth++; try { if (bonus(s, u).kws.includes('Disabled')) return true; } finally { disabledDepth--; } }
   if (k.includes('Waterbound') && !isWater(s, u.c)) return true;
@@ -955,6 +956,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         log(s, k > 1 ? `${d.name} rolls ${k - 1} square${k > 2 ? 's' : ''}.` : `${d.name} can't roll that way.`, p);
         break;
       }
+      case 'swallow': { const me = self ? s.units[self] : undefined; for (const v of victims) if (me && v.id !== me.id && !v.avatar) { v.belly = me.id; log(s, `${nm(me)} swallows ${nm(v)}.`, p); } break; }
       case 'surface': { const me = self ? s.units[self] : undefined; if (me && me.r === 'under') { me.r = 'surface'; loc = { c: me.c, r: 'surface' }; log(s, `${nm(me)} surfaces.`, p); } break; }
       case 'pull': {
         // Riptide: "Target water site pulls in an aboveground unit it's adjacent to"; Maelström: "pull in each minion in this body of water one step"
@@ -1856,6 +1858,7 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'manual': manual(s, a); break;
   }
+  for (const u of Object.values(s.units)) if (u.belly) { const f = s.units[u.belly]; if (f) { u.c = f.c; u.r = f.r; } else { delete u.belly; log(s, `${unitCard(s, u).name} is free again.`, u.owner); } }
   if (!s.pending && !s.queue?.length) delete s.busy; // everyone is at rest again once the storyline is empty
   followControl(s);
   followMana(s);
