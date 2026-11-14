@@ -12,7 +12,16 @@
 import type { CardDef, CardFilter, CardType, Cond, Effect, Element, EventFilter, Trigger, Who, Zone, ZonePick } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
-const KEYWORD_LINE = new RegExp(`^((?:air |earth |fire |water |non-(?:air|earth|fire|water) )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
+const EL_WORD = '(?:air|earth|fire|water)';
+const KEYWORD_LINE = new RegExp(`^((?:${EL_WORD}(?: and ${EL_WORD})? |non-(?:air|earth|fire|water|ordinary) )?(?:${KEYWORDS.join('|')}))(\\s*\\+?\\s*\\d+)?$`, 'i');
+/** "Fire Spellcaster" → "Spellcaster (fire)": a spellcaster limited to spells of an element (rulebook p34 "Spellcaster";
+ *  Codex "Spellcaster"). "Earth and Water" → "(earth+water)", "Non-fire" → "(not fire)", "Non-Ordinary" → "(not Ordinary)". */
+export function limitedSpellcaster(prefix: string): string | null {
+  const p = prefix.trim().toLowerCase(); if (!p) return null;
+  const non = p.match(/^non-(\w+)$/); if (non) return `Spellcaster (not ${non[1] === 'ordinary' ? 'Ordinary' : non[1]})`;
+  const els = p.split(/ and /); return els.every((x) => /^(air|earth|fire|water)$/.test(x)) ? `Spellcaster (${els.join('+')})` : null;
+}
+const LIMITED_SC = new RegExp(`^(${EL_WORD}(?: and ${EL_WORD})?|non-(?:air|earth|fire|water|ordinary)) spellcaster$`, 'i');
 const GRANTABLE = KEYWORDS.filter((k) => !['Deathrite', 'Genesis', 'Flood', 'Movement', 'Ranged'].includes(k));
 
 export type Category =
@@ -380,8 +389,8 @@ export const RULES: Rule[] = [
     build: (m, on) => { const v = nounPhrase(m[1] ?? m[2]); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Ward', until: 'permanent' }] : null; } },
   { id: 'disable', label: 'Disable …', re: new RegExp(`^disable (.+?)${UNTIL}\\.$`, 'i'),
     build: (m, on) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v && on !== 'static' ? [{ op: 'grant', ...v, keyword: 'Disabled', until: until(m[2], on) }] : null; } },
-  { id: 'bearer-spellcaster', label: 'Bearer has +N power and is a Spellcaster', re: /^(bearer|this) has ([+\-−]\d+) power and is an? (?:\w+ )?spellcaster\.$/i,
-    build: (m, on) => (on === 'static' ? [{ op: 'buff', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', atk: num(m[2]), def: num(m[2]), until: 'permanent' }, { op: 'grant', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', keyword: 'Spellcaster', until: 'permanent' }] : null) },
+  { id: 'bearer-spellcaster', label: 'Bearer has +N power and is a (Fire …) Spellcaster', re: /^(bearer|this) has ([+\-−]\d+) power and is an? (?:((?:air|earth|fire|water)(?: and (?:air|earth|fire|water))?|non-\w+) )?spellcaster\.$/i,
+    build: (m, on) => { const kw = m[3] ? limitedSpellcaster(m[3]) : 'Spellcaster'; return on === 'static' && kw ? [{ op: 'buff', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', atk: num(m[2]), def: num(m[2]), until: 'permanent' }, { op: 'grant', who: m[1].toLowerCase() === 'bearer' ? 'bearer' : 'self', keyword: kw, until: 'permanent' }] : null; } },
   { id: 'ward-site', label: 'Ward this site', re: /^ward (?:this|its) site\.$/i, build: (m, on) => (on !== 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Ward', until: 'permanent' }] : null) },
   { id: 'mill', label: 'Discard your top N spells', re: new RegExp(`^discard your top(?:most)? (?:${NUM} )?(spell|site)s?\\.$`, 'i'),
     build: (m) => [{ op: 'mill', ...amount(m[1] ?? 'a'), who: 'controller', deck: m[2].toLowerCase() === 'site' ? 'atlas' : 'spellbook' }] },
@@ -628,7 +637,11 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       const fx = parts.filter((x) => PASSIVE[x.trim().toLowerCase().replace('’', "'")]).map((x) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: PASSIVE[x.trim().toLowerCase().replace('’', "'")], until: 'permanent' as const, line: lineNo, text: x.trim(), rule: 'keyword-passive', auto: true }));
       out.lines.push({ text: raw, on: 'static', effects: fx, manual: [] }); out.effects.push(...fx); return;
     }
-    if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) { out.lines.push({ text: raw, on: 'keywords', effects: [], manual: [] }); return; }
+    if (line.replace(/\.$/, '').split(/,\s*/).every((part) => KEYWORD_LINE.test(part.trim()))) {
+      // a limited spellcaster in the keyword line ("Airborne, Fire Spellcaster") keeps its limit as a static grant
+      const fx = parts.map((x) => x.trim().match(LIMITED_SC)).filter(Boolean).map((mm) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: limitedSpellcaster(mm![1])!, until: 'permanent' as const, line: lineNo, text: mm![0], rule: 'limited-spellcaster', auto: true }));
+      out.lines.push({ text: raw, on: fx.length ? 'static' : 'keywords', effects: fx, manual: [] }); out.effects.push(...fx); return;
+    }
     let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false;
     if ((m = line.match(/^Genesis\s*&\s*Deathrite\s*→\s*(.+)$/i))) { on = 'genesis'; body = m[1]; both = true; }
     else if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }

@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, Reorder, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, cellsFor, pickOptions, projectileCandidates, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, hoverProps, mainElement } from './CardFace';
@@ -30,7 +30,7 @@ function plan(s: GameState, req: CastReq): Plan | null {
     if (!s.inst[req.inst]) return null;
     const d = cardOf(s, req.inst); const p = Number(req.inst[0]) as PlayerId; const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
     const verb = d.type === 'Magic' ? 'Cast' : d.type === 'Minion' ? 'Summon' : 'Conjure';
-    return { d, p, on, idx: effectsOn(d, on), origins: d.type === 'Magic' ? casterOrigins(s, p) : [{ c: req.c ?? 0, r: 'surface' }], verb, title: `${verb} ${d.name}${req.c !== undefined && d.type !== 'Magic' ? ` at ${sq(req.c)}` : ''}` };
+    return { d, p, on, idx: effectsOn(d, on), origins: d.type === 'Magic' ? castersFor(s, p, d).map((u) => ({ c: u.c, r: u.r })) : [{ c: req.c ?? 0, r: 'surface' }], verb, title: `${verb} ${d.name}${req.c !== undefined && d.type !== 'Magic' ? ` at ${sq(req.c)}` : ''}` };
   }
   if (req.k === 'ability') {
     const src = sourceOf(s, req.src); if (!src) return null;
@@ -48,7 +48,11 @@ function plan(s: GameState, req: CastReq): Plan | null {
 
 export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; close: (next?: CastReq) => void; focus: (unit: string | null) => void }) {
   const s = g.state; const act = useStore((st) => st.act); const toast = useStore((st) => st.toast); const pace = usePace();
-  const pl = useMemo(() => plan(s, req), [req]); // fixed when the pop-up opens; the state moves on under it
+  const pl0 = useMemo(() => plan(s, req), [req]); // fixed when the pop-up opens; the state moves on under it
+  // rulebook p17: a spell is cast by one of your spellcasters, from where it stands
+  const casters = useMemo(() => (req.k === 'cast' && pl0 ? castersFor(s, pl0.p, pl0.d) : []), [pl0]);
+  const [caster, setCaster] = useState<string | undefined>();
+  const pl = useMemo(() => { const u = caster ? s.units[caster] : undefined; return pl0 && u && pl0.d.type === 'Magic' ? { ...pl0, origins: [{ c: u.c, r: u.r }] } : pl0; }, [pl0, caster]);
   const [choices, setChoices] = useState<Choice[]>([]);
   const [phase, setPhase] = useState<'choose' | 'casting'>('choose');
   const [why, setWhy] = useState(''); const [whyKw, setWhyKw] = useState<string | undefined>();
@@ -74,9 +78,9 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
 
   const action = (): Action | null => {
     const ch = choices.length ? choices : undefined;
-    if (req.k === 'cast') return { t: 'cast', inst: req.inst, ...(req.c !== undefined ? { c: req.c } : {}), ...(req.bearer && !pl.idx.some((i) => d.effects[i].who === 'target') ? { target: req.bearer } : {}), ...(ch ? { choices: ch } : {}) };
+    if (req.k === 'cast') return { t: 'cast', inst: req.inst, ...(caster ? { caster } : {}), ...(req.c !== undefined ? { c: req.c } : {}), ...(req.bearer && !pl.idx.some((i) => d.effects[i].who === 'target') ? { target: req.bearer } : {}), ...(ch ? { choices: ch } : {}) };
     if (req.k === 'ability') return { t: 'ability', src: req.src, fx: req.fx, ...(ch ? { choices: ch } : {}) };
-    if (req.k === 'trigger') return { t: 'trigger', ...(ch ? { choices: ch } : {}) };
+    if (req.k === 'trigger') return { t: 'trigger', id: req.id, ...(ch ? { choices: ch } : {}) };
     return null;
   };
   const go = () => {
@@ -104,6 +108,9 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
           {req.k === 'hand' ? <p className="spell-sub">This part of the card is not automated. Use the tools below to carry it out; each change is marked in the log.</p>
             : <p className="spell-sub">{req.k === 'trigger' ? `${TRIGGER_SHORT[pl.on]} ability. Choose, then resolve it or let it pass.` : pl.idx.length ? 'What happens:' : d.rules ? 'Nothing here needs a choice.' : 'This card has no rules text.'}</p>}
 
+          {casters.length > 1 && <div className="chips targets caster-pick"><small>Cast by:</small>{casters.map((u) => { const on = caster === u.id;
+            return <button key={u.id} className={`chip p${u.owner} ${caster === u.id ? 'on' : ''}`} aria-pressed={on} onClick={() => setCaster(caster === u.id ? undefined : u.id)} onPointerEnter={() => focus(u.id)} onPointerLeave={() => focus(null)} data-tip={d.type === 'Magic' ? 'The spell happens where this spellcaster stands: range and targets count from there' : 'Who casts it (casting ends that unit\'s Stealth)'}>{unitCard(s, u).name}{u.avatar ? ' (Avatar)' : ''}</button>; })}
+            {!caster && <small> — or leave it: the table uses your Avatar, or the first spellcaster that can reach your choices</small>}</div>}
           {req.k !== 'hand' && <ol className="incant">
             {pl.idx.map((i) => <Line key={i} s={s} pl={pl} i={i} e={d.effects[i]} c={choices[i]} set={(p) => set(i, p)} focus={focus} />)}
           </ol>}

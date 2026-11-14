@@ -239,11 +239,6 @@ describe('AUDIT: API null stats', () => {
 });
 
 describe('AUDIT: card text readings', () => {
-  it('drops the element on "is a Water Spellcaster" (rulebook p35)', () => {
-    const fx = effectsFromText('Artifact', 'Bearer has +1 power and is a Water Spellcaster.', 'Eerie Coral');
-    const granted = fx.filter((e) => e.op === 'grant').map((e) => e.keyword);
-    expect(granted).toEqual(['Spellcaster']);         // not "Water Spellcaster": the restriction is gone
-  });
 
   it('drops the "if it\'s a minion" clause, so an Avatar bearer gets all three (rulebook p5)', () => {
     const fx = effectsFromText('Artifact', "Bearer has Burrowing, Submerge, and Voidwalk, if it's a minion.", 'All-terrain Vestments');
@@ -272,5 +267,42 @@ describe('projectiles', () => {
     const archer = unit(s, 0, cell(2, 3), id('Ash Archer'));
     unit(s, 1, cell(2, 2), id('Reed Lurker'), { r: 'under' });
     expect(check(s, { t: 'shoot', unit: archer, dx: 0, dy: -1 }).ok).toBe(false);
+  });
+});
+
+describe('spellcasters', () => {
+  it('a spell is cast by a chosen spellcaster and happens where it stands (p17)', () => {
+    let s = start(0);
+    for (const c of [cell(2, 3), cell(0, 1), cell(0, 0)]) site(s, 0, c);
+    const caller = unit(s, 0, cell(0, 1), id('Tide Caller'));          // Spellcaster
+    const foe = unit(s, 1, cell(0, 0), id('Ember Runner'));
+    const nearbyBolt = T('Near Bolt', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'damage', n: 3, who: 'target', range: 'nearby', targets: true }] });
+    const inst = give(s, 0, nearbyBolt);
+    expect(check(s, { t: 'cast', inst, caster: s.players[0].avatar, choices: [{ target: foe }] }).ok).toBe(false); // too far from the Avatar
+    s = apply(s, { t: 'cast', inst, caster: caller, choices: [{ target: foe }] });
+    expect(s.units[foe]).toBeUndefined();
+  });
+  it('a Fire Spellcaster may only cast spells with a fire threshold (p34 "Spellcaster")', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2)); site(s, 0, cell(1, 2), 'Mill Pond');
+    const skull = T('Test Skull', 'Minion', { attack: 1, keywords: ['Spellcaster'], rules: 'Fire Spellcaster', effects: effectsFromText('Minion', 'Fire Spellcaster', 'Test Skull') });
+    const sk = unit(s, 0, cell(2, 2), skull);
+    const wet = T('Wet Spell', 'Magic', { cost: 0, thresholds: { air: 0, earth: 0, fire: 0, water: 1 }, effects: [{ on: 'cast', op: 'draw', n: 1, who: 'controller', deck: 'spellbook' }] });
+    const hot = T('Hot Spell', 'Magic', { cost: 0, thresholds: { air: 0, earth: 0, fire: 1, water: 0 }, effects: [{ on: 'cast', op: 'draw', n: 1, who: 'controller', deck: 'spellbook' }] });
+    expect(check(s, { t: 'cast', inst: give(s, 0, wet), caster: sk }).ok).toBe(false);
+    expect(check(s, { t: 'cast', inst: give(s, 0, hot), caster: sk }).ok).toBe(true);
+  });
+  it('"is a Water Spellcaster" keeps the element (p34)', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const fx = effectsFromText('Artifact', 'Bearer has +1 power and is a Water Spellcaster.', 'Eerie Coral');
+    expect(fx.filter((e) => e.op === 'grant').map((e) => e.keyword)).toEqual(['Spellcaster (water)']);
+  });
+  it('casting a spell ends the caster\'s Stealth (Codex "Interact")', () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2));
+    const sneaky = T('Sneaky Mage', 'Minion', { attack: 1, keywords: ['Spellcaster', 'Stealth'] });
+    const u = unit(s, 0, cell(2, 2), sneaky);
+    const spell = T('Plain Spell', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'draw', n: 1, who: 'controller', deck: 'spellbook' }] });
+    s = apply(s, { t: 'cast', inst: give(s, 0, spell), caster: u });
+    expect(s.units[u].stealthLost).toBe(true);
   });
 });

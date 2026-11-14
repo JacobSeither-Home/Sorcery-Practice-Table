@@ -359,7 +359,8 @@ export type Action =
   | { t: 'draw'; deck: 'spellbook' | 'atlas' }
   | { t: 'playSite'; inst: string; c: number }
   | { t: 'drawSite' }
-  | { t: 'cast'; inst: string; c?: number; target?: string; choices?: Choice[] }
+  /** `caster`: which of your spellcasters casts it (rulebook p17); default the Avatar, else the first that can */
+  | { t: 'cast'; inst: string; c?: number; target?: string; choices?: Choice[]; caster?: string }
   /** use an activated ability (Tap → … or similar) of a unit, site or permanent you control */
   | { t: 'ability'; src: Source; fx: number; choices?: Choice[] }
   /** resolve (or skip) the first triggered ability in the queue; `id` picks another of the same player's

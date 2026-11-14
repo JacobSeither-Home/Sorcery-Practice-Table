@@ -184,7 +184,30 @@ export function isDisabled(s: GameState, u: Unit): boolean {
   if (k.includes('Landbound') && !isLand(s, u.c)) return true;
   return false;
 }
+/** The kinds of spellcaster a unit is: "Spellcaster" casts anything; "Spellcaster (fire)", "(earth+water)",
+ *  "(not fire)", "(not Ordinary)" are limited (rulebook p34 "Spellcaster"; Codex "Spellcaster"). Avatars always are. */
+export function casterKinds(s: GameState, u: Unit): string[] {
+  if (u.avatar) return ['Spellcaster'];
+  if (isDisabled(s, u)) return []; // rulebook p33 "Disabled": can't cast spells
+  const d = unitCard(s, u); const out = new Set<string>();
+  const own = d.effects.filter((e) => e.on === 'static' && e.op === 'grant' && e.who === 'self' && e.keyword?.startsWith('Spellcaster (')).map((e) => e.keyword!);
+  own.forEach((k) => out.add(k));
+  if (d.keywords.includes('Spellcaster') && !own.length) out.add('Spellcaster'); // the API lists a limited spellcaster's keyword as plain "Spellcaster"
+  for (const m of u.mods ?? []) if (m.kw?.startsWith('Spellcaster')) out.add(m.kw);
+  const b = staticCards(s).size > 0 ? bonus(s, u).kws : [];
+  if (b.includes('Loses Spellcaster')) return [];
+  for (const k of b) if (k === 'Spellcaster' || k.startsWith('Spellcaster (')) out.add(k);
+  return [...out];
+}
+/** May a spellcaster of this kind cast card d? */
+export function kindAllows(kind: string, d: CardDef): boolean {
+  const m = kind.match(/^Spellcaster \((.+)\)$/); if (!m) return true;
+  const not = m[1].match(/^not (.+)$/);
+  if (not) return not[1] === 'Ordinary' ? d.rarity !== 'Ordinary' : !(d.thresholds[not[1] as Element] > 0);
+  return m[1].split('+').some((el) => d.thresholds[el as Element] > 0);
+}
 export function has(s: GameState, u: Unit, kw: string): boolean {
+  if (kw === 'Spellcaster') return casterKinds(s, u).length > 0;
   if (isDisabled(s, u)) return false;
   const b = staticCards(s).size > 0 ? bonus(s, u).kws : null;
   if (b?.includes('Loses ' + kw)) return false; // "All other minions lose Airborne"
@@ -391,8 +414,8 @@ function drawCard(s: GameState, p: PlayerId, deck: 'spellbook' | 'atlas'): boole
 }
 
 // ---------- effects ----------
-function spellcasters(s: GameState, p: PlayerId): Unit[] {
-  return Object.values(s.units).filter((u) => u.owner === p && (u.avatar || has(s, u, 'Spellcaster')) && !isDisabled(s, u));
+function spellcasters(s: GameState, p: PlayerId, d?: CardDef): Unit[] {
+  return Object.values(s.units).filter((u) => u.owner === p && casterKinds(s, u).some((k) => !d || kindAllows(k, d)));
 }
 function inRange(s: GameState, from: Loc, to: Loc, range: Effect['range'], targeted = false): boolean {
   if (range === 'any' || !range) return !targeted || sameRegion(s, from, to); // rulebook p35 "Target": only within the Spellcaster's or card's region
@@ -1184,10 +1207,23 @@ export function costOf(s: GameState, p: PlayerId, d: CardDef): number {
 }
 const castRules = (d: CardDef) => d.effects.filter((e) => e.op === 'castRule');
 /** Where magic is measured from: your spellcasters, plus allies when the card says "May be cast by any ally". */
-function castOrigins(s: GameState, p: PlayerId, d: CardDef): Loc[] {
+/** Who may cast card d (rulebook p17: a spell is cast by a Spellcaster you control, from its location): your
+ *  spellcasters that can cast it, plus allies when the card says "May be cast by any ally". Avatar first. */
+export function castersFor(s: GameState, p: PlayerId, d: CardDef): Unit[] {
   const by = castRules(d).find((e) => e.byAlly);
-  const extra = by ? Object.values(s.units).filter((u) => u.owner === p && !isDisabled(s, u) && (!by.bySub?.length || by.bySub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase())))).map((u) => ({ c: u.c, r: u.r })) : [];
-  return [...casterOrigins(s, p), ...extra];
+  const extra = by ? Object.values(s.units).filter((u) => u.owner === p && !isDisabled(s, u) && (!by.bySub?.length || by.bySub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase())))) : [];
+  const all = [...spellcasters(s, p, d), ...extra];
+  return all.filter((u, i) => all.indexOf(u) === i).sort((a, b) => Number(b.avatar) - Number(a.avatar));
+}
+function castOrigins(s: GameState, p: PlayerId, d: CardDef, caster?: string): Loc[] {
+  return castersFor(s, p, d).filter((u) => !caster || u.id === caster).map((u) => ({ c: u.c, r: u.r }));
+}
+/** The spellcaster a cast uses: the one chosen, else the first (Avatar first) from which its choices are legal. */
+function casterFor(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: (Choice | null)[], chosen?: string): Unit | undefined {
+  const all = castersFor(s, p, d);
+  if (chosen) return all.find((u) => u.id === chosen);
+  if (d.type !== 'Magic') return all[0];
+  return all.find((u) => checkChoices(s, p, d, idx, ch, [{ c: u.c, r: u.r }]).ok) ?? all[0];
 }
 function affordable(s: GameState, p: PlayerId, d: CardDef): Check {
   const cost = costOf(s, p, d);
@@ -1267,6 +1303,9 @@ export function check(s: GameState, a: Action): Check {
       if (d.type === 'Site') return no('Sites are played with your Avatar ability, not cast.', 'Site');
       if (d.type === 'Avatar') return no('Avatars are not cast.');
       const aff = affordable(s, p, d); if (!aff.ok) return aff;
+      const casters = castersFor(s, p, d);
+      if (!casters.length) return no(`None of your units can cast ${d.name}. Your Avatar can't cast right now, and your other spellcasters are limited to other elements or kinds of spell.`, 'Spellcaster');
+      if (a.caster && !casters.some((u) => u.id === a.caster)) { const u = s.units[a.caster]; return no(u ? `${unitCard(s, u).name} can't cast ${d.name}${casterKinds(s, u).length ? `: it is a ${casterKinds(s, u).join(' / ').replace(/Spellcaster \((.+)\)/g, '$1 Spellcaster').replace(/\+/g, ' and ')}` : ': it is not a spellcaster'}.` : 'Choose a spellcaster you control.', 'Spellcaster'); }
       if (d.type === 'Minion' || d.type === 'Artifact') {
         if (a.c === undefined || !summonCells(s, p, d).includes(a.c)) return no(`${d.type === 'Minion' ? 'Minions are summoned' : 'Artifacts are conjured'} on a site you control${d.type === 'Minion' ? ' (a minion with Voidwalk can also be summoned to the void)' : ''}.`, d.type === 'Minion' && !s.sites[a.c ?? -1] ? 'Voidwalk' : 'Casting spells');
       } else if (d.type === 'Aura') {
@@ -1281,7 +1320,7 @@ export function check(s: GameState, a: Action): Check {
         if (!b || b.owner !== p || b.c !== a.c) return no('An artifact can be handed to one of your own units on the site where it is conjured.', 'Carry');
         return { ok: true };
       }
-      return checkChoices(s, p, d, idx, choicesOf(d, idx, a.choices, a.target), d.type === 'Magic' ? castOrigins(s, p, d) : [{ c: a.c!, r: 'surface' }]);
+      return checkChoices(s, p, d, idx, choicesOf(d, idx, a.choices, a.target), d.type === 'Magic' ? castOrigins(s, p, d, a.caster) : [{ c: a.c!, r: 'surface' }]);
     }
     case 'ability': {
       const src = sourceOf(s, a.src);
@@ -1396,10 +1435,15 @@ export function apply(state: GameState, a: Action): GameState {
       pl.mana -= costOf(s, p, d);
       if (fromCem) log(s, `${pname(p)} casts ${d.name} from the cemetery.`);
       if (!pl.cast || pl.cast.turn !== s.turn) pl.cast = { turn: s.turn, ids: [] }; pl.cast.ids.push(d.id);
-      { const caster = s.units[pl.avatar]; if (caster) react(s, 'casts', caster, caster, d); }
       const on: Trigger = d.type === 'Magic' ? 'cast' : 'genesis';
       const idx = effectsOn(d, on);
       const ch = choicesOf(d, idx, a.choices, a.target);
+      const caster = casterFor(s, p, d, idx, ch, a.caster) ?? s.units[pl.avatar];
+      if (caster) {
+        if (!caster.avatar) log(s, `${unitCard(s, caster).name} casts it.`, p);
+        caster.stealthLost = true; // Codex "Interact": casting a spell ends Stealth
+        react(s, 'casts', caster, caster, d);
+      }
       const hand = d.effects.some((e) => e.op === 'manual') ? ' Part of its text is not automated; resolve it by hand.' : '';
       if (d.type === 'Minion') {
         const id = `u${s.nextId++}`;
@@ -1415,8 +1459,7 @@ export function apply(state: GameState, a: Action): GameState {
         resolve(s, d, idx, p, { c: a.c!, r: 'surface' }, ch, { perm: mid });
       } else {
         log(s, `${pname(p)} casts ${d.name}.${hand}`);
-        const caster = s.units[pl.avatar];
-        resolve(s, d, idx, p, { c: caster.c, r: caster.r }, ch);
+        resolve(s, d, idx, p, caster ? { c: caster.c, r: caster.r } : null, ch); // the spell happens where its caster is (rulebook p17)
         if (fromCem && castRules(d).some((e) => e.banishAfter)) log(s, `${d.name} is banished.`); else pl.cemetery.push(a.inst);
       }
       break;
