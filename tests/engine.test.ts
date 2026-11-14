@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PRACTICE_CARDS, PRACTICE_DECKS } from './fixtures/practiceSet';
-import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, cell, check, createGame, forgetStatics, has, isDisabled, isWater, legalActions, rangedOf, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
+import { type Action, type CardDef, type GameState, type PlayerId, AVATAR_START, actor, apply, autoSplit, cell, check, createGame, forgetStatics, has, isDisabled, isWater, legalActions, rangedOf, makeCard, normalizeApiCards, power, reach, thresholdOf } from '../src/engine';
 import { chooseAction, determinize } from '../src/ai/ai';
 
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
@@ -421,7 +421,7 @@ describe('rules text and damage split', () => {
     const zap = give(s, 0, T('Test Zap', 'Magic', { cost: 1, effects: [{ on: 'cast', op: 'damage', n: 2, who: 'target', range: 'nearby', only: 'minion' }] }));
     expect(reason(s, { t: 'cast', inst: zap, target: s.players[1].avatar })).toMatch(/valid target/);
   });
-  it('an attacker facing several enemies splits its damage to kill the most', () => {
+  it('an attacker facing several enemies: the suggested split kills the most, and the player confirms it', () => {
     let s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.units[s.players[1].avatar].tapped = true;
     const giant = unit(s, 0, cell(2, 2), id('Hill Giant'));                       // 7 power
     const a = unit(s, 1, cell(2, 1), id('Wind Sprite'), { tapped: true });        // 1 defense, airborne but it is the giant's... target below
@@ -430,6 +430,8 @@ describe('rules text and damage split', () => {
     const tgt = unit(s, 1, cell(2, 1), id('Ash Archer'), { tapped: true });       // 2/2 original target
     s = apply(s, { t: 'move', unit: giant, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: tgt } });
     s = apply(s, { t: 'respond', units: [b, c2] });
+    expect(s.pending?.kind).toBe('allocate');
+    s = apply(s, { t: 'allocate', split: autoSplit(s, giant, s.pending!.foes!) });
     expect(s.units[tgt]).toBeUndefined(); expect(s.units[b]).toBeUndefined();     // 2 + 2 spent on the weakest two
     expect(s.units[c2].damage).toBe(3);                                           // the remaining 3 land on the brute
     expect(s.units[a]).toBeDefined();                                             // bystander was never in the fight

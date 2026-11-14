@@ -63,7 +63,7 @@ export function aiActions(s: GameState): Action[] {
 /** Resolve pending prompts with "no response" so a position can be scored. */
 function settle(s: GameState): GameState {
   let g = s; let n = 0;
-  while (g.pending && n++ < 4) g = apply(g, { t: 'respond', units: [] });
+  while (g.pending && n++ < 4) g = apply(g, g.pending.kind === 'allocate' ? legalActions(g)[0] : { t: 'respond', units: [] });
   return g;
 }
 function drawChoice(s: GameState, me: PlayerId, acts: Action[]): Action {

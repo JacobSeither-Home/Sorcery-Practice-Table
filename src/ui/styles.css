@@ -637,3 +637,10 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .ticket.open label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
 .ticket.open textarea { width: 100%; resize: vertical; font: inherit; color: var(--text, #e8eaf2); background: rgb(0 0 0 / .28); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; }
 .ticket.open .row { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* fight damage split */
+.alloc { display: grid; gap: 6px; margin: 8px 0; }
+.alloc-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 8px; border: 1px solid var(--line, rgba(255,255,255,.15)); border-radius: 8px; }
+.alloc-row small { opacity: .7; }
+.alloc-row .stepper { display: inline-flex; align-items: center; gap: 6px; }
+.alloc-row .stepper b { min-width: 2ch; text-align: center; }

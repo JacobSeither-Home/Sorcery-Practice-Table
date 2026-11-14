@@ -2,11 +2,13 @@
 // sorcerytcg.com is the authority: every reminder links to its Codex entry instead of restating rulings.
 // Codex entry ids were read from the Codex index page (https://sorcerytcg.com/codex) on 2026-11-12.
 export const CODEX_INDEX = 'https://sorcerytcg.com/codex';
-// The official rulebook PDFs. Erik's Curiosa hosts them on Google Drive and links the current one from "Read the Rulebook" on
-// HOW_TO_PLAY; these are the December 2025 files, as linked from that page and from the December 2025 rulebook news post
-// (both read 2026-11-13). When a newer rulebook comes out, the file links change and HOW_TO_PLAY has the new one.
+// The official rulebook PDFs, hosted by Erik's Curiosa on Google Drive. On 2026-11-14 the main file
+// (SorceryRulebook.pdf, last modified 2026-10-12) was read through Google Drive: its own cover and colophon say
+// "October 2024", and the page numbers cited in the engine are that text's. The earlier "December 2025" label
+// here was not confirmed by the file. The annotated file was not re-read. Where the Codex and the rulebook
+// disagree the engine follows the Codex, which is newer, and says so at that rule.
 export const HOW_TO_PLAY = 'https://www.sorcerytcg.com/how-to-play';
-export const RULEBOOK = { edition: 'December 2025', pdf: 'https://drive.google.com/file/d/1sgQo0xf0N2teIR0zlyl91g9j6LVncZnr/view', annotated: 'https://drive.google.com/file/d/1O4D5lL9gvPhARQQb3qlO37VJzWenJsX-/view' };
+export const RULEBOOK = { edition: 'October 2024', pdf: 'https://drive.google.com/file/d/1sgQo0xf0N2teIR0zlyl91g9j6LVncZnr/view', annotated: 'https://drive.google.com/file/d/1O4D5lL9gvPhARQQb3qlO37VJzWenJsX-/view' };
 export const CODEX_IDS: Record<string, string> = {
   Airborne: 'c7c182e2-629c-4e65-a9a0-97feff983a3d', Burrowing: '16ed5006-40f3-4df2-8b60-6d0b13bb35a8', Charge: '4cff66bd-45c0-452b-aaa8-18119accf443',
   Deathrite: '7bd846a2-c55b-42cc-915a-9861f2080202', Disabled: '08fff20b-76c1-45c3-b13f-989202cdacf0', Flood: '610226cf-24be-4d6b-885f-b466197672c5',
@@ -45,6 +47,13 @@ export const KEYWORD_HELP: Record<string, { text: string; enforced: boolean }> =
 
 /** Rule terms used in card text, with a one-line reminder and the Codex entry that explains them. */
 export const RULE_TERMS: Record<string, { id: string; text: string }> = {
+  Region: { id: 'aecd74a9-a6fd-41f2-8734-9d1f1c8ace1e', text: 'There are four: the surface, underground (below land sites), underwater (below water sites) and the void (squares with no site). Steps, adjacent, nearby and targets stay within one region.' },
+  Storyline: { id: '081fc13c-49fb-4893-90c1-1ba5324e6241', text: 'Events resolve in order. When abilities trigger at the same moment, the non-active player\'s go first; each player orders their own.' },
+  Interact: { id: 'c60b2516-48e8-4c55-9bc9-9971d98d829e', text: 'A unit interacts with the realm when it strikes, casts a spell, activates a special ability or deals damage. That ends its Stealth.' },
+  Evil: { id: '400bbb94-8877-4eea-ad2d-bd466aee2622', text: 'Undead, Demons and Monsters are Evil. Evil minions can\'t be warded.' },
+  'Body of Water': { id: '1122beef-02de-47bd-9aa6-8c471d03fdda', text: 'Water sites joined to each other by a shared border (not corners) form one body of water.' },
+  'Span of Land': { id: 'b00b6e30-c6f2-4744-96f1-82a41119e4a6', text: 'Land sites joined to each other by a shared border (not corners) form one span of land.' },
+  Transform: { id: 'c27cbd3f-39d3-46b0-8133-37063e86df7e', text: 'The card becomes another card. It is the same object, so it keeps no summoning sickness from the change.' },
   Setup: { id: 'bc2036cd-69d3-4fab-b63b-dd094cf279c5', text: 'Each player draws 3 sites and 3 spells and may take one mulligan of up to 3 cards.' },
   'Move and Attack': { id: 'd7f6af80-0923-4ab1-88bc-11b7c694d49b', text: 'Tap a unit to take its steps (1 plus Movement +X) and, at the end, attack an enemy unit or site there.' },
   Site: { id: '5e633a96-c807-4915-be05-e83cacfcbfd6', text: 'Played with your Avatar\'s tap ability, one per turn: the first on your Avatar\'s square, later ones next to a site you control (not diagonally).' },

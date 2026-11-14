@@ -281,11 +281,15 @@ export interface PlayerState {
 }
 
 export type Pending = {
-  kind: 'defend' | 'intercept';
+  /** defend / intercept: the other player may commit units. allocate: the attacker's controller splits its strike
+   *  among several enemies in the fight (rulebook p23 "Multiple Combatants"; Codex "Fight"). */
+  kind: 'defend' | 'intercept' | 'allocate';
   by: PlayerId;
   attacker: string;
   loc: Loc;
   target: { unit?: string; site?: boolean } | null;
+  /** allocate: the enemies in the fight */
+  foes?: string[];
 };
 
 /** Where an ability comes from on the table. */
@@ -364,6 +368,8 @@ export type Action =
   | { t: 'move'; unit: string; path: Loc[]; attack?: { unit?: string; site?: boolean } }
   | { t: 'shoot'; unit: string; dx: number; dy: number }
   | { t: 'respond'; units: string[]; removeOriginal?: boolean }
+  /** split the attacker's strike among the enemies in a fight: damage per enemy unit id, adding up to its strike */
+  | { t: 'allocate'; split: Record<string, number> }
   | { t: 'endTurn' }
   | ({ t: 'manual' } & ManualOp);
 

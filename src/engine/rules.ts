@@ -1094,10 +1094,26 @@ function interceptors(s: GameState, mover: Unit): string[] {
 export function responders(s: GameState): string[] {
   const p = s.pending; if (!p) return [];
   const a = s.units[p.attacker]; if (!a) return [];
+  if (p.kind === 'allocate') return [];
   return p.kind === 'defend' ? defenders(s, a, p.loc, p.target?.unit) : interceptors(s, a);
 }
 
-function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: PlayerId | null) {
+/** How much damage a unit's strike deals (its power, +1 for a lance's first strike: Codex "Lance"). */
+export const strikeOf = (s: GameState, u: Unit) => power(s, u) + (u.lance ? 1 : 0);
+/** A suggested split of the attacker's strike: enough to kill the weakest enemies first, the rest on the next
+ *  in line. Used by the AI and as the starting point of the allocation prompt; the player decides. */
+export function autoSplit(s: GameState, attackerId: string, foeIds: string[]): Record<string, number> {
+  const a = s.units[attackerId]; const out: Record<string, number> = {}; if (!a) return out;
+  const lethal = has(s, a, 'Lethal'); let left = strikeOf(s, a);
+  const foes = foeIds.map((id) => s.units[id]).filter(Boolean);
+  const need = (u: Unit) => (u.avatar ? Infinity : lethal ? 1 : Math.max(1, defenseOf(s, u) - u.damage));
+  const order = [...foes].sort((x, y) => need(x) - need(y));
+  for (const f of foes) out[f.id] = 0;
+  for (const f of order) { const n = need(f); if (n <= left) { out[f.id] = n; left -= n; } }
+  if (left > 0 && order.length) { const rest = order.find((f) => !out[f.id]) ?? order[0]; out[rest.id] += left; }
+  return out;
+}
+function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: PlayerId | null, split?: Record<string, number>) {
   const a = s.units[attackerId]; if (!a) return;
   a.stealthLost = true;
   if (!enemyIds.length) {
@@ -1115,19 +1131,14 @@ function fight(s: GameState, attackerId: string, enemyIds: string[], siteOwner: 
     const lance = from.lance; from.lance = false; from.stealthLost = true;
     strikes.push({ from, to, dmg: power(s, from) + (lance ? 1 : 0), lethal: has(s, from, 'Lethal'), first: lance });
   };
-  // The attacker divides its damage among the enemies in the fight. The engine picks the split
-  // that kills the most: weakest minions first, anything left over on the next enemy in line.
+  // Rulebook p23 "Multiple Combatants" / Codex "Fight": the attacker's controller divides its single strike among
+  // the enemies (some may get 0). With one enemy it all goes there; with several the player chose (`split`).
   if (!isDisabled(s, a)) {
-    const lance = a.lance || has(s, a, 'Strikes first while attacking'); const lanceDmg = a.lance; a.lance = false;
+    const lance = a.lance || has(s, a, 'Strikes first while attacking');
     const lethal = has(s, a, 'Lethal');
-    let left = power(s, a) + (lanceDmg ? 1 : 0);
-    const foes = enemyIds.map((id) => s.units[id]).filter(Boolean);
-    const need = (u: Unit) => (u.avatar ? Infinity : lethal ? 1 : Math.max(1, defenseOf(s, u) - u.damage));
-    const order = [...foes].sort((x, y) => need(x) - need(y));
-    const give = new Map<string, number>();
-    for (const f of order) { const n = need(f); if (n <= left) { give.set(f.id, n); left -= n; } }
-    if (left > 0) { const rest = order.find((f) => !give.has(f.id)) ?? order[0]; if (rest) give.set(rest.id, (give.get(rest.id) ?? 0) + left); }
-    for (const f of foes) if (give.get(f.id)) strikes.push({ from: a, to: f, dmg: give.get(f.id)!, lethal, first: lance });
+    const give = enemyIds.length === 1 ? { [enemyIds[0]]: strikeOf(s, a) } : split ?? autoSplit(s, a.id, enemyIds);
+    a.lance = false;
+    for (const id of enemyIds) { const f = s.units[id]; if (f && give[id]) strikes.push({ from: a, to: f, dmg: give[id], lethal, first: lance }); }
   }
   for (const id of enemyIds) { const dfn = s.units[id]; if (dfn && has(s, dfn, "Doesn't strike back while defending")) { log(s, `${unitCard(s, dfn).name} does not strike back.`, dfn.owner); continue; } mk(dfn, a); }
   for (const pass of [true, false]) {
@@ -1197,6 +1208,16 @@ export function check(s: GameState, a: Action): Check {
     return checkChoices(s, q.by, d, q.fx, a.choices ?? [], q.loc ? [q.loc] : casterOrigins(s, q.by), self);
   }
   if (a.t === 'trigger') return no('There is no triggered ability waiting.');
+  if (s.pending?.kind === 'allocate') {
+    if (a.t !== 'allocate') return no(`${pname(s.pending.by)} must first split ${unitCard(s, s.units[s.pending.attacker]).name}'s damage among the enemies in the fight.`, 'Fight');
+    const foes = s.pending.foes ?? []; const total = strikeOf(s, s.units[s.pending.attacker]);
+    if (Object.keys(a.split).some((id) => !foes.includes(id))) return no('Damage can only go to the enemies in this fight.', 'Fight');
+    if (Object.values(a.split).some((n) => !Number.isInteger(n) || n < 0)) return no('Each share is a whole number from 0 up.', 'Fight');
+    const sum = Object.values(a.split).reduce((x, y) => x + y, 0);
+    if (sum !== total) return no(`The shares must add up to the strike: ${total} damage (now ${sum}).`, 'Fight');
+    return { ok: true };
+  }
+  if (a.t === 'allocate') return no('There is no fight waiting for its damage to be split.');
   if (s.pending) {
     if (a.t !== 'respond') return no(`${pname(s.pending.by)} must choose whether to ${s.pending.kind} first.`, s.pending.kind === 'defend' ? 'Defend' : 'Intercept');
     const ok = responders(s);
@@ -1457,6 +1478,7 @@ export function apply(state: GameState, a: Action): GameState {
       break;
     }
     case 'respond': resolvePending(s, a.units, !!a.removeOriginal); break;
+    case 'allocate': { const pd = s.pending!; s.pending = null; fight(s, pd.attacker, pd.foes ?? [], null, a.split); break; }
     case 'shoot': {
       const u = s.units[a.unit]; const t = shotTarget(s, u, a.dx, a.dy)!;
       u.tapped = true; u.stealthLost = true;
@@ -1491,11 +1513,17 @@ function resolvePending(s: GameState, ids: string[], removeOriginal: boolean) {
   const a = s.units[pd.attacker]; if (!a) return;
   for (const id of ids) { const d = s.units[id]; d.tapped = true; d.c = pd.loc.c; d.r = pd.loc.r; }
   if (ids.length) log(s, `${ids.map((id) => unitCard(s, s.units[id]).name).join(', ')} ${pd.kind === 'defend' ? 'defend' : 'intercept'}.`, pd.by);
-  if (pd.kind === 'intercept') { if (ids.length) fight(s, a.id, ids, null); return; }
+  if (pd.kind === 'intercept' && !ids.length) return;
   const enemies = [...ids];
   let siteOwner: PlayerId | null = null;
   if (pd.target?.unit) { if (!(removeOriginal && ids.length) && s.units[pd.target.unit]) enemies.unshift(pd.target.unit); }
   else if (pd.target?.site && !ids.length) siteOwner = s.sites[pd.loc.c]?.owner ?? null;
+  // several enemies: the attacker's controller decides how its strike is split (rulebook p23; Codex "Fight")
+  if (enemies.length > 1 && !isDisabled(s, a) && strikeOf(s, a) > 0) {
+    s.pending = { kind: 'allocate', by: a.owner, attacker: a.id, loc: pd.loc, target: null, foes: enemies };
+    log(s, `${unitCard(s, a).name} faces ${enemies.length} enemies: ${pname(a.owner)} splits its ${strikeOf(s, a)} damage.`, a.owner);
+    return;
+  }
   fight(s, a.id, enemies, siteOwner);
 }
 function manual(s: GameState, a: ManualOp) {
@@ -1561,6 +1589,13 @@ export function playableSiteCells(s: GameState, p: PlayerId): number[] { return 
 export function legalActions(s: GameState): Action[] {
   if (s.phase === 'over') return [];
   const p = actor(s); const pl = s.players[p]; const out: Action[] = [];
+  if (s.pending?.kind === 'allocate') {
+    // the suggested split, and everything on each single enemy
+    const pd = s.pending; const foes = pd.foes ?? []; const total = strikeOf(s, s.units[pd.attacker]);
+    out.push({ t: 'allocate', split: autoSplit(s, pd.attacker, foes) });
+    for (const f of foes) out.push({ t: 'allocate', split: Object.fromEntries(foes.map((x) => [x, x === f ? total : 0])) });
+    return out;
+  }
   if (s.pending) {
     const r = responders(s);
     out.push({ t: 'respond', units: [] });

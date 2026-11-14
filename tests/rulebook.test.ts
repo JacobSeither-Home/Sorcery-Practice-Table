@@ -124,8 +124,8 @@ describe('AUDIT: movement', () => {
   });
 });
 
-describe('AUDIT: damage allocation', () => {
-  it('splits the attacker\'s damage itself, with no choice offered (rulebook p22: the controller allocates)', () => {
+describe('damage allocation', () => {
+  it('the attacker\'s controller splits its strike among several enemies (p23 Multiple Combatants; Codex "Fight")', () => {
     let s = start(0);
     site(s, 0, cell(2, 3)); site(s, 1, cell(2, 2), 'Mill Pond');
     const atk = unit(s, 0, cell(2, 3), id('Pyre Drake'));        // 5 power, Airborne
@@ -133,15 +133,23 @@ describe('AUDIT: damage allocation', () => {
     const tough = unit(s, 1, cell(2, 2), id('Storm Roc'));       // 4/4 Airborne
     s = apply(s, { t: 'move', unit: atk, path: [{ c: cell(2, 2), r: 'surface' }], attack: { unit: weak } });
     expect(s.pending?.kind).toBe('defend');
-    const opts = legalActions(s);
-    expect(opts.every((a) => a.t === 'respond')).toBe(true);      // only who defends; never how damage splits
     s = apply(s, { t: 'respond', units: [tough] });
+    expect(s.pending?.kind).toBe('allocate');                    // the attacker's player chooses
+    expect(s.pending?.by).toBe(0);
+    expect(check(s, { t: 'allocate', split: { [weak]: 1, [tough]: 3 } }).ok).toBe(false); // must add up to 5
+    s = apply(s, { t: 'allocate', split: { [weak]: 0, [tough]: 5 } }); // all on the Roc; the Sprite gets 0
     expect(s.pending).toBe(null);
-    expect(s.queue?.length ?? 0).toBe(0);                        // fight already resolved: no allocation step
-    // the engine spent 5 power as 1 + 4: the split that kills the most, which the player never got to pick
-    expect(s.units[weak]).toBeUndefined();
+    expect(s.units[weak]).toBeDefined();
     expect(s.units[tough]).toBeUndefined();
-    expect(s.units[atk]).toBeUndefined();                        // and it struck back for 5, killing the attacker
+  });
+  it('a single enemy takes the whole strike with no prompt', () => {
+    let s = start(0);
+    site(s, 0, cell(2, 3)); site(s, 1, cell(2, 2), 'Mill Pond');
+    const atk = unit(s, 0, cell(2, 3), id('Pyre Drake'));
+    const weak = unit(s, 1, cell(2, 2), id('Storm Roc'), { tapped: true });
+    s = apply(s, { t: 'move', unit: atk, path: [{ c: cell(2, 2), r: 'surface' }], attack: { unit: weak } });
+    expect(s.pending).toBe(null);
+    expect(s.units[weak]).toBeUndefined();
   });
 });
 

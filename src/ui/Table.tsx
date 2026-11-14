@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
-  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy,
+  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
@@ -40,6 +40,7 @@ export function Table() {
   const [mull, setMull] = useState<string[]>([]);
   const [picks, setPicks] = useState<string[]>([]);
   const [removeOrig, setRemoveOrig] = useState(false);
+  const [split, setSplit] = useState<Record<string, number>>({});
   const [curtainFor, setCurtainFor] = useState<PlayerId | null>(null);
   const [seen, setSeen] = useState<PlayerId>(viewer);
   const [tableMenu, setTableMenu] = useState(false);
@@ -71,7 +72,7 @@ export function Table() {
   }, [boardSize, settings.infoPanel]);
 
   // clear transient UI whenever the game state moves on
-  useEffect(() => { setSel(null); setMenu(null); setPicks([]); setRemoveOrig(false); setMull([]); }, [s]);
+  useEffect(() => { setSel(null); setMenu(null); setPicks([]); setRemoveOrig(false); setMull([]); setSplit(s.pending?.kind === 'allocate' ? autoSplit(s, s.pending.attacker, s.pending.foes ?? []) : {}); }, [s]);
   // a triggered ability waiting for this player opens the pop-up by itself
   const q0 = s.queue?.[0];
   useEffect(() => { if (q0 && !s.pending && (hot || q0.by === g.local) && (!cast || cast.k === 'hand')) { if (!cast) setCast({ k: 'trigger', id: q0.id }); } }, [q0?.id, cast]);
@@ -434,7 +435,29 @@ export function Table() {
         )}
       </AnimatePresence>
       <AnimatePresence>
-        {pend && (
+        {pend?.kind === 'allocate' && (() => {
+          const atk = s.units[pend.attacker]; const total = atk ? strikeOf(s, atk) : 0; const foes = pend.foes ?? [];
+          const sum = foes.reduce((n, id) => n + (split[id] ?? 0), 0);
+          const set = (id: string, d: number) => setSplit({ ...split, [id]: Math.max(0, (split[id] ?? 0) + d) });
+          return (
+            <motion.div className="prompt" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+              {(hot || pend.by === g.local) && atk ? (<>
+                <h3>{PNAME(g, pend.by)}: split {unitCard(s, atk).name}'s strike</h3>
+                <p>It strikes once for {total} damage, shared among the {foes.length} enemies in the fight as you choose; an enemy can get 0. Each enemy strikes back as normal.
+                  {' '}<a href={codexUrl('Fight')} target="_blank" rel="noreferrer">Fight ↗</a></p>
+                <div className="alloc">{foes.map((id) => { const f = s.units[id]; if (!f) return null; const left = f.avatar ? null : Math.max(0, defenseOf(s, f) - f.damage);
+                  return <div key={id} className="alloc-row" {...hoverProps(unitCard(s, f))}>
+                    <span>{unitCard(s, f).name}{left !== null && <small> · dies at {has(s, atk, 'Lethal') ? 1 : left}</small>}</span>
+                    <span className="stepper"><button onClick={() => set(id, -1)} aria-label={`1 less to ${unitCard(s, f).name}`} disabled={!(split[id] ?? 0)}>−</button><b>{split[id] ?? 0}</b><button onClick={() => set(id, 1)} aria-label={`1 more to ${unitCard(s, f).name}`} disabled={sum >= total}>+</button></span>
+                  </div>; })}</div>
+                <div className="row">
+                  <span className="hint">{sum === total ? 'All damage assigned.' : `${total - sum} left to assign.`}</span>
+                  <button className="primary" disabled={sum !== total} onClick={() => act({ t: 'allocate', split: Object.fromEntries(foes.map((id) => [id, split[id] ?? 0])) })}>Strike</button>
+                </div>
+              </>) : <p>Waiting for {PNAME(g, pend.by)} to split the damage…</p>}
+            </motion.div>);
+        })()}
+        {pend && pend.kind !== 'allocate' && (
           <motion.div className="prompt" initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             {(hot || pend.by === g.local) ? (<>
               <h3>{PNAME(g, pend.by)}: {pend.kind === 'defend' ? 'defend?' : 'intercept?'}</h3>
