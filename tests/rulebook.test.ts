@@ -831,3 +831,82 @@ describe('printed keywords', () => {
     expect(printedKeywords('Airborne, Fire Spellcaster', ['Airborne', 'Spellcaster'])).toEqual(['Airborne', 'Spellcaster']);
   });
 });
+
+describe('damage grids (Codex "Damage Grid"; grids read from the card images)', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c, c < 10 ? 'Mill Pond' : 'Cinder Field'); s.players[0].mana = 20; return s; };
+  it('Cone of Flame, turned to the right: 5, then 3-3-3, then 1s', async () => {
+    let s = board(); s.units[s.players[0].avatar].c = cell(0, 2);
+    const cone = await read('Magic', 'Cone of Flame', 'Choose a direction from the caster. Deal damage to each unit at a location in the area of effect:', { cost: 0 });
+    const a = unit(s, 1, cell(1, 2), id('Hill Giant')), b = unit(s, 1, cell(2, 1), id('Hill Giant')), c2 = unit(s, 1, cell(3, 0), id('Hill Giant'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, cone), choices: [{ dir: [1, 0] }] });
+    expect([a, b, c2].map((x) => s.units[x].damage)).toEqual([5, 3, 1]);
+  });
+  it('Fireball explodes where the projectile lands: 4 there, 2 next to it', async () => {
+    let s = board();
+    const fb = await read('Magic', 'Fireball', 'Shoot a projectile. It explodes on impact, dealing damage to each unit at affected locations.', { cost: 0 });
+    const a = unit(s, 1, cell(2, 1), id('Hill Giant')), b = unit(s, 1, cell(1, 1), id('Hill Giant'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, fb), choices: [{ dir: [0, -1] }] });
+    expect([a, b].map((x) => s.units[x].damage)).toEqual([4, 2]);
+  });
+  it('Flame Wave: 7, 5, 3, 1 from the chosen edge, surface units on sites only', async () => {
+    let s = board();
+    const fw = await read('Magic', 'Flame Wave', 'Flame Wave flows horizontally, from one edge of the realm to the other. Deal damage to each unit atop sites in the area of effect:', { cost: 0 });
+    const wall = T('Test Wall', 'Minion', { attack: 20 }); const a = unit(s, 1, cell(4, 0), wall), b = unit(s, 1, cell(1, 1), wall), under = unit(s, 1, cell(4, 1), id('Reed Lurker'), { r: 'under' });
+    s = apply(s, { t: 'cast', inst: give(s, 0, fw), choices: [{ flip: true }] });
+    expect([a, b].map((x) => s.units[x].damage)).toEqual([7, 1]); expect(s.units[under].damage).toBe(0);
+  });
+  it('King Krakalak sacrifices its site; everything else nearby takes 5 / 3', async () => {
+    let s = board();
+    const kk = await read('Minion', 'King Krakalak', 'Genesis → Sacrifice this site to deal damage to each other unit at affected sites:', { attack: 8, cost: 0 });
+    const a = unit(s, 1, cell(1, 2), id('Hill Giant'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, kk), c: cell(2, 2) });
+    expect(s.units[a].damage).toBe(3); expect(s.sites[cell(2, 2)]!.inst).toBe(null);
+    expect(Object.values(s.units).some((u) => s.cards[s.inst[u.inst]].name === 'King Krakalak')).toBe(true);
+  });
+});
+
+describe('Frost Mage vs Lavamancer, batch B (card text from the API)', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  const auto = (c: string) => cards[c].effects.every((e) => e.op !== 'manual');
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c, 'Cinder Field'); s.players[0].mana = 20; return s; };
+  it('reads every batch-B line without a by-hand step', async () => {
+    const ids = await Promise.all([
+      read('Minion', 'Slag Slug', 'Whenever the Slug leaves a site, it deals 2 damage to units there.', { attack: 4 }),
+      read('Magic', 'Ground Slam', 'An ally strikes its site. Deal 2 damage to other units at nearby sites.'),
+      read('Site', 'Thin Ice', 'At the end of your turn, if minions atop this site total 5 or more power, submerge them.'),
+      read('Site', 'Tundra', 'Your (A) and (W) are equal to the higher of the two.'),
+      read('Minion', 'Highgate Guide', 'Nearby allies are Protected from sites.', { attack: 2 }),
+      read('Artifact', 'Iron Man Talus', "Can't be disabled or moved by force."),
+      read('Site', 'Landslide', 'Trap (2) → Swap this site with another adjacent site.'),
+      read('Minion', "Tusslin' Trolls", 'At the end of your turn, strike target adjacent minion for D6 damage.', { attack: 4 }),
+      read('Site', 'Volcanic Eruption', 'Trap (2) → Shoot three 1-damage projectiles in different cardinal directions.'),
+      read('Magic', 'Ash of Effort', 'Sacrifice a site to draw three sites.'),
+      read('Site', 'Wuthering Heights', 'Once on your turn, you may fly a minion atop here onto a nearby site.'),
+    ]);
+    expect(ids.filter((c) => !auto(c)).map((c) => cards[c].name)).toEqual([]);
+  });
+  it('Slag Slug deals 2 to the units it leaves behind', async () => {
+    let s = board();
+    const slug = unit(s, 0, cell(2, 2), await read('Minion', 'Slag Slug', 'Whenever the Slug leaves a site, it deals 2 damage to units there.', { attack: 4 }));
+    const left = unit(s, 1, cell(2, 2), id('Hill Giant'));
+    s = apply(s, { t: 'move', unit: slug, path: [{ c: cell(2, 1), r: 'surface' }] });
+    expect(s.units[left].damage).toBe(2);
+  });
+  it('Highgate Guide: nearby allies are Protected from sites', async () => {
+    const s = board();
+    unit(s, 0, cell(2, 2), await read('Minion', 'Highgate Guide', 'Nearby allies are Protected from sites.', { attack: 2 }));
+    const ally = unit(s, 0, cell(2, 1), id('Hill Giant'));
+    const { protectedFrom } = await import('../src/engine/rules');
+    expect(protectedFrom(s, s.units[ally], cards[T('Some Site', 'Site', {})], false)).toBe(true);
+    expect(protectedFrom(s, s.units[ally], cards[T('Some Spell', 'Magic', {})], false)).toBe(false);
+  });
+  it("Iron Man Talus can't be disabled", async () => {
+    let s = board();
+    const talus = unit(s, 1, s.units[s.players[0].avatar].c, await read('Minion', 'Talus Test', "Can't be disabled or moved by force.", { attack: 3 }));
+    const fb = await read('Magic', 'Freeze Test', 'Disable target nearby minion until your next turn.', { cost: 0 });
+    s = apply(s, { t: 'cast', inst: give(s, 0, fb), choices: [{ target: talus }] });
+    expect(s.log.some((l) => /can't be disabled/.test(l.text ?? String(l)))).toBe(true);
+    expect(s.units[talus].mods?.some((m) => m.kw === 'Disabled') ?? false).toBe(false);
+  });
+});

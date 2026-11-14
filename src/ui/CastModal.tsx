@@ -14,6 +14,7 @@ import { CardFace, hoverProps, mainElement } from './CardFace';
 import { TRIGGER_SHORT, describe } from './abilityText';
 import { usePace } from './pace';
 import { HowItWorks } from './Explain';
+import { GRIDS, gridSquares } from '../data/grids';
 
 export type CastReq =
   /** at / unit: where a magic was dropped on the realm: preselects that location and that unit as its choices */
@@ -214,6 +215,23 @@ function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: 
         {e.op === 'wardBoost' && (() => { const ws = Object.values(s.units).filter((u) => u.owner === pl.p && u.ward); const on = c?.chain ?? [];
           return ws.length ? <div className="chips targets"><small>Break these Wards (+1 damage each):</small>{ws.map((u) => <button key={u.id} className={`chip p${u.owner} ${on.includes(u.id) ? 'on' : ''}`} onClick={() => set({ chain: on.includes(u.id) ? on.filter((x) => x !== u.id) : [...on, u.id] })}>{unitCard(s, u).name}</button>)}</div> : <small className="none"> — you have no warded units</small>; })()}
         {e.op === 'shoot' && e.aimEach && (e.shots ?? 1) > 1 && c?.dir && <div className="chips targets col">{Array.from({ length: e.shots ?? 1 }, (_, k) => <div key={k}><small>Projectile {k + 1}:</small> {dirs.map((dv) => { const cur = c.dirs?.[k] ?? c.dir!; return <button key={dv.join()} className={`chip ${cur.join() === dv.join() ? 'on' : ''}`} onClick={() => { const ds = Array.from({ length: e.shots ?? 1 }, (_, j) => c.dirs?.[j] ?? c.dir!); ds[k] = dv; set({ dirs: ds }); }}>{DIR[dv.join()]}</button>; })}</div>)}</div>}
+        {e.op === 'grid' && GRIDS[e.gridOf ?? ''] && (() => {
+          const g = GRIDS[e.gridOf ?? '']!; const D4: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+          const prevCell = pl.idx.slice(0, pl.idx.indexOf(i)).reverse().map((k) => all[k]?.cell).find((x) => x !== undefined);
+          const holyWard = pl.d.name === 'Holy Nova' && c?.target ? s.units[c.target] : undefined;
+          const anchor = holyWard ? holyWard.c : g.anchor === 'target' ? prevCell : g.anchor === 'edge' || g.anchor === 'impact' ? undefined : pl.origins[0]?.c;
+          const dirs = g.arms ? (c?.dirs ?? [[0, -1], [1, 0]] as [number, number][]) : [c?.dir ?? [0, -1] as [number, number]];
+          const cellsHit = new Map<number, number>();
+          if (anchor !== undefined || g.anchor === 'edge') { const [ax, ay] = anchor !== undefined ? xy(anchor) : [0, 0]; for (const dv of dirs) for (const q of gridSquares(g, { x: ax, y: ay }, dv, !!c?.flip)) { const k = cell(q.x, q.y); cellsHit.set(k, Math.max(cellsHit.get(k) ?? 0, q.n)); } }
+          return <div className="gridpick">
+            {(g.turn === 'rotate' || g.turn === 'both') && !g.arms && <span className="xpick">{D4.map((dv) => <button key={dv.join()} className={(c?.dir ?? [0, -1]).join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
+            {g.arms && Array.from({ length: g.arms }, (_, k) => <span key={k} className="xpick"><small>Direction {k + 1}:</small>{D4.map((dv) => <button key={dv.join()} className={dirs[k]?.join() === dv.join() ? 'on' : ''} onClick={() => { const ds = [...dirs]; ds[k] = dv; set({ dirs: ds }); }}>{DIR[dv.join()]}</button>)}</span>)}
+            {(g.turn === 'reflect' || g.turn === 'both') && <span className="xpick">{g.anchor === 'edge' ? <><button className={!c?.flip ? 'on' : ''} onClick={() => set({ flip: false })}>From the left edge</button><button className={c?.flip ? 'on' : ''} onClick={() => set({ flip: true })}>From the right edge</button></> : <button className={c?.flip ? 'on' : ''} onClick={() => set({ flip: !c?.flip })}>Mirror it</button>}</span>}
+            {pl.d.name === 'Holy Nova' && (() => { const ws = Object.values(s.units).filter((u) => u.owner === pl.p && u.ward); return ws.length ? <div className="chips targets"><small>Break an allied Ward to centre it there instead (optional):</small>{ws.map((u) => <button key={u.id} className={`chip ${c?.target === u.id ? 'on' : ''}`} onClick={() => set({ target: c?.target === u.id ? undefined : u.id })}>{unitCard(s, u).name}</button>)}</div> : null; })()}
+            {g.anchor === 'impact' ? <small className="none"> — centred where the projectile lands</small> : anchor === undefined && g.anchor !== 'edge' ? <small className="none"> — choose the location above first</small> : (
+              <div className="gridprev" aria-label="Squares the area hits">{Array.from({ length: 20 }, (_, k) => <span key={k} className={`${cellsHit.has(k) ? 'hit' : ''} ${k === anchor ? 'anchor' : ''}`}>{cellsHit.get(k) || (k === anchor ? '•' : '')}</span>)}</div>)}
+          </div>;
+        })()}
         {e.op === 'roll' && <span className="xpick">{([[0, -1], [0, 1], [-1, 0], [1, 0]] as [number, number][]).map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
         {e.op === 'moveSite' && pl.origins[0] && (() => { const cl = siteMoveCells(s, pl.origins[0].c); return cl.length ? <div className="chips targets"><small>Fly to:</small>{cl.map((x) => <button key={x} className={`chip ${c?.cell === x ? 'on' : ''}`} onClick={() => set({ cell: x })}>{sq(x)}<small> void</small></button>)}</div> : <small className="none"> — no void nearby</small>; })()}
         {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);

@@ -29,6 +29,16 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** damage every unit on the card's damage grid (src/data/grids.ts; Codex "Damage Grid") */
+  | 'grid'
+  /** this site trades squares with an adjacent site, everything on both moving with them (Landslide) */
+  | 'swapSites'
+  /** an ally strikes its own site (its controller loses life), then N damage to other units at nearby sites (Ground Slam) */
+  | 'groundSlam'
+  /** if minions atop this site total N or more power, submerge them (Thin Ice) */
+  | 'thinIce'
+  /** destroy all auras and artifacts at the chosen location */
+  | 'destroyPerms'
   /** two units trade places (Choice.target and Choice.chain[0]) */
   | 'swap'
   /** minions adjacent to the chosen water site step into it, then all minions there are submerged (Call of the Sea) */
@@ -124,6 +134,8 @@ export type Who =
   | 'summoned'
   /** the controller of the unit the reaction is about ("its controller loses 1 life") */
   | 'subjectController'
+  /** units at or adjacent to where the projectile on this line hit ("On impact, all adjacent units …") */
+  | 'nearHit'
   /** units at a location the player chooses (Choice.cell), within `range` */
   | 'atTarget'
   /** the site this card is at: damage to it costs its controller life */
@@ -165,6 +177,20 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** grid: the card whose grid to use (default: this card) */
+  gridOf?: string;
+  /** shoot: the projectile only marks where it lands (its grid deals the damage) */
+  explode?: boolean;
+  /** strike: random damage, 1 to this number (a D6: Codex "Random") instead of the striker's power */
+  dice?: number;
+  /** atTarget / teleport: only sites you control / only sites (not voids) */
+  allySite?: boolean; siteOnly?: boolean;
+  /** shoot: each projectile in a different cardinal direction */
+  distinctDirs?: boolean;
+  /** ongoing: ends when this turn ends instead of at your next turn */
+  thisTurn?: boolean;
+  /** activated: once per game */
+  oncePerGame?: boolean;
   /** atTarget: not the card's own square ("another target adjacent location") */
   notHere?: boolean;
   /** static: these two elements of your threshold are each the higher of the two (Tundra, Scoria) */
@@ -294,7 +320,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string; /** op chain: the extra targets, in order */ chain?: string[]; /** either/or: which option (0 or 1) */ alt?: number; /** shots aimed one by one */ dirs?: [number, number][] }
+export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string; /** op chain: the extra targets, in order */ chain?: string[]; /** either/or: which option (0 or 1) */ alt?: number; /** shots aimed one by one */ dirs?: [number, number][]; /** grid: mirrored (or, for Flame Wave, from the right edge) */ flip?: boolean }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -338,6 +364,8 @@ export interface Unit {
   halted?: boolean;
   /** corners of the realm it has entered (Wayfaring Pilgrim) */
   corners?: number[];
+  /** the turn it last untapped from being damaged (Gnarled Laborers) */
+  untapTurn?: number;
   /** swallowed: carried, disabled, by this unit until it leaves the realm (Brobdingnag Bullfrog) */
   belly?: string;
   /** doesn't die until an effect is done (Blaze of Glory) */
@@ -452,6 +480,10 @@ export interface GameState {
   pending: Pending | null;
   /** triggered abilities that need a decision, first one first */
   queue?: Queued[];
+  /** the unit attacking in the fight now resolving ("while attacking") */
+  attacking?: string;
+  /** activated abilities used once per game, by source key and line */
+  usedGame?: Record<string, true>;
   /** controllers of units that left the realm this turn, by unit id ("its controller" after it died) */
   gone?: Record<string, PlayerId>;
   /** where those units were ("summon a Skeleton token where it died") */
@@ -461,7 +493,7 @@ export interface GameState {
   /** units not "at rest" while the current action resolves: the mover and its defenders (Codex "At Rest") */
   busy?: string[];
   /** effects abilities left behind for a while (Codex "Ongoing Effect"): applied like static text from `loc`, ending at the start of `next`'s turn */
-  ongoing?: { id: string; p: PlayerId; from: string; loc: Loc; fx: Omit<Effect, 'on'>[]; next: PlayerId }[];
+  ongoing?: { id: string; p: PlayerId; from: string; loc: Loc; fx: Omit<Effect, 'on'>[]; next: PlayerId; turn?: number }[];
   /** activated abilities used this turn: `${source}:${effect index}` -> turn */
   used?: Record<string, number>;
   nextId: number;
@@ -518,8 +550,10 @@ export interface DeckList { name: string; avatar: string; spellbook: string[]; a
 
 /** A condition on an ability ("while …", "if …", "unless …", "during …"), measured from the card that has it. */
 export interface Cond {
-  k: 'moreLife' | 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere' | 'adjacentWard' | 'noEnemiesNearby';
+  k: 'moreLife' | 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere' | 'adjacentWard' | 'noEnemiesNearby' | 'stealthed' | 'attacking' | 'inCemetery';
   sub?: string; name?: string; other?: boolean; not?: boolean;
+  /** inCemetery: any of these subtypes or card types ("Bears or sites") */
+  subs?: string[]; types?: string[];
 }
 
 /** Which cards a "search / look at / return / summon from …" effect may pick. */

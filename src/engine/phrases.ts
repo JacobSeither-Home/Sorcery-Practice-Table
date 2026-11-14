@@ -9,6 +9,7 @@
 // on 2026-11-12 (1,100 cards), and the Codex at https://sorcerytcg.com/codex for what the words mean
 // (nearby, adjacent, here, heal, Ward, projectile …). `node tests/coverage.mjs cards.json` reports what
 // is still by hand.
+import { GRIDS } from '../data/grids';
 import type { CardDef, CardFilter, CardType, Cond, Effect, Element, EventFilter, Thresholds, Trigger, Who, Zone, ZonePick } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
@@ -32,6 +33,9 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  grid: 'Damage',
+  swapSites: 'Movement & position', groundSlam: 'Damage', thinIce: 'Movement & position',
+  destroyPerms: 'Removal',
   swap: 'Movement & position', gather: 'Movement & position', transform: 'Other', discountHere: 'Mana',
   glory: 'Damage', becomeIfPicked: 'Power boosts',
   wardBoost: 'Damage', slide: 'Movement & position', dealOut: 'Cards',
@@ -554,8 +558,8 @@ export const RULES: Rule[] = [
     build: (_m, on) => (on === 'static' ? [] : null) }, // carried out by the Barricade rule above
   { id: 'heal-and-drain', label: 'You heal N and your opponent loses M life', re: /^you heal (\d+) and your opponent loses (\d+) life\.$/i,
     build: (m) => [{ op: 'heal', who: 'controller', n: +m[1] }, { op: 'loseLife', who: 'opponent', n: +m[2] }] },
-  { id: 'shoot-deals', label: 'Shoot a projectile that deals N damage', re: /^shoot a projectile that deals (\d+) damage\.$/i,
-    build: (m) => [{ op: 'shoot', who: 'controller', n: +m[1] }] },
+  { id: 'shoot-deals', label: 'Shoot a projectile that deals N damage', re: /^(?:shoot|throw) a projectile that deals (?:(\d+) damage|damage (\d+))\.$/i,
+    build: (m) => [{ op: 'shoot', who: 'controller', n: +(m[1] ?? m[2]) }] },
   { id: 'step-closest-evil', label: 'Step toward the closest Evil', re: /^(?:this )?(?:may )?step toward the closest evil\.$/i,
     build: () => [{ op: 'teleport', who: 'self', dest: 'closestEvil', move: 'step' }] },
   { id: 'brand', label: 'Brand an enemy so your cards treat them as Evil this turn', re: /^brand an enemy so your cards treat (?:them|it) as evil this turn\.$/i,
@@ -608,6 +612,50 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'damage', who: 'atTarget', range: 'adjacent', targets: true, notHere: true, n: +m[1], ...(m[2].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}) }] },
   { id: 'tap-adjacent-site', label: 'Tap minions at one adjacent site', re: /^tap (minions|units) at one adjacent site\.$/i,
     build: (m) => [{ op: 'tap', who: 'atTarget', range: 'adjacent', siteKind: undefined, ...(m[1].toLowerCase() === 'minions' ? { only: 'minion' as const } : {}) }] },
+  { id: 'each-there-takes', label: 'Each unit/minion there takes N damage (and is disabled until your next turn)', re: /^each (unit|minion) there takes (\d+) damage( and is disabled until your next turn)?\.$/i,
+    build: (m) => { const only = m[1].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}; const fx: Omit<Effect, 'on'>[] = [{ op: 'damage', who: 'atTarget', refCell: true, n: +m[2], ...only }]; if (m[3]) fx.push({ op: 'grant', who: 'atTarget', refCell: true, keyword: 'Disabled', until: 'next', ...only }); return fx; } },
+  { id: 'encase', label: 'Encase target minion in ice: disabled and takes no damage until your next turn', re: /^encase (.+?) in ice\.$/i,
+    build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v ? [{ op: 'grant', ...v, keyword: 'Disabled', until: 'next' }] : null; } },
+  { id: 'encase-2', label: 'It is disabled and takes no damage until your next turn', re: /^it is disabled and takes no damage until your next turn\.$/i,
+    build: () => [{ op: 'grant', who: 'target', ref: true, keyword: 'Immune to damage', until: 'next' }] },
+  { id: 'impact-disable', label: 'On impact, all adjacent units are disabled until your next turn', re: /^on impact, all adjacent (units|minions) are disabled until your next turn\.$/i,
+    build: (m) => [{ op: 'grant', who: 'nearHit', keyword: 'Disabled', until: 'next', ...(m[1].toLowerCase() === 'minions' ? { only: 'minion' as const } : {}) }] },
+  { id: 'dispel-location', label: 'Destroy all auras and artifacts at target location', re: /^destroy all auras and artifacts at target location(?: up to (two|three) steps away)?\.$/i,
+    build: (m) => [{ op: 'destroyPerms', who: 'atTarget', range: (m[1]?.toLowerCase() ?? 'any') as Effect['range'], targets: true }] },
+  // Codex "Protected from X"
+  { id: 'protected', label: '… are Protected from sites / magic / all but units', re: /^(.+?) (?:are|is) protected from (sites|magic|all but units)\.$/i,
+    build: (m, on) => { const v = nounPhrase(m[1]); return v && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: `Protected from ${m[2].toLowerCase()}`, until: on === 'static' ? 'permanent' : 'turn' }] : null; } },
+  // Codex "As If Connected"
+  { id: 'wrap-all', label: 'Can move as if the opposite edges of the realm were connected', re: /^(?:this )?can move as if the opposite edges of the realm were connected\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Wraps all edges', until: 'permanent' }] : null) },
+  { id: 'shoot-across', label: 'May shoot across the top and bottom edges of the realm', re: /^(?:this )?may shoot across the top and bottom edges of the realm\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Shoots across top and bottom', until: 'permanent' }] : null) },
+  // Codex "Random": a D6
+  { id: 'strike-d6', label: 'Strike target adjacent minion for D6 damage', re: /^strike target adjacent (minion|unit) for d6 damage\.$/i,
+    build: (m) => [{ op: 'strike', who: 'target', range: 'adjacent', targets: true, dice: 6, ...(m[1].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}) }] },
+  { id: 'untap-damaged', label: 'Untaps the first time they take damage each turn', re: /^(?:this )?untaps the first time (?:they|it) takes? damage each turn\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Untaps when first damaged each turn', until: 'permanent' }] : null) },
+  { id: 'move-water', label: 'Move to an adjacent water site', re: /^move to an adjacent water site\.$/i,
+    build: () => [{ op: 'teleport', who: 'self', dest: 'adjacent', siteKind: 'water', move: 'step' }] },
+  { id: 'ground-slam', label: 'An ally strikes its site. Deal N damage to other units at nearby sites', re: /^an ally strikes its site\.$/i,
+    build: () => [] }, // with the next sentence (line pair below)
+  { id: 'thin-ice', label: 'If minions atop this site total N or more power, submerge them', re: /^if minions atop this site total (\d+) or more power, submerge them\.$/i,
+    build: (m) => [{ op: 'thinIce', who: 'controller', n: +m[1] }] },
+  { id: 'equalize', label: 'Your (A) and (W) are equal to the higher of the two', re: /^your \(([AEFW])\) and \(([AEFW])\) are equal to the higher of the two\.$/i,
+    build: (m, on) => { const E = { A: 'air', E: 'earth', F: 'fire', W: 'water' } as const; return on === 'static' ? [{ op: 'grant', who: 'controller', keyword: 'Threshold rule', until: 'permanent', equalize: [E[m[1].toUpperCase() as 'A'], E[m[2].toUpperCase() as 'A']] }] : null; } },
+  { id: 'damage-up-nearby', label: 'Damage dealt to nearby units is increased by N this turn', re: /^damage dealt to nearby units is increased by 1 this turn\.$/i,
+    build: (_m, on) => (on !== 'static' ? [{ op: 'ongoing', who: 'controller', thisTurn: true, fx: [{ op: 'grant', who: 'unitsNearby', keyword: 'Takes 1 more damage', until: 'permanent' }] }] : null) },
+  { id: 'landslide', label: 'Swap this site with another adjacent site', re: /^swap this site with another adjacent site\.$/i,
+    build: () => [{ op: 'swapSites', who: 'atTarget', range: 'adjacent', notHere: true }] },
+  { id: 'fling', label: 'Fling / fly a unit atop this site onto a nearby site', re: /^(?:fling|fly) an? (unit|minion) atop (?:this site|here) onto a nearby site\.$/i,
+    build: (m) => [{ op: 'teleport', who: 'target', range: 'here', surface: true, targets: false, dest: 'nearby', siteOnly: true, ...(m[1].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}) }] },
+  { id: 'eruption', label: 'Shoot three N-damage projectiles in different cardinal directions', re: /^shoot (\w+) (\d+)-damage projectiles in different cardinal directions\.$/i,
+    build: (m) => [{ op: 'shoot', who: 'controller', n: +m[2], shots: WORDNUM[m[1].toLowerCase()] ?? 3, aimEach: true, distinctDirs: true }] },
+  { id: 'shoot-n-damage', label: 'Shoot a N-damage projectile', re: /^shoot an? (\d+)-damage projectile\.$/i, build: (m) => [{ op: 'shoot', who: 'controller', n: +m[1] }] },
+  { id: 'ash-of-effort', label: 'Sacrifice a site to draw N sites', re: /^sacrifice a site to draw (\w+) sites\.$/i,
+    build: (m) => [{ op: 'destroySite', who: 'atTarget', range: 'any', allySite: true, isCost: true }, { op: 'draw', who: 'controller', n: WORDNUM[m[1].toLowerCase()] ?? +m[1], deck: 'atlas' }] },
+  { id: 'cant-disabled-moved', label: "Can't be disabled or moved by force", re: /^(?:this )?can'?t be disabled or moved by force\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: "Can't be disabled", until: 'permanent' }, { op: 'grant', who: 'self', keyword: "Can't be moved by force", until: 'permanent' }] : null) },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -629,7 +677,7 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'rubble', who: 'atTarget', range: 'adjacent', afterSite: m[1].toLowerCase() as Element }] },
   { id: 'replace-rubble', label: 'Replace an adjacent Rubble with your top site', re: /^replace an adjacent rubble with the top(?:most)? site of your atlas\.$/i,
     build: () => [{ op: 'replaceRubble', who: 'atTarget', range: 'adjacent' }] },
-  { id: 'choose-location', label: 'Target a location', re: /^target (?:a )?(nearby |adjacent )?location(?: up to (two|three) steps away)?\.$/i, build: (m) => [{ op: 'choose', who: 'atTarget', range: (m[1]?.trim() || m[2]?.toLowerCase() || 'any') as Effect['range'], targets: true }] },
+  { id: 'choose-location', label: 'Target a location', re: /^target (?:an? )?(nearby |adjacent )?location(?: up to (two|three) steps away)?\.$/i, build: (m) => [{ op: 'choose', who: 'atTarget', range: (m[1]?.trim() || m[2]?.toLowerCase() || 'any') as Effect['range'], targets: true }] },
   { id: 'damage-air-cast', label: 'Damage equal to the (A) on spells cast this turn', re: /^deal damage to another random unit there equal to the sum of \((A|E|F|W)\) on spells you'?ve cast this turn\.$/i,
     build: (m) => (m[1] === 'A' ? [{ op: 'damage', who: 'atTarget', refCell: true, random: 1, other: true, amount: 'airCastThisTurn' }] : null) },
   { id: 'flood-near-water', label: 'Flood a site near your body of water', re: /^flood a site near your body of water until you do so again\.$/i, build: () => [{ op: 'flood', who: 'atTarget', range: 'any' }] },
@@ -674,7 +722,7 @@ export const RULES: Rule[] = [
     build: (m) => { if (!m[2]) return [{ op: 'castRule', who: 'self', less2: manaOf(m[1]) }]; const w = condOf(m[2]); return w ? [{ op: 'castRule', who: 'self', less2: manaOf(m[1]), when: w }] : null; } },
   { id: 'cast-from-cemetery', label: 'May be cast from your cemetery', re: /^(?:you )?may (?:be )?cast(?: this(?: spell)?)? from your cemetery(, banishing it afterward)?\.$/i,
     build: (m) => [{ op: 'castRule', who: 'self', fromCemetery: true, ...(m[1] ? { banishAfter: true } : {}) }] },
-  { id: 'cast-by-ally', label: 'May be cast by any ally / an allied X', re: /^may be cast by (?:any ally|an allied (\w+)(?: or (\w+))?|(\w+) and (\w+))\.$/i,
+  { id: 'cast-by-ally', label: 'May be cast by any ally / an allied X', re: /^may be cast by (?:any ally|an? (?:allied )?(\w+)(?: or (\w+))?|(\w+) and (\w+))\.$/i,
     build: (m) => { const subs = [m[1], m[2], m[3], m[4]].filter(Boolean).map((x) => subOf(x!)); if (subs.some((x) => !x)) return null; return [{ op: 'castRule', who: 'self', byAlly: true, ...(subs.length ? { bySub: subs as string[] } : {}) }]; } },
   // deck-building rules apply when the deck is built (Decks screen), not during play
   // "may include any number of" is enforced by the deck builder (src/data/decks.ts copyLimit); "can't / must contain" is shown, not enforced
@@ -734,7 +782,7 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   if (bare && on === 'static') return { got: [{ op: 'grant', who: 'self', keyword: KEYWORDS.find((k) => k.toLowerCase() === bare[1].toLowerCase())!, until: 'permanent' }], rule: 'bare-keyword' };
   // wrappers that do not change what happens: "When it arrives, …", "… on arrival", "… if it is untapped"
   let w: RegExpMatchArray | null;
-  if ((w = sentence.match(/^(?:when it arrives|upon arrival|on arrival), (.+)$/i))) return matchSentence(cap(w[1]), on, type, top);
+  if ((w = sentence.match(/^(?:when it arrives|upon arrival|on arrival|just for fun), (.+)$/i))) return matchSentence(cap(w[1]), on, type, top);
   if ((w = sentence.match(/^(.+?) (?:on arrival|upon arrival|when it arrives|if (?:it is|it's) untapped|if able)\.$/i))) return matchSentence(w[1] + '.', on, type, top);
   // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
   if (/^can'?t (be |untap|attack|defend)|^is immune/i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
@@ -774,6 +822,10 @@ function condOf(t0: string, unless = false, during = false): Cond | null {
   else if (/^you have more life than (?:each|your) opponents?$/.test(t)) w = { k: 'moreLife' };
   else if (/^(?:this is |it'?s )?warded$/.test(t)) w = { k: 'warded' };
   else if (/^(?:it'?s |this is )?adjacent to an allied ward$/.test(t)) w = { k: 'adjacentWard' };
+  else if (/^(?:it'?s |this is )?stealthed$/.test(t)) w = { k: 'stealthed' };
+  else if (/^(?:it'?s |this is )?attacking$/.test(t)) w = { k: 'attacking' };
+  else if ((m = t.match(/^there are ([\w ]+?) in your cemetery$/))) { const kinds = m[1].split(/ or | and |, /).map((x) => x.trim()); const subs = kinds.map((x) => subOf(x)); const types = kinds.map((x) => ({ sites: 'Site', site: 'Site', minions: 'Minion', spells: 'spell' } as Record<string, string>)[x]);
+    if (kinds.every((x, i) => subs[i] || types[i])) w = { k: 'inCemetery', subs: subs.filter(Boolean) as string[], types: types.filter(Boolean) as string[] }; }
   else if (/^(?:there are )?no enemies are nearby$|^there are no enemies nearby$/.test(t)) w = { k: 'noEnemiesNearby' };
   else if (/^(?:you'?re|you are) on death'?s door$/.test(t)) w = { k: 'deathsDoor' };
   else if (/^you'?ve lost life this turn$/.test(t)) w = { k: 'lostLife' };
@@ -810,13 +862,13 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
   lines.forEach((raw0, lineNo) => {
     let raw = raw0;
     // "(A)(A)(A) — …": the ability needs that threshold (rulebook p18: symbols to the left of abilities)
-    const sym = raw.match(/^((?:\([AEFW]\))+)\s*(?:[—–]|-{1,2})\s*/);
+    const sym = raw.match(/^((?:\([AEFW]\))+)\s*(?:[—–]|-{1,2}|,)\s*/);
     if (sym) { const t: Partial<Thresholds> = {}; for (const ch of sym[1].match(/[AEFW]/g)!) { const el = ({ A: 'air', E: 'earth', F: 'fire', W: 'water' } as const)[ch as 'A']; t[el] = (t[el] ?? 0) + 1; } needs.set(lineNo, t); }
     // the card's own name means "this" — unless the name is a word used as a verb ("Teleport an ally …")
-    raw = raw.replace(/^(?:\([AEFW]\))+\s*(?:[—–]|-{1,2})\s*/, '');
+    raw = raw.replace(/^(?:\([AEFW]\))+\s*(?:[—–]|-{1,2}|,)\s*/, '');
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
     const parts = line.replace(/\.$/, '').split(/,\s*/);
-    const PASSIVE: Record<string, string> = { "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend", "can't attack or defend": "Can't attack", "immune to fire damage": 'Immune to fire damage' };
+    const PASSIVE: Record<string, string> = { "can't be disabled": "Can't be disabled", "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend", "can't attack or defend": "Can't attack", "immune to fire damage": 'Immune to fire damage' };
     const readable = (x: string) => !KEYWORD_LINE.test(x.trim()) && !PASSIVE[x.trim().toLowerCase().replace('’', "'")] && !!matchSentence(cap(x.trim()) + '.', 'static', type);
     if (parts.length > 1 && type !== 'Magic' && parts.every((x) => KEYWORD_LINE.test(x.trim()) || readable(x)) && parts.some(readable)) {
       const fx = parts.filter(readable).flatMap((x) => matchSentence(cap(x.trim()) + '.', 'static', type)!.got.map((e) => ({ ...e, on: 'static' as const, line: lineNo, text: x.trim(), rule: 'keyword-line', auto: true })));
@@ -831,7 +883,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       const fx = parts.map((x) => x.trim().match(LIMITED_SC)).filter(Boolean).map((mm) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: limitedSpellcaster(mm![1])!, until: 'permanent' as const, line: lineNo, text: mm![0], rule: 'limited-spellcaster', auto: true }));
       out.lines.push({ text: raw, on: fx.length ? 'static' : 'keywords', effects: fx, manual: [] }); out.effects.push(...fx); return;
     }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false; let discardCost = ''; let tapBearer = false; let tapAlly: '' | 'other' | 'any' = ''; let roll = 0; let holyWater = false; let thorns: number[] | null = null; let breakSt = false; let sacHere = false;
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false; let discardCost = ''; let tapBearer = false; let tapAlly: '' | 'other' | 'any' = ''; let roll = 0; let holyWater = false; let thorns: number[] | null = null; let breakSt = false; let sacHere = false; let oncePerGame = false; let banishOne = false; let slag = 0;
     if ((m = line.match(/^Genesis\s*&\s*Deathrite\s*→\s*(.+)$/i))) { on = 'genesis'; body = m[1]; both = true; }
     else if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
@@ -850,11 +902,15 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Bearer has [“"]Tap, Sacrifice this(?: \w+)* → Throw a projectile\. If it hits a minion, banish it if Evil, Ward it if not\.?[”"]\.?$/i))) { on = 'tap'; body = ''; tapBearer = true; sac = true; holyWater = true; }
     else if ((m = line.match(/^Bearer has \+(\d+) power, but it can'?t drop this \w+ and its controller loses (\d+) life at the end of their turn\.$/i))) { on = 'static'; body = ''; thorns = [+m[1], +m[2]]; }
     else if ((m = line.match(/^Whenever the (?:flame|this) stops at a new site,\s*(.+)$/i))) { on = 'stops'; ev = { self: true, newSite: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^Whenever (?:this|the \w+) leaves a site, it deals (\d+) damage to units there\.$/i))) { on = 'static'; body = ''; slag = +m[1]; }
     else if ((m = line.match(/^Whenever a minion enters an affected water site,\s*(.+)$/i))) { on = 'enters'; ev = { minion: true, affectedWater: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever this enters each corner of the realm for the first time,\s*(.+)$/i))) { on = 'enters'; ev = { self: true, corner: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Trap \((\d+)\)\s*→\s*(.+)$/i))) { on = 'trap'; cost = +m[1]; body = m[2]; } // Codex "Trap"
+    else if ((m = line.match(/^(?:([①-⑳]|\(\d+\))\s*,\s*)?Once (?:on your|per|each) turn\s*→\s*(.+)$/i))) { on = 'activated'; cost = m[1] ? manaOf(m[1]) : 0; body = m[2]; }
+    else if ((m = line.match(/^Once per game\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; oncePerGame = true; }
     else if ((m = line.match(/^Discard an? (spell|site|card)\s*→\s*(.+)$/i))) { on = 'activated'; body = m[2]; repeat = true; discardCost = m[1].toLowerCase(); }
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
+    else if ((m = line.match(/^Tap, Banish a dead minion\s*→\s*(.+)$/i))) { on = 'tap'; body = m[1]; banishOne = true; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^When(?:ever)? this is struck,\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
@@ -868,6 +924,21 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     const ss = sentences(body);
     for (let k = 0; k < ss.length; k++) {
       let sentence = ss[k];
+      // cards with a damage grid printed on them (src/data/grids.ts): the area sentence becomes the grid; the sentences
+      // that only set it up (choose a direction, where it flows from) are asked for by the grid's own pop-up line
+      if (GRIDS[name]) {
+        const g = GRIDS[name]; const base = { on, line: lineNo, rule: 'damage-grid', auto: true, ...(cost ? { cost } : {}) };
+        if (/^(?:choose (?:a|two different) (?:cardinal )?directions?(?: from (?:the caster|this))?|lava flows from the caster'?s site in a cardinal direction|this flows horizontally, from one edge of the realm to the other|you may break an allied ward to center this spell on that location instead of the caster'?s)\.$/i.test(sentence)) continue;
+        if (g.anchor === 'impact' && /^shoot a projectile\.$/i.test(sentence)) { rl.effects.push({ ...base, op: 'shoot', who: 'controller', n: 0, explode: true, text: sentence }); continue; }
+        if (/area of effect|affected (?:locations|sites)/i.test(sentence)) {
+          const pre: Omit<Effect, 'on'>[] = /^destroy target site and /i.test(sentence) ? [{ op: 'destroySite', who: 'atTarget', range: 'any', targets: true }] : [];
+          rl.effects.push(...pre.map((e) => ({ ...e, ...base, text: sentence })), { ...base, op: 'grid', who: 'controller', gridOf: name, text: sentence });
+          if (/^sacrifice this site to /i.test(sentence)) rl.effects.push({ ...base, op: 'destroySite', who: 'siteHere', isCost: true, text: 'Sacrifice this site' });
+          continue;
+        }
+      }
+      // "An ally strikes its site." + "Deal 2 damage to other units at nearby sites." (Ground Slam)
+      if (/^an ally strikes its site\.$/i.test(sentence) && /^deal (\d+) damage to other units at nearby sites\.$/i.test(ss[k + 1] ?? '')) { rl.effects.push({ on, op: 'groundSlam', who: 'target', only: 'ally', range: 'any', targets: false, n: +ss[k + 1].match(/(\d+)/)![1], line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'ground-slam', auto: true }); k++; continue; }
       // "Strike target adjacent enemy." + "If it's Evil, banish it instead." (Smite)
       if (/^if it'?s evil, banish it instead\.$/i.test(ss[k + 1] ?? '')) { const st = matchSentence(sentence, on, type); if (st && st.got.length === 1 && st.got[0].op === 'strike') { rl.effects.push({ ...st.got[0], on, evilBanish: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'strike-evil-banish', auto: true, ...(cost ? { cost } : {}) }); k++; continue; } }
       // Golden Dawn
@@ -937,6 +1008,11 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         const b = gl && a && b0 ? { got: b0.got.map((e) => (e.who === 'target' && !e.ref ? { ...e, ref: true } : e)), rule: b0.rule } : b0;
         if (a && b && on !== 'static') { const g = --altGroup; hit = { got: [...a.got.map((e) => ({ ...e, alt: { at: g, opt: 0 } })), ...b.got.map((e) => ({ ...e, alt: { at: g, opt: 1 } }))], rule: `either(${a.rule}|${b.rule})` }; }
       }
+      // "there" after a location was chosen on this line ("Target a location … Each unit there takes 2 damage") is that location
+      if (hit && /\bthere\b/i.test(sentence) && rl.effects.some((e) => e.who === 'atTarget')) {
+        const ONLY: Record<string, Effect['only'] | undefined> = { unitsHere: undefined, minionsHere: 'minion', enemiesHere: 'enemy', alliesHere: 'ally' };
+        hit = { ...hit, got: hit.got.map((e) => (e.who in ONLY ? { ...e, who: 'atTarget' as const, refCell: true, ...(ONLY[e.who] ? { only: ONLY[e.who] } : {}) } : e)) };
+      }
       // in a reaction about the card itself ("When this is struck, destroy it"), "it" is the card
       if (hit && on === 'static' && hit.got.some((e) => e.ref)) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined, targets: undefined } : e)) };
       if (hit && ev?.self) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined } : e)) };
@@ -946,6 +1022,10 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
     if (breakSt) rl.effects.forEach((e) => { e.breakStealth = true; });
+    if (oncePerGame) rl.effects.forEach((e) => { e.oncePerGame = true; });
+    if (slag) rl.effects.push({ on: 'static', op: 'grant', who: 'self', keyword: 'Burns where it leaves', n: slag, until: 'permanent', line: lineNo, text: raw, rule: 'slag', auto: true });
+    // "Tap, Banish a dead minion → …": banishing one dead minion (from any cemetery) is part of the cost
+    if (banishOne) rl.effects.unshift({ on, op: 'pick', who: 'controller', pick: { zones: ['anyCemetery'], take: 1, filter: { minion: true }, to: 'banish' }, isCost: true, line: lineNo, text: 'Banish a dead minion', rule: 'banish-dead-cost', auto: true });
     if (sacHere) rl.effects.unshift({ on, op: 'destroy', who: 'target', only: 'allyMinion', range: 'here', targets: false, isCost: true, repeat: true, line: lineNo, text: 'Sacrifice a minion here', rule: 'sacrifice-cost', auto: true });
     if (holyWater) rl.effects.push({ on, op: 'shoot', who: 'controller', n: 0, onHit: 'holyWater', sacrifice: true, line: lineNo, text: 'Throw a projectile: an Evil minion it hits is banished, any other minion is warded', rule: 'holy-water', auto: true });
     if (thorns) rl.effects.push({ on: 'static', op: 'buff', who: 'bearer', atk: thorns[0], def: thorns[0], until: 'permanent', line: lineNo, text: `Bearer has +${thorns[0]} power`, rule: 'thorns', auto: true },

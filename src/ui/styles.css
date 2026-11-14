@@ -654,3 +654,10 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 /* Airborne is shown by the floating animation; the text tag appears only when motion is reduced */
 .unit .region-tag.air { display: none; }
 @media (prefers-reduced-motion: reduce) { .unit .region-tag.air { display: inline-block; } }
+
+/* damage grid preview in the cast pop-up: the realm, 5 by 4, with the damage each square takes */
+.gridpick { display: grid; gap: 6px; margin-top: 4px; }
+.gridprev { display: grid; grid-template-columns: repeat(5, 26px); gap: 2px; }
+.gridprev span { height: 22px; border: 1px solid rgb(255 255 255 / .18); border-radius: 3px; display: grid; place-items: center; font-size: 12px; font-weight: 700; }
+.gridprev span.hit { background: rgb(255 120 60 / .55); }
+.gridprev span.anchor { outline: 2px solid var(--brass, #c9a95b); }

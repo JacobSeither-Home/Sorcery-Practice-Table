@@ -1,5 +1,6 @@
 // Plain-language labels for abilities, shared by the card library editor and the cast pop-up.
 import type { Effect, Op, Trigger, Who } from '../engine';
+import { GRIDS } from '../data/grids';
 
 export const TRIGGER_LABEL: Record<Trigger, string> = {
   cast: 'When cast', genesis: 'When it enters (Genesis)', deathrite: 'When it dies (Deathrite)', tap: 'Tap → (use any time on your turn)',
@@ -13,7 +14,7 @@ export const TRIGGER_SHORT: Record<Trigger, string> = {
   kills: 'When it kills', casts: 'When a spell is cast', stops: 'When it stops', trap: 'Trap',
 };
 export const OP_LABEL: Record<Op, string> = {
-  swap: 'Swap two units', gather: 'Call minions into the water', transform: 'Transform', discountHere: 'Cheaper Evil here', glory: 'Fight each enemy near it', becomeIfPicked: 'Become one of them', wardBoost: 'Break Wards for more damage', slide: 'Slide units', dealOut: 'Deal out spells to your back row', swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
+  grid: 'Damage grid', swapSites: 'Swap with an adjacent site', groundSlam: 'Ground slam', thinIce: 'Thin ice', destroyPerms: 'Destroy auras and artifacts at a location', swap: 'Swap two units', gather: 'Call minions into the water', transform: 'Transform', discountHere: 'Cheaper Evil here', glory: 'Fight each enemy near it', becomeIfPicked: 'Become one of them', wardBoost: 'Break Wards for more damage', slide: 'Slide units', dealOut: 'Deal out spells to your back row', swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
   control: 'Gain control', castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
@@ -22,7 +23,7 @@ export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
   opponent: 'your opponent', self: 'this unit', alliesHere: 'each ally here', unitsHere: 'each unit here', minionsHere: 'each minion here', enemiesNearby: 'each enemy nearby',
   alliesNearby: 'each ally nearby', unitsNearby: 'each unit nearby', allMinions: 'every minion', enemyMinions: 'every enemy minion', allyMinions: 'every allied minion',
-  allAvatars: 'both Avatars', bearer: 'the bearer', allyUnits: 'every ally (your Avatar too)', enemyUnits: 'every enemy (their Avatar too)', alliesInBody: 'each ally in its body of water or span of land', restHereFront: 'other minions at rest here or one step in front of it', summoned: 'the units it just brought in', subjectController: 'its controller', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
+  allAvatars: 'both Avatars', bearer: 'the bearer', allyUnits: 'every ally (your Avatar too)', enemyUnits: 'every enemy (their Avatar too)', alliesInBody: 'each ally in its body of water or span of land', restHereFront: 'other minions at rest here or one step in front of it', summoned: 'the units it just brought in', nearHit: 'each unit at or next to where it hit', subjectController: 'its controller', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
 };
 /** Which "applies to" choices make sense for an op. */
 export function whoFor(op: Op): Who[] {
@@ -90,6 +91,11 @@ export function describe(e: Effect): string {
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
     case 'moveAura': return 'Move this aura one step, to a neighbouring joint';
+    case 'grid': return `Damage on the card's grid${GRIDS[e.gridOf ?? '']?.turn && GRIDS[e.gridOf ?? '']!.turn !== 'fixed' ? ', turned the way you choose' : ''}: ${(GRIDS[e.gridOf ?? '']?.cells ?? []).map((x) => x[2]).filter(Boolean).sort((a, b) => b - a).filter((x, i, a) => a.indexOf(x) === i).join('/')} damage`;
+    case 'swapSites': return 'This site trades places with a chosen adjacent site, everything on both moving with them';
+    case 'groundSlam': return `A chosen ally strikes its own site, then ${e.n ?? 2} damage to other units at nearby sites`;
+    case 'thinIce': return `If minions atop this site total ${e.n ?? 5} or more power, they are submerged`;
+    case 'destroyPerms': return 'Destroy every aura and artifact at the chosen location';
     case 'swap': return 'Two chosen units trade places';
     case 'gather': return 'Minions next to the chosen water site step into it, then all minions there are submerged';
     case 'transform': return 'The chosen ally becomes the copy of this card from your hand';

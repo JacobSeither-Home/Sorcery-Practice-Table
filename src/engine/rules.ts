@@ -5,6 +5,7 @@ import {
   type Action, type CardDef, type CardFilter, type Check, type Choice, type Zone, type DeckList, type Effect, type GameState, type Loc, type ManualOp,
   type Element, type PlayerId, type PlayerState, type Queued, type Source, type Thresholds, type Trigger, type Unit, CELLS, COLS, ELEMENTS, ROWS,
 } from './types';
+import { GRIDS, gridSquares } from '../data/grids';
 
 // ---------- helpers ----------
 export const other = (p: PlayerId): PlayerId => (p === 0 ? 1 : 0);
@@ -128,6 +129,9 @@ export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc 
     case 'inVoid': r = !!at && !s.sites[at.c]; break;
     case 'adjacentAlly': r = !!at && Object.values(s.units).some((u) => u.owner === p && u.id !== self && sameRegion(s, u, at) && [at.c, ...orthAdjacent(at.c)].includes(u.c) && (subOk(unitCard(s, u)) || (!!w.sub && has(s, u, w.sub)))); break;
     case 'noEnemiesHere': r = !!at && !Object.values(s.units).some((u) => u.owner !== p && u.c === at.c); break;
+    case 'stealthed': r = !!me && hasStealth(s, me); break;
+    case 'attacking': r = !!me && s.attacking === me.id; break;
+    case 'inCemetery': r = s.players[p].cemetery.some((i) => { const cd = cardOf(s, i); return (w.types ?? []).some((t) => (t === 'spell' ? cd.type !== 'Site' : cd.type === t)) || (w.subs ?? []).some((x) => cd.subtypes.some((y) => y.toLowerCase() === x.toLowerCase())); }); break;
     case 'noEnemiesNearby': r = !!at && !Object.values(s.units).some((u) => u.owner !== p && sameRegion(s, u, at) && nearby(at.c).includes(u.c)); break;
     case 'adjacentWard': r = !!at && (Object.values(s.units).some((u) => u.owner === p && u.id !== self && warded(s, u) && sameRegion(s, u, at) && [at.c, ...orthAdjacent(at.c)].includes(u.c)) || [at.c, ...orthAdjacent(at.c)].some((c) => s.sites[c]?.owner === p && !!s.sites[c]?.ward)); break;
   }
@@ -262,8 +266,10 @@ export function bonus(s: GameState, u: Unit): Bonus {
 let disabledDepth = 0;
 export function isDisabled(s: GameState, u: Unit): boolean {
   const k = unitCard(s, u).keywords;
+  if (u.mods?.some((m) => m.kw === "Can't be disabled") || /(?:^|\n|,\s*)can'?t be disabled\b/i.test(unitCard(s, u).rules.split('\n').find((l) => /^[^.]*,/.test(l) || l.length < 40) ?? '')) { if (!k.includes('Disabled')) return false; }
   if ((k.includes('Disabled') && !u.released) || (!u.released && /^disabled until an adjacent spellcaster taps to release/im.test(unitCard(s, u).rules)) || (u.mods?.some((m) => m.kw === 'Disabled') && !unmodifiable(unitCard(s, u)))) return true;
   if (u.belly && s.units[u.belly]) return true; // swallowed
+  if (/(?:^|\n|,\s*)Outerbound\b/.test(unitCard(s, u).rules) && !isOuter(u.c)) return true; // Codex "Outerbound"
   // disabled by another card's always-on text ("Other minions at rest here … are disabled")
   if (!u.avatar && disablers(s) && disabledDepth === 0) { disabledDepth++; try { if (bonus(s, u).kws.includes('Disabled')) return true; } finally { disabledDepth--; } }
   if (k.includes('Waterbound') && !isWater(s, u.c)) return true;
@@ -362,6 +368,7 @@ export function clone(s: GameState): GameState {
     ...(s.ongoing ? { ongoing: s.ongoing.slice() } : {}),
     ...(s.busy ? { busy: s.busy.slice() } : {}),
     ...(s.floods ? { floods: s.floods.slice() } : {}),
+    ...(s.usedGame ? { usedGame: { ...s.usedGame } } : {}),
     ...(s.gone ? { gone: { ...s.gone } } : {}),
     ...(s.goneAt ? { goneAt: { ...s.goneAt } } : {}),
   };
@@ -453,6 +460,18 @@ function gainLife(s: GameState, p: PlayerId, n: number) {
 }
 /** Codex "Ward": a warded unit or site is protected once from damage, destruction, or being targeted by the opponent; the Ward breaks instead. */
 export const warded = (s: GameState, u: Unit) => !!u.ward && !isDisabled(s, u) && !isEvil(s, u);
+/** Codex "Outerbound": an outer square has fewer than four adjacent squares. */
+export const isOuter = (c: number) => orthAdjacent(c).length < 4;
+/** Codex "Protected from X": X can't target, damage, destroy, banish, modify, move or impede the unit. `fromUnit`: the effect
+ *  comes from a unit (a strike, or a unit's own ability). */
+export function protectedFrom(s: GameState, u: Unit, src: CardDef | undefined, fromUnit: boolean): boolean {
+  if (!src) return false;
+  const kws = anyStatic(s) ? bonus(s, u).kws : (u.mods ?? []).map((m) => m.kw ?? '');
+  if (kws.includes('Protected from sites') && src.type === 'Site') return true;
+  if (kws.includes('Protected from magic') && src.type === 'Magic') return true;
+  if (kws.includes('Protected from all but units') && !fromUnit) return true;
+  return false;
+}
 /** Codex "Evil": a minion that is an Undead, Demon or Monster (or says Evil). Codex "Ward": Evil minions can't be warded. */
 export function isEvil(s: GameState, u: Unit): boolean {
   if (u.avatar) return false;
@@ -508,7 +527,7 @@ function afterPrevention(s: GameState, u: Unit, n: number, from?: DmgFrom): numb
     return true;
   };
   const visit = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
-    for (const e of d.effects) if (e.op === 'prevent' && e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && applies(e)) n = e.less === undefined ? 0 : Math.max(0, n - e.less);
+    for (const e of d.effects) if (e.op === 'prevent' && e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && applies(e) && condHolds(s, e.when, p, at, self ?? bearer)) n = e.less === undefined ? 0 : Math.max(0, n - e.less);
   };
   for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !isDisabled(s, v)) visit(d, v.owner, v, v.id); }
   for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) visit(d, m.owner, { c: m.c, r: 'surface' }, undefined, m.carrier); }
@@ -520,6 +539,11 @@ function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: Dm
   if (n0 <= 0 || !s.units[u.id]) return;
   if (killer && s.units[killer.id]) killer.stealthLost = true; // Codex "Interact": dealing damage (even if prevented) ends Stealth
   if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
+  if (protectedFrom(s, u, from?.unit ? unitCard(s, from.unit) : from?.card, !!from?.unit)) { log(s, `${unitCard(s, u).name} is protected: no damage.`, null); return; }
+  // Gnarled Laborers: "Untaps the first time they take damage each turn."
+  if (u.tapped && has(s, u, 'Untaps when first damaged each turn') && u.untapTurn !== s.turn) { u.tapped = false; u.untapTurn = s.turn; log(s, `${unitCard(s, u).name} untaps.`, null); }
+  // Smoldering Hollow: "Damage dealt to nearby units is increased by 1 this turn."
+  if (anyStatic(s)) { const more = bonus(s, u).kws.filter((k) => k === 'Takes 1 more damage').length; if (more) n0 += more; }
   // Enduring Faith: "it takes damage for its nearby allies instead" (until your next turn)
   if (!from?.redirected) { const g = Object.values(s.units).find((x) => x.id !== u.id && x.owner === u.owner && x.mods?.some((m) => m.kw === 'Takes damage for nearby allies') && sameRegion(s, x, u) && nearby(x.c).includes(u.c));
     if (g) { log(s, `${unitCard(s, g).name} takes the damage for ${unitCard(s, u).name}.`, null); damageUnit(s, g, n0, lethal, { ...from, redirected: true }); return; } }
@@ -570,7 +594,7 @@ function squareInRange(from: number, to: number, range: Effect['range']): boolea
   return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => !!e.alt || e.op === 'slide' || e.op === 'wardBoost' || (e.op === 'pull' && e.dest !== 'body') || e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => (e.op === 'grid' && !!GRIDS[e.gridOf ?? '']?.turn && GRIDS[e.gridOf ?? '']!.turn !== 'fixed') || !!e.alt || e.op === 'swapSites' || e.op === 'groundSlam' || e.op === 'slide' || e.op === 'wardBoost' || (e.op === 'pull' && e.dest !== 'body') || e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number, viewer?: PlayerId): boolean {
   if (e.sub?.length && !subMatch(s, u, e.sub, viewer)) return false;
@@ -595,7 +619,8 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins0: Loc[], p
     if (e.siteKind && (!s.sites[c]?.inst || (e.siteKind === 'water') !== isWater(s, c))) continue;
     if (e.op === 'destroySite' && !s.sites[c]?.inst) continue;
     if (e.inBody && !origins.some((o) => bodyOfKind(s, o.c, 'water').includes(c))) continue;
-    if (e.notHere && origins.some((o) => o.c === c)) continue; // "in this body of water"
+    if (e.notHere && origins.some((o) => o.c === c)) continue;
+    if (e.allySite && (s.sites[c]?.owner !== p || !s.sites[c]?.inst)) continue; // "in this body of water"
     if (e.op === 'rubble' && s.sites[c]) continue;
     if (e.op === 'replaceRubble' && !(s.sites[c] && !s.sites[c]!.inst)) continue;
     if (e.op === 'flood' && !s.sites[c]?.inst) continue;
@@ -617,7 +642,7 @@ export function teleportCells(s: GameState, e: Effect, u: Unit | undefined, from
     if (c === u.c) continue;
     switch (e.dest) {
       case 'site': if (s.sites[c]?.inst) out.push(c); break;
-      case 'adjacent': if (orthAdjacent(u.c).includes(c) && enterable(c) && (!e.inBody || !from || bodyOfKind(s, from.c, 'water').includes(c))) out.push(c); break;
+      case 'adjacent': if (orthAdjacent(u.c).includes(c) && enterable(c) && (!e.siteKind || (s.sites[c]?.inst && (e.siteKind === 'water') === isWater(s, c))) && (!e.inBody || !from || bodyOfKind(s, from.c, 'water').includes(c))) out.push(c); break;
       case 'toward': if (from && orthAdjacent(u.c).includes(c) && enterable(c) && dist(c, from.c) < dist(u.c, from.c)) out.push(c); break;
       case 'closestEvil': { // "step toward the closest Evil" (Persecutor): a step that gets nearer to the nearest Evil minion
         const evil = Object.values(s.units).filter((x) => x.id !== u.id && isEvilFor(s, x, u.owner)); if (!evil.length) break;
@@ -626,7 +651,7 @@ export function teleportCells(s: GameState, e: Effect, u: Unit | undefined, from
       case 'adjacentVoid': if (orthAdjacent(u.c).includes(c) && !s.sites[c] && !u.avatar) out.push(c); break; // "pull it into a void it's adjacent to"
       case 'away': if (from && orthAdjacent(u.c).includes(c) && enterable(c) && dist(c, from.c) > dist(u.c, from.c)) out.push(c); break;
       case 'here': case 'caster': case 'random': case 'to': break;
-      default: if (nearby(u.c).includes(c) && enterable(c) && !(u.avatar && !s.sites[c])) out.push(c);
+      default: if (nearby(u.c).includes(c) && enterable(c) && !(u.avatar && !s.sites[c]) && (!e.siteOnly || !!s.sites[c]?.inst)) out.push(c);
     }
   }
   return out;
@@ -640,10 +665,11 @@ export function shotDirs(s: GameState, p: PlayerId, from: Loc, steps = 9): [numb
  *  direction within the same region and stops at the first square holding a unit it can hit, ignoring the shooter,
  *  allies at its starting square, and Stealthed minions (p34 "Stealth"). Returns every unit it could hit there:
  *  when there are several, the shooter chooses. */
-export function projectileCandidates(s: GameState, p: PlayerId, from: Loc, dx: number, dy: number, steps: number, self?: string): Unit[] {
+export function projectileCandidates(s: GameState, p: PlayerId, from: Loc, dx: number, dy: number, steps: number, self?: string, wrapY = false): Unit[] {
   const [x, y] = xy(from.c); const region = regionOf(s, from);
   for (let i = 0; i <= steps; i++) {
-    const c = cell(x + dx * i, y + dy * i); if (c < 0) return [];
+    if (wrapY && i >= ROWS) return []; // "May shoot across the top and bottom edges": once round, no further
+    const c = cell(x + dx * i, wrapY ? (((y + dy * i) % ROWS) + ROWS) % ROWS : y + dy * i); if (c < 0) return [];
     const there = Object.values(s.units).filter((e) => e.c === c && regionOf(s, e) === region && e.id !== self && !(i === 0 && e.owner === p) && !hasStealth(s, e));
     if (there.length) return there.sort((a, b) => Number(a.owner === p) - Number(b.owner === p)); // enemies listed first
   }
@@ -666,6 +692,7 @@ export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, ori
   return Object.values(s.units).filter((u) => {
     if (targeted && u.owner !== p && hasStealth(s, u)) return false; // Codex "Stealth": cannot be targeted by the opponent
     if (targeted && d.type === 'Magic' && has(s, u, "Can't be targeted by magic")) return false;
+    if (targeted && protectedFrom(s, u, d, !!self && d.type === 'Minion')) return false;
     if ((e.op === 'destroy' || e.op === 'banish' || e.op === 'bounce') && u.avatar) return false;
     switch (e.only) {
       case 'minion': if (u.avatar) return false; break;
@@ -713,6 +740,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.op === 'pull' && e.dest !== 'body') { const v = c?.target ? s.units[c.target] : undefined; if (c?.cell === undefined || !isWater(s, c.cell)) return no('Choose a water site.'); if (!v || v.r !== 'surface' || !orthAdjacent(c.cell).includes(v.c)) return no('Choose an aboveground unit next to that water site.'); }
     if (e.op === 'slide' && (!c?.dir || c.dir[1] !== 0 || Math.abs(c.dir[0]) !== 1)) return no('Choose left or right.');
     if (e.op === 'roll' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose which way to push it.');
+    if (e.op === 'shoot' && e.distinctDirs && c?.dirs && new Set(c.dirs.map((x) => x.join())).size !== c.dirs.length) return no('Each projectile goes in a different direction.', 'Projectile');
     if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
     if (e.op === 'chain' && c?.chain?.length) {
       const k = chainBase(d, idx, i); let prev = k !== undefined ? ch[k]?.target : undefined; const used = [prev];
@@ -807,6 +835,7 @@ function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
 function entryBlocked(s: GameState, u: Unit, c: number, ground = true): boolean {
   const st = s.sites[c]; if (!st?.inst) return false;
   // a site's own rule, or one from a minion standing on it ("Allies can't enter this site")
+  if (protectedFrom(s, u, cardOf(s, st.inst), false)) return false; // Protected from sites: they can't impede it
   const holders = [cardOf(s, st.inst), ...Object.values(s.units).filter((x) => x.c === c && x.id !== u.id).map((x) => unitCard(s, x))];
   return holders.some((hd) => hd.effects.some((e) => e.on === 'static' && e.noEnter && (!e.noEnter.ground || (ground && !has(s, u, 'Airborne'))) && (!e.noEnter.occupied || Object.values(s.units).some((x) => x.id !== u.id && !x.avatar && x.c === c && x.r === 'surface')) && (e.noEnter.minPower === undefined || powerValue(s, u) >= e.noEnter.minPower)
     && (!e.noEnter.side || (e.noEnter.side === 'ally' ? u.owner === st.owner : u.owner !== st.owner))));
@@ -823,6 +852,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
   const shielded = new Set<string>(); // targets a Ward protected: the rest of the effect on them does not resolve
   let discardedCost = 0; // "damage equal to the discarded card's mana cost"
   let lastHit: string | undefined; // the unit a projectile on this line hit
+  let hitAt: Loc | undefined; // where it hit
   for (const i of idx) {
     const e = d.effects[i]; const c = ch[i] ?? undefined;
     if (s.phase === 'over') return;
@@ -870,6 +900,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'allyMinions': victims = all.filter((u) => !u.avatar && u.owner === p); break;
       case 'allyUnits': victims = all.filter((u) => u.owner === p); break;
       case 'summoned': victims = lastNew.map((k) => s.units[k]).filter(Boolean); break;
+      case 'nearHit': victims = hitAt ? all.filter((u) => sameRegion(s, u, hitAt!) && [hitAt!.c, ...orthAdjacent(hitAt!.c)].includes(u.c)) : []; break;
       case 'enemyUnits': victims = all.filter((u) => u.owner !== p); break;
       case 'atTarget': victims = c2?.cell === undefined ? [] : all.filter((u) => u.c === c2.cell && (u.r === 'surface' || !loc || u.r === loc.r)); break;
     }
@@ -878,6 +909,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       if (e.only === 'enemy' || e.only === 'enemyMinion') victims = victims.filter((u) => u.owner !== p);
       if (e.only === 'ally' || e.only === 'allyMinion') victims = victims.filter((u) => u.owner === p);
       if (e.other) victims = victims.filter((u) => u.id !== self && u.id !== castBy);
+      if (['destroy', 'banish', 'bounce', 'teleport', 'buff', 'grant', 'tap', 'sink', 'swallow', 'control'].includes(e.op)) victims = victims.filter((u) => { const pr = protectedFrom(s, u, d, !!self && d.type === 'Minion'); if (pr) log(s, `${nm(u)} is protected from ${d.name}.`, p); return !pr; });
       victims = victims.filter((u) => fits(s, e, u, undefined, undefined, p) && !(e.notKw && has(s, u, e.notKw)));
       if (e.random && victims.length > e.random) { const pick: Unit[] = []; const pool = victims.slice(); while (pick.length < e.random && pool.length) pick.push(pool.splice(Math.floor(rand(s) * pool.length), 1)[0]); victims = pick; }
     }
@@ -891,7 +923,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'strike': {
         const me = self ? s.units[self] : bearer ? s.units[bearer] : s.units[castBy ?? s.players[p].avatar]; if (!me) break; // magic: the caster strikes
         for (const v of victims) { if (!s.units[v.id] && !v.avatar) continue;
-          if (e.evilBanish && isEvilFor(s, v, p)) { log(s, `${nm(v)} is Evil: ${d.name} banishes it instead.`, p); removeUnit(s, v, 'banish', d.name); continue; } log(s, `${nm(me)} strikes ${nm(v)} for ${power(s, me)}.`, p); me.stealthLost = true; damageUnit(s, v, power(s, me), has(s, me, 'Lethal') && !v.avatar, { unit: me }); }
+          if (e.evilBanish && isEvilFor(s, v, p)) { log(s, `${nm(v)} is Evil: ${d.name} banishes it instead.`, p); removeUnit(s, v, 'banish', d.name); continue; } const dmg = e.dice ? 1 + Math.floor(rand(s) * e.dice) : power(s, me); log(s, `${nm(me)} strikes ${nm(v)} for ${dmg}${e.dice ? ` (rolled on a D${e.dice})` : ''}.`, p); me.stealthLost = true; damageUnit(s, v, dmg, has(s, me, 'Lethal') && !v.avatar, { unit: me }); }
         break;
       }
       case 'shoot': {
@@ -918,7 +950,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
           const dv = e.aimEach && c.dirs?.[k] ? c.dirs[k] : c.dir;
           const hit = projectileHit(s, p, loc, dv[0], dv[1], e.steps ?? 9, self, k === 0 ? c.hit : undefined);
           if (!hit) { log(s, `${d.name}'s projectile hits nothing.`, p); break; }
-          lastHit = hit.id;
+          lastHit = hit.id; hitAt = { c: hit.c, r: hit.r };
+          if (e.explode) { log(s, `${d.name} explodes on ${nm(hit)}.`, p); continue; }
           if (e.onHit === 'holyWater') { if (hit.avatar) { log(s, `${d.name} hits ${nm(hit)}: no effect on an Avatar.`, p); continue; } if (isEvilFor(s, hit, p)) { log(s, `${d.name} hits ${nm(hit)}: it is Evil and is banished.`, p); removeUnit(s, hit, 'banish', d.name); } else { hit.ward = true; log(s, `${d.name} hits ${nm(hit)}: it gains a Ward.`, p); } continue; }
           if (e.drag) { log(s, `${d.name}'s projectile hits ${nm(hit)} and drags it here.`, p); if (self) s.units[self].stealthLost = true; hit.c = loc.c; hit.r = loc.r; react(s, 'enters', hit); continue; } // Codex "Forced Movement"
           const at: Loc = { c: hit.c, r: hit.r };
@@ -1023,6 +1056,46 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         log(s, k > 1 ? `${d.name} rolls ${k - 1} square${k > 2 ? 's' : ''}.` : `${d.name} can't roll that way.`, p);
         break;
       }
+      case 'swapSites': { if (!loc || c2?.cell === undefined || !orthAdjacent(loc.c).includes(c2.cell) || !s.sites[c2.cell] || siteFixed(s, loc.c) || siteFixed(s, c2.cell)) break;
+        const a1 = loc.c, b1 = c2.cell; const sa = s.sites[a1], sb = s.sites[b1];
+        for (const u of Object.values(s.units)) { if (u.c === a1) u.c = b1; else if (u.c === b1) u.c = a1; }
+        for (const m of s.perms) if (m.kind === 'artifact' && !m.carrier) { if (m.c === a1) m.c = b1; else if (m.c === b1) m.c = a1; }
+        s.sites[a1] = sb; s.sites[b1] = sa; log(s, `${d.name} trades places with the site next to it.`, p); break; } // rulebook p28: things on a moving site go with it
+      case 'groundSlam': { const ally = c?.target ? s.units[c.target] : undefined; if (!ally) break; const st = s.sites[ally.c];
+        if (st?.inst && st.owner !== null) { log(s, `${nm(ally)} strikes its site.`, p); if (st.ward) { st.ward = false; log(s, "The site's Ward breaks.", p); } else loseLife(s, st.owner, power(s, ally)); }
+        for (const v of Object.values(s.units).filter((x) => x.id !== ally.id && s.sites[x.c] && sameRegion(s, x, ally) && nearby(ally.c).includes(x.c))) { log(s, `${d.name} deals ${n} damage to ${nm(v)}.`, p); damageUnit(s, v, n, false, { card: d }); }
+        break; }
+      case 'thinIce': { if (!loc) break; const on = Object.values(s.units).filter((x) => !x.avatar && x.c === loc!.c && x.r === 'surface');
+        if (on.reduce((t, x) => t + power(s, x), 0) >= n) for (const v of on) { v.r = 'under'; log(s, `The ice breaks: ${nm(v)} is submerged.`, p); if (!canOperate(s, v, regionOf(s, v))) { log(s, `${nm(v)} can't survive underwater and dies (rulebook p13).`, p); killUnit(s, v, true); } }
+        break; }
+      case 'grid': {
+        const g = GRIDS[e.gridOf ?? d.name]; if (!g) break;
+        const prevCell = idx.slice(0, idx.indexOf(i)).reverse().map((k) => ch[k]?.cell).find((x) => x !== undefined);
+        const casterU = castBy ? s.units[castBy] : self ? s.units[self] : undefined;
+        let at: Loc | null = g.anchor === 'caster' ? (casterU ? { c: casterU.c, r: casterU.r } : loc) : g.anchor === 'target' ? (prevCell !== undefined ? { c: prevCell, r: 'surface' } : null) : g.anchor === 'impact' ? hitAt ?? null : g.anchor === 'edge' ? { c: 0, r: 'surface' } : loc;
+        // Holy Nova: "You may break an allied Ward to center this spell on that location instead of the caster's."
+        if (d.name === 'Holy Nova' && c?.target && s.units[c.target]?.owner === p && warded(s, s.units[c.target])) { const w = s.units[c.target]; breakWard(s, w, `${d.name} centres on it`); at = { c: w.c, r: w.r }; }
+        if (!at) { log(s, `${d.name}: nothing to centre the area on.`, p); break; }
+        const [ax, ay] = xy(at.c);
+        const dirs = g.arms ? (c?.dirs?.length ? c.dirs.slice(0, g.arms) : ([[0, -1], [1, 0]] as [number, number][])) : [c?.dir ?? ([0, -1] as [number, number])];
+        const hits = new Map<number, number>();
+        for (const dv of dirs) for (const q of gridSquares(g, { x: ax, y: ay }, dv, !!c?.flip, COLS, ROWS)) { const k = cell(q.x, q.y); hits.set(k, Math.max(hits.get(k) ?? 0, q.n)); }
+        const exclude = g.other ? [castBy, self].filter(Boolean) : [];
+        for (const [sq, dmg] of hits) {
+          if (!dmg && !g.disable) continue;
+          for (const v of Object.values(s.units).filter((u) => u.c === sq)) {
+            if (exclude.includes(v.id)) continue;
+            if (g.layers === 'sitesBoth' ? !s.sites[sq] : g.layers === 'sitesSurface' ? !(s.sites[sq] && v.r === 'surface') : !sameRegion(s, v, g.anchor === 'edge' ? { c: sq, r: 'surface' } : at)) continue;
+            if (g.only === 'minion' && v.avatar) continue; if (g.only === 'enemy' && v.owner === p) continue;
+            if (dmg) { log(s, `${d.name} deals ${dmg} damage to ${nm(v)}.`, p); damageUnit(s, v, dmg, !!g.lethal && !v.avatar, { card: d, ...(self && s.units[self] ? { unit: s.units[self] } : {}) }); }
+            if (g.disable && s.units[v.id]) { (v.mods ??= []).push({ atk: 0, def: 0, kw: 'Disabled', next: p, from: d.name }); v.stealthLost = true; }
+          }
+        }
+        break;
+      }
+      case 'destroyPerms': { if (c2?.cell === undefined) break; // Codex "Dispel": an aura that dies is dispelled
+        for (const m of [...s.perms]) if ((m.kind === 'artifact' && m.c === c2.cell) || (m.kind === 'aura' && auraArea(m.c).includes(c2.cell))) { s.perms.splice(s.perms.indexOf(m), 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); log(s, `${d.name} destroys ${cardOf(s, m.inst).name}.`, p); }
+        break; }
       case 'swap': { const a2 = c?.target ? s.units[c.target] : undefined, b2 = c?.chain?.[0] ? s.units[c.chain[0]] : undefined;
         if (a2 && b2 && a2.id !== b2.id) { const [ac, ar] = [a2.c, a2.r]; a2.c = b2.c; a2.r = b2.r; b2.c = ac; b2.r = ar; log(s, `${d.name}: ${nm(a2)} and ${nm(b2)} trade places.`, p); react(s, 'enters', a2); react(s, 'enters', b2); }
         break; }
@@ -1089,8 +1162,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       }
       case 'ongoing': {
         if (!loc || !e.fx?.length) break;
-        (s.ongoing ??= []).push({ id: `o${s.nextId++}`, p, from: d.name, loc: { ...loc, ...(src && 'site' in src ? { site: true } : {}) }, fx: e.fx, next: p });
-        log(s, `${d.name}: ${e.text ?? 'an effect'} (until ${pname(p)}'s next turn).`, p);
+        (s.ongoing ??= []).push({ id: `o${s.nextId++}`, p, from: d.name, loc: { ...loc, ...(src && 'site' in src ? { site: true } : {}) }, fx: e.fx, next: p, ...(e.thisTurn ? { turn: s.turn } : {}) });
+        log(s, `${d.name}: ${e.text ?? 'an effect'} (${e.thisTurn ? 'this turn' : `until ${pname(p)}'s next turn`}).`, p);
         break;
       }
       case 'chain': {
@@ -1176,12 +1249,14 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         break;
       }
       case 'destroySite': {
-        const st = c?.cell !== undefined ? s.sites[c.cell] : null;
+        const cc = e.who === 'siteHere' && loc ? { ...(c ?? {}), cell: loc.c } : c; // "Sacrifice this site"
+        const st = cc?.cell !== undefined ? s.sites[cc.cell] : null;
         if (!st?.inst) break;
-        if (siteFixed(s, c!.cell!)) { log(s, `${cardOf(s, st.inst).name} can't be destroyed.`, p); break; }
+        if (siteFixed(s, cc!.cell!) && !e.isCost) { log(s, `${cardOf(s, st.inst).name} can't be destroyed.`, p); break; }
+        if (e.isCost) { s.players[st.owner ?? p].cemetery.push(st.inst); s.sites[cc!.cell!] = { inst: null, owner: null }; log(s, `${pname(p)} sacrifices ${cardOf(s, st.inst).name}; Rubble is left.`, p); break; } // Codex "Sacrifice"
         if (st.ward) { st.ward = false; log(s, `The site's Ward breaks instead (${d.name}).`, p); break; }
         s.players[Number(st.inst[0]) as PlayerId].cemetery.push(st.inst); log(s, `${d.name} destroys ${cardOf(s, st.inst).name}; it leaves Rubble.`, p);
-        s.sites[c!.cell!] = { inst: null, owner: null };
+        s.sites[cc!.cell!] = { inst: null, owner: null };
         break;
       }
       case 'mill': { const pl = s.players[p]; const deck = e.deck ?? 'spellbook'; const top = pl[deck].splice(0, n); pl.cemetery.push(...top); log(s, `${pname(p)} discards the top ${top.length} of the ${deck}: ${top.map((x) => cardOf(s, x).name).join(', ') || 'nothing'}.`, p); break; }
@@ -1205,7 +1280,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.keyword === 'Ward') { for (const v of victims) { if (isEvil(s, v)) { log(s, `${nm(v)} is Evil and can't be warded (${d.name}).`, p); continue; } v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
         if (e.keyword === 'Lance' && e.on !== 'static') { for (const v of victims) { v.lance = true; log(s, `${nm(v)} takes up a Lance (${d.name}).`, p); } break; }
         if (e.keyword === 'Branded') { for (const v of victims) { (v.mods ??= []).push({ atk: 0, def: 0, kw: `Branded by ${p}`, turn: s.turn, from: d.name }); log(s, `${d.name} brands ${nm(v)}: ${pname(p)}'s cards treat it as Evil this turn.`, p); } break; }
-        if (e.keyword === 'Disabled') for (const v of victims) v.stealthLost = true;
+        if (e.keyword === 'Disabled') { const keep = victims.filter((v) => { const no2 = has(s, v, "Can't be disabled"); if (no2) log(s, `${nm(v)} can't be disabled.`, p); return !no2; }); victims.length = 0; victims.push(...keep); for (const v of victims) v.stealthLost = true; }
         if (e.keyword === 'Stealth') for (const v of victims) if (!v.avatar) v.stealthLost = false; // Codex "Stealth": gaining Stealth gives a mark // Codex "Stealth": a minion that becomes disabled loses its Stealth mark
         for (const v of victims) {
           if (e.keyword === 'Movement') { (v.mods ??= []).push({ atk: 0, def: 0, move: e.n ?? 1, ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name }); log(s, `${nm(v)} gets Movement +${e.n ?? 1} (${d.name}).`, p); continue; }
@@ -1388,9 +1463,10 @@ function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
     return canOperate(s, u, rf === 'surface' ? rt : rf);
   }
   const [x1, y1] = xy(from.c), [x2, y2] = xy(to.c);
-  const dx = Math.abs(x1 - x2);
+  const allEdges = has(s, u, 'Wraps all edges');
+  const dx = allEdges && Math.abs(x1 - x2) === COLS - 1 ? 1 : Math.abs(x1 - x2);
   // Codex "As If Connected": a unit that moves as if the top and bottom edges were connected steps from one to the other
-  const dy = has(s, u, 'Wraps top and bottom') && Math.abs(y1 - y2) === ROWS - 1 ? 1 : Math.abs(y1 - y2);
+  const dy = (allEdges || has(s, u, 'Wraps top and bottom')) && Math.abs(y1 - y2) === ROWS - 1 ? 1 : Math.abs(y1 - y2);
   if (dx > 1 || dy > 1) return false;
   if (has(s, u, 'Moves only sideways') && dy !== 0) return false; // Sedge Crabs
   // Codex "Forward": away from your starting edge, relative to the controller (Dalcean Phalanx)
@@ -1461,7 +1537,8 @@ export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const queue: { at: Loc; path: Loc[]; cost: number }[] = [{ at: start, path: [], cost: 0 }];
   while (queue.length) {
     const { at: from, path, cost } = queue.shift()!;
-    const wrap = has(s, u, 'Wraps top and bottom') ? [cell(xy(from.c)[0], (xy(from.c)[1] + 1) % ROWS), cell(xy(from.c)[0], (xy(from.c)[1] + ROWS - 1) % ROWS)] : [];
+    const [fx0, fy0] = xy(from.c); const all4 = has(s, u, 'Wraps all edges');
+    const wrap = all4 || has(s, u, 'Wraps top and bottom') ? [cell(fx0, (fy0 + 1) % ROWS), cell(fx0, (fy0 + ROWS - 1) % ROWS), ...(all4 ? [cell((fx0 + 1) % COLS, fy0), cell((fx0 + COLS - 1) % COLS, fy0)] : [])] : [];
     const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...[...new Set([...nearby(from.c), ...wrap])].filter((c) => c !== from.c).flatMap((c) => [{ c, r: 'surface' as const }, { c, r: 'under' as const }])];
     for (const to of cands) {
       if (!stepOk(s, u, from, to)) continue;
@@ -1752,7 +1829,9 @@ export function check(s: GameState, a: Action): Check {
       } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`, 'Activated ability');
       const cost = e.cost ?? 0;
       if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`, 'Mana');
+      for (const i of effectsOn(d, e.on, a.fx)) { const ce = d.effects[i]; if (ce.isCost && ce.op === 'pick' && (!pickOptions(s, p, d, ce).length || !(a.choices?.[i]?.cards?.length))) return no(pickOptions(s, p, d, ce).length ? 'Choose the dead minion to banish for the cost.' : 'That ability\'s cost is to banish a dead minion, and no cemetery has one.', 'Banish'); }
       for (const i of effectsOn(d, e.on, a.fx)) { const ce = d.effects[i]; if (ce.isCost && ce.op === 'discard' && !pl.hand.some((x) => (ce.deck === 'atlas' ? cardOf(s, x).type === 'Site' : ce.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true))) return no(`That ability's cost is to discard a ${ce.deck === 'atlas' ? 'site' : ce.deck === 'spellbook' ? 'spell' : 'card'}, and you have none in hand.`, 'Discard'); }
+      if (e.oncePerGame && s.usedGame?.[`${srcKey(a.src)}:${e.line ?? a.fx}`]) return no(`${d.name}'s ability can be used once per game, and it has been.`, 'Activated ability');
       if (e.breakStealth && !(src.unit && hasStealth(s, src.unit))) return no(`${d.name}'s ability costs its Stealth mark, and it has none.`, 'Stealth');
       if (!needMet(s, p, e)) return no(`That ability needs ${ELEMENTS.filter((el) => e.need![el]).map((el) => `${e.need![el]} ${el}`).join(' and ')} threshold, from the element symbols on sites you control.`, 'Threshold');
       if (e.banishDead && !pl.cemetery.some((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0)) return no(`You have no dead ${e.banishDead} minions to banish.`);
@@ -1829,7 +1908,7 @@ export function check(s: GameState, a: Action): Check {
 /** Codex "Projectile": it starts at the shooter's location (allies there are ignored) and stops at the
  *  first unit it reaches, ally or enemy. Stealthed minions are not hit. Ranged X: it stops after X steps. */
 /** Ranged X: a projectile that stops after X steps (rulebook p34 "Ranged X"). */
-export const shotCandidates = (s: GameState, u: Unit, dx: number, dy: number) => projectileCandidates(s, u.owner, { c: u.c, r: u.r }, dx, dy, rangedOf(s, u), u.id);
+export const shotCandidates = (s: GameState, u: Unit, dx: number, dy: number) => projectileCandidates(s, u.owner, { c: u.c, r: u.r }, dx, dy, rangedOf(s, u), u.id, has(s, u, 'Shoots across top and bottom'));
 function shotTarget(s: GameState, u: Unit, dx: number, dy: number, pick?: string): Unit | null {
   const there = shotCandidates(s, u, dx, dy); return there.find((e) => e.id === pick) ?? there[0] ?? null;
 }
@@ -1922,6 +2001,7 @@ export function apply(state: GameState, a: Action): GameState {
         else if ('perm' in a.src) { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); if (m) m.tapped = true; }
         else if ('site' in a.src) s.sites[a.src.site]!.tapped = true;
       } else (s.used ??= {})[`${srcKey(a.src)}:${e.line ?? a.fx}`] = s.turn;
+      if (e.oncePerGame) (s.usedGame ??= {})[`${srcKey(a.src)}:${e.line ?? a.fx}`] = true;
       if (e.on === 'trap' && 'site' in a.src) { const st = s.sites[a.src.site]!; st.inst = st.trap!; delete st.trap; log(s, `${pname(p)} springs a trap: ${d.name}!`, p); }
       if (src.unit && s.units[src.unit.id]) s.units[src.unit.id].stealthLost = true; // Codex "Interact" / rulebook p34: activating a special ability ends Stealth
       if (e.cost) pl.mana -= e.cost;
@@ -1960,6 +2040,8 @@ export function apply(state: GameState, a: Action): GameState {
         if (!s.sites[to.c] && s.sites[from.c]?.inst && cardOf(s, s.sites[from.c]!.inst!).effects.some((e) => e.keyword === 'Void gate') && !u.mods?.some((m) => m.void)) (u.mods ??= []).push({ atk: 0, def: 0, kw: 'Voidwalk', void: true, from: cardOf(s, s.sites[from.c]!.inst!).name });
         if (s.sites[to.c] && u.mods?.some((m) => m.void)) { u.mods = u.mods.filter((m) => !m.void); if (!u.mods.length) delete u.mods; }
         if (u.mods?.some((m) => m.kw?.startsWith('Trail of fire') && m.turn === s.turn)) (trail ??= []).push(from);
+        // Slag Slug: "Whenever the Slug leaves a site, it deals 2 damage to units there."
+        { const burn = unitCard(s, u).effects.find((e) => e.keyword === 'Burns where it leaves'); if (burn && s.sites[from.c] && to.c !== from.c) for (const v of Object.values(s.units).filter((x) => x.id !== u.id && x.c === from.c)) { log(s, `${unitCard(s, u).name} burns ${unitCard(s, v).name} for ${burn.n ?? 2} as it leaves.`); damageUnit(s, v, burn.n ?? 2, false, { unit: u }); } }
         u.c = to.c; u.r = to.r; took++; passed.push({ ...to });
         if (to.c !== from.c) react(s, 'enters', u);
       }
@@ -1981,6 +2063,7 @@ export function apply(state: GameState, a: Action): GameState {
         if (!s.units[u.id] || (a.attack.unit && !s.units[a.attack.unit])) break;
         const what = a.attack.site ? 'the site' : unitCard(s, s.units[a.attack.unit!]).name;
         log(s, `${unitCard(s, u).name} ${a.path.length ? 'moves and ' : ''}attacks ${what}.`);
+        s.attacking = u.id;
         s.pending = { kind: 'defend', by: other(p), attacker: u.id, loc: at, target: a.attack };
         if (!responders(s).length) resolvePending(s, [], false);
       } else {
@@ -2030,6 +2113,7 @@ export function apply(state: GameState, a: Action): GameState {
         m.turns = (m.turns ?? 0) + 1;
         if (m.turns >= n) { s.perms.splice(s.perms.indexOf(m), 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); log(s, `${cardOf(s, m.inst).name} is dispelled (it lasted ${n} turns).`, p); }
       }
+      if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.turn === undefined); if (!s.ongoing.length) delete s.ongoing; } // "this turn" effects end (p16 End Phase step 3)
       // Rulebook p16 End Phase step 2: "Players remove all damage from their minions" — both players, not just the active one.
       for (const u of Object.values(s.units)) { if (!u.avatar) u.damage = 0; if (u.mods?.some((m) => m.turn !== undefined)) { u.mods = u.mods.filter((m) => m.turn === undefined); if (!u.mods.length) delete u.mods; } }
       pl.mana = 0;
@@ -2043,7 +2127,7 @@ export function apply(state: GameState, a: Action): GameState {
   // "Nearby enemies permanently lose Stealth" (Scent Hounds): the mark is gone for good
   for (const u of Object.values(s.units)) if (!u.stealthLost && (unitCard(s, u).keywords.includes('Stealth') || u.mods?.some((m) => m.kw === 'Stealth')) && anyStatic(s) && bonus(s, u).kws.includes('Loses Stealth')) u.stealthLost = true;
   for (const u of Object.values(s.units)) if (u.belly) { const f = s.units[u.belly]; if (f) { u.c = f.c; u.r = f.r; } else { delete u.belly; log(s, `${unitCard(s, u).name} is free again.`, u.owner); } }
-  if (!s.pending && !s.queue?.length) delete s.busy; // everyone is at rest again once the storyline is empty
+  if (!s.pending && !s.queue?.length) { delete s.busy; delete s.attacking; } // everyone is at rest again once the storyline is empty
   followControl(s);
   followMana(s);
   // carried artifacts go where their bearer goes; if the bearer is gone they stay where it fell
@@ -2103,6 +2187,7 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
     if (e.op === 'draw' && !e.deck) base[i] = { ...(base[i] ?? {}), deck: 'spellbook' };
     if (e.op === 'pull' && e.dest !== 'body') { const cl = cellsFor(s, d, i, origins, p).find((x) => Object.values(s.units).some((u) => u.owner !== p && u.r === 'surface' && orthAdjacent(x).includes(u.c))); if (cl === undefined) return []; base[i] = { cell: cl, target: Object.values(s.units).find((u) => u.owner !== p && u.r === 'surface' && orthAdjacent(cl).includes(u.c))!.id }; continue; }
     if (e.op === 'slide') { base[i] = { dir: [p === 0 ? 1 : -1, 0] }; continue; }
+    if (e.op === 'grid') { const g = GRIDS[e.gridOf ?? d.name]; if (g?.arms) base[i] = { dirs: [[0, p === 0 ? -1 : 1], [1, 0]] }; else if (g && g.turn !== 'fixed') base[i] = { dir: [0, p === 0 ? -1 : 1] }; }
     if (e.op === 'moveSite') { const cl = origins[0] ? siteMoveCells(s, origins[0].c) : []; if (!cl.length) return []; base[i] = { cell: cl[0] }; }
     if (e.op === 'moveAura') base[i] = e.optional ? { skip: true } : { cell: origins[0] ? auraSteps(origins[0].c)[0] : undefined }; // the AI leaves its auras where they are
     if (e.who === 'atTarget' && !e.refCell && !['damage', 'destroy', 'banish', 'strike', 'tap', 'sink', 'choose'].includes(e.op)) { const cl = cellsFor(s, d, i, origins); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }
