@@ -24,6 +24,7 @@ for (let g = 0; g < games; g++) {
   let s = E.createGame(pool, decks, 7000 + g); let n = 0;
   try {
     while (s.phase !== 'over' && n++ < 1200) {
+      if (process.env.TRACE) process.stderr.write(`g${g} n${n} t${s.turn}\r`);
       const a = await chooseAction(s, n % 3 ? 'easy' : 'medium', 15);
       if (!a) throw new Error(`no legal action (phase ${s.phase}, queue ${s.queue?.length ?? 0}, pending ${!!s.pending})`);
       if (a.t === 'cast' || a.t === 'ability' || a.t === 'trigger') { const inst = a.t === 'cast' ? a.inst : a.t === 'ability' ? E.sourceOf(s, a.src)?.inst : s.queue?.[0]?.inst; if (inst) { const nm = E.cardOf(s, inst).name; used.set(nm, (used.get(nm) ?? 0) + 1); } }

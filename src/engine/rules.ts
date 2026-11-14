@@ -262,7 +262,7 @@ export function bonus(s: GameState, u: Unit): Bonus {
 let disabledDepth = 0;
 export function isDisabled(s: GameState, u: Unit): boolean {
   const k = unitCard(s, u).keywords;
-  if ((k.includes('Disabled') && !u.released) || (u.mods?.some((m) => m.kw === 'Disabled') && !unmodifiable(unitCard(s, u)))) return true;
+  if ((k.includes('Disabled') && !u.released) || (!u.released && /^disabled until an adjacent spellcaster taps to release/im.test(unitCard(s, u).rules)) || (u.mods?.some((m) => m.kw === 'Disabled') && !unmodifiable(unitCard(s, u)))) return true;
   if (u.belly && s.units[u.belly]) return true; // swallowed
   // disabled by another card's always-on text ("Other minions at rest here … are disabled")
   if (!u.avatar && disablers(s) && disabledDepth === 0) { disabledDepth++; try { if (bonus(s, u).kws.includes('Disabled')) return true; } finally { disabledDepth--; } }
@@ -1421,7 +1421,7 @@ export function followUps(s: GameState, u: Unit): Action[] {
   return out;
 }
 /** A unit that "is disabled until an adjacent Spellcaster taps to release" it (Shackled Demon, Bind Evil). */
-export const shackled = (s: GameState, u: Unit) => (!u.released && unitCard(s, u).keywords.includes('Disabled') && /until an adjacent spellcaster taps to release/i.test(unitCard(s, u).rules)) || !!u.mods?.some((m) => m.release);
+export const shackled = (s: GameState, u: Unit) => (!u.released && /^disabled until an adjacent spellcaster taps to release/im.test(unitCard(s, u).rules)) || !!u.mods?.some((m) => m.release);
 /** Spellcasters of player p that could tap now to release unit u. */
 export function releasers(s: GameState, p: PlayerId, u: Unit): Unit[] {
   if (!shackled(s, u)) return [];
@@ -2040,6 +2040,8 @@ export function apply(state: GameState, a: Action): GameState {
   }
   // Order of the White Wing: "If a minion would be summoned nearby and it wasn't cast from hand, banish it."
   for (const u of Object.values(s.units)) if (!before.has(u.id) && !u.avatar && u.inst !== fromHand && Object.values(s.units).some((w) => w.id !== u.id && !isDisabled(s, w) && unitCard(s, w).effects.some((e) => e.on === 'static' && e.keyword === 'Banishes minions summoned nearby') && sameRegion(s, w, u) && nearby(w.c).includes(u.c))) removeUnit(s, u, 'banish', 'Order of the White Wing: not cast from hand');
+  // "Nearby enemies permanently lose Stealth" (Scent Hounds): the mark is gone for good
+  for (const u of Object.values(s.units)) if (!u.stealthLost && (unitCard(s, u).keywords.includes('Stealth') || u.mods?.some((m) => m.kw === 'Stealth')) && anyStatic(s) && bonus(s, u).kws.includes('Loses Stealth')) u.stealthLost = true;
   for (const u of Object.values(s.units)) if (u.belly) { const f = s.units[u.belly]; if (f) { u.c = f.c; u.r = f.r; } else { delete u.belly; log(s, `${unitCard(s, u).name} is free again.`, u.owner); } }
   if (!s.pending && !s.queue?.length) delete s.busy; // everyone is at rest again once the storyline is empty
   followControl(s);

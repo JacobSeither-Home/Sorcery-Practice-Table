@@ -820,3 +820,14 @@ describe('Traps (Codex "Trap")', () => {
     expect(check(s, { t: 'ability', src: { site: cell(2, 3) }, fx: 0, choices: [{ target: foe }] }).ok).toBe(false); // already sprung
   });
 });
+
+describe('printed keywords', () => {
+  it('keeps only the keywords a card prints, not ones its text mentions (Scent Hounds, Hailstriker)', async () => {
+    const { printedKeywords } = await import('../src/engine/cards');
+    expect(printedKeywords('Nearby enemies permanently lose Stealth.', ['Stealth'])).toEqual([]);
+    expect(printedKeywords('Ranged\n\nGenesis → Target an adjacent location. Each minion there takes 1 damage and is disabled until your next turn.', ['Genesis', 'Disabled', 'Ranged'])).toEqual(['Genesis', 'Ranged']);
+    expect(printedKeywords('Ranged 3, Stealth\n\nLethal while Stealthed.', ['Lethal', 'Ranged', 'Stealth'])).toEqual(['Ranged', 'Stealth']);
+    expect(printedKeywords('If Spire Lich is atop a Tower, it has +2 power, Ranged, and Spellcaster.', ['Ranged', 'Spellcaster'])).toEqual([]);
+    expect(printedKeywords('Airborne, Fire Spellcaster', ['Airborne', 'Spellcaster'])).toEqual(['Airborne', 'Spellcaster']);
+  });
+});

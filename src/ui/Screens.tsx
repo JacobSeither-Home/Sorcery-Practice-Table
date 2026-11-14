@@ -9,7 +9,7 @@ import { CARDS_URL, type SyncDiff, diffCards, fetchCards } from '../data/cardSyn
 import { type ArtReport, OFFICIAL_ART_FOLDER, orderVariants, variantBlob, variantLabel, fromFileList, importArt, importZips, pickFolder, pickZips, rememberedFolder, rememberedZips, supportsFilePicker, supportsFolderPicker } from '../data/artSync';
 import { artDb } from '../data/db';
 import { COLLECTION_MAX, RARITIES, RARITY_LIMIT, constructedLegal, copiesOf, copyLimit, deckChecks, parseDeckText, playable } from '../data/decks';
-import { type FeedbackItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
+import { type FeedbackItem, CLOSED, STATUSES as FB_STATUSES, editItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
 import { CardFace, STATUS_CARDS, hoverProps } from './CardFace';
 import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, uploadCatalog, useAuth } from '../cloud/cloud';
 import { Preview, TableOptions } from './Table';
@@ -93,21 +93,22 @@ export function Setup() {
 
 // ---------------------------------------------------------------- shared card search
 function useSearch(pool: Record<string, CardDef>, types?: CardType[]) {
-  const [q, setQ] = useState(''); const [type, setType] = useState<string>(''); const [rarity, setRarity] = useState<string>(''); const [set, setSet] = useState<string>('');
+  const [q, setQ] = useState(''); const [type, setType] = useState<string>(''); const [rarity, setRarity] = useState<string>(''); const [set, setSet] = useState<string>(''); const [auto, setAuto] = useState<'' | 'auto' | 'open'>('');
   // the sets the synced cards were printed in, in the order the card data first mentions them
   const sets = useMemo(() => [...new Set(Object.values(pool).flatMap((c) => (c.printings ?? []).map((p) => p.set).filter(Boolean)))] as string[], [pool]);
   const zoom = useStore((s) => s.settings.zoom ?? 1); const setSettings = useStore((s) => s.setSettings);
   const list = useMemo(() => {
     const k = q.trim().toLowerCase();
-    return Object.values(pool).filter((c) => (!types || types.includes(c.type)) && (!type || c.type === type) && (!rarity || c.rarity === rarity) && (!set || (c.printings ?? []).some((p) => p.set === set)) && (!k || c.name.toLowerCase().includes(k) || c.rules.toLowerCase().includes(k) || c.subtypes.join(' ').toLowerCase().includes(k)))
+    return Object.values(pool).filter((c) => (!types || types.includes(c.type)) && (!type || c.type === type) && (!rarity || c.rarity === rarity) && (!set || (c.printings ?? []).some((p) => p.set === set)) && (!auto || (auto === 'open') === c.effects.some((e) => e.op === 'manual')) && (!k || c.name.toLowerCase().includes(k) || c.rules.toLowerCase().includes(k) || c.subtypes.join(' ').toLowerCase().includes(k)))
       .sort((x, y) => x.name.localeCompare(y.name));
-  }, [pool, q, type, rarity, set]);
+  }, [pool, q, type, rarity, set, auto]);
   const bar = (
     <div className="searchbar">
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, rules text or subtype" aria-label="Search cards" />
       <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Card type"><option value="">All types</option>{['Avatar', 'Site', 'Minion', 'Magic', 'Aura', 'Artifact'].map((t) => <option key={t}>{t}</option>)}</select>
       <select value={rarity} onChange={(e) => setRarity(e.target.value)} aria-label="Rarity"><option value="">All rarities</option>{RARITIES.map((r) => <option key={r} value={r}>{r} (up to {RARITY_LIMIT[r]})</option>)}</select>
       {sets.length > 0 && <select value={set} onChange={(e) => setSet(e.target.value)} aria-label="Set" data-tip="Cards printed in this set"><option value="">All sets</option>{sets.map((x) => <option key={x}>{x}</option>)}</select>}
+      <select value={auto} onChange={(e) => setAuto(e.target.value as '' | 'auto' | 'open')} aria-label="Rules automation" data-tip="Cards whose text the table carries out by itself, or that still have a part to do by hand"><option value="">Any rules status</option><option value="open">Not fully automated</option><option value="auto">Fully automated</option></select>
       <label className="zoom" data-tip="Card size"><span aria-hidden>−</span><input type="range" min={0.6} max={3} step={0.1} value={zoom} onChange={(e) => setSettings({ zoom: Number(e.target.value) })} aria-label="Card size" /><span aria-hidden>+</span></label>
       <span className="count">{list.length.toLocaleString()} cards</span>
     </div>
@@ -409,7 +410,7 @@ export function Settings() {
     return { tokens: tokens.length, tokensWithArt: tokens.filter((c) => v[c.id]).length, tokensMissing: tokens.filter((c) => !v[c.id]).map((c) => c.name), withArt: apiCards.filter((c) => v[c.id]).length, images: ids.reduce((n, id) => n + v[id].length, 0), alts: ids.filter((id) => v[id].length > 1).length };
   }, [st.artVariants, apiCards]);
   // feedback
-  const [items, setItems] = useState<FeedbackItem[]>([]); const [kind, setKind] = useState<'wish' | 'problem'>('wish');
+  const [items, setItems] = useState<FeedbackItem[]>([]); const [showClosed, setShowClosed] = useState(false); const [editing, setEditing] = useState<{ id: string; title: string; details: string; status: FeedbackItem['status'] } | null>(null); const [kind, setKind] = useState<'wish' | 'problem'>('wish');
   const [title, setTitle] = useState(''); const [details, setDetails] = useState(''); const [diag, setDiag] = useState(true); const [fbNote, setFbNote] = useState('');
   const auth = useAuth();
   const [access, setAccess] = useState<AccessRow[]>([]); const [newEmail, setNewEmail] = useState(''); const [newNote, setNewNote] = useState(''); const [accNote, setAccNote] = useState('');
@@ -529,11 +530,22 @@ export function Settings() {
           </div>
           {fbNote && <p className="note">{fbNote}</p>}
         </form>
-        <ul className="fblist">{items.map((it) => (
+        {items.some((it) => CLOSED.includes(it.status)) && <label className="switch"><input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> Show closed entries ({items.filter((it) => CLOSED.includes(it.status)).length})</label>}
+        <ul className="fblist">{items.filter((it) => showClosed || !CLOSED.includes(it.status)).map((it) => (
           <li key={it.id} className={it.kind}>
-            <span className={`st ${it.status}`}>{it.status.replace('_', ' ')}</span><b>{it.kind === 'wish' ? 'Wish' : 'Problem'}: {it.title}</b>
-            <small>{it.submitted_by ?? 'anonymous'}, {new Date(it.created_at).toLocaleDateString()}{it.synced ? '' : ', on this device only'}</small>
-            {it.details && <p>{it.details}</p>}{it.response && <p className="resp">Response: {it.response}</p>}
+            {editing?.id === it.id ? (
+              <form className="fb" onSubmit={async (e) => { e.preventDefault(); try { setItems(await editItem(it.id, { title: editing.title, details: editing.details, ...(auth.admin ? { status: editing.status } : {}) }, await feedbackRemote())); setEditing(null); setFbNote('Saved.'); } catch (err) { setFbNote((err as Error).message); } }}>
+                <label className="field"><span>Title</span><input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required /></label>
+                <label className="field"><span>Details</span><textarea rows={3} value={editing.details} onChange={(e) => setEditing({ ...editing, details: e.target.value })} /></label>
+                {auth.admin && <label className="field inline"><span>Status</span><select value={editing.status} onChange={(e) => setEditing({ ...editing, status: e.target.value as FeedbackItem['status'] })}>{FB_STATUSES.map((x) => <option key={x} value={x}>{x.replace('_', ' ')}</option>)}</select></label>}
+                <div className="row"><button type="button" onClick={() => setEditing(null)}>Cancel</button><button className="primary" type="submit">Save changes</button></div>
+              </form>
+            ) : (<>
+              <span className={`st ${it.status}`}>{it.status.replace('_', ' ')}</span><b>{it.kind === 'wish' ? 'Wish' : 'Problem'}: {it.title}</b>
+              <small>{it.submitted_by ?? 'anonymous'}, {new Date(it.created_at).toLocaleDateString()}{it.synced ? '' : ', on this device only'}</small>
+              {it.details && <p>{it.details}</p>}{it.response && <p className="resp">Response: {it.response}</p>}
+              {(!it.synced || auth.admin || LOCAL_ONLY) && <button className="ghost" onClick={() => setEditing({ id: it.id, title: it.title, details: it.details, status: it.status })}>Edit</button>}
+            </>)}
           </li>
         ))}</ul>
         {!items.length && <p className="note">Nothing yet.</p>}

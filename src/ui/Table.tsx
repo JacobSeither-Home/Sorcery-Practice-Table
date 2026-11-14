@@ -561,7 +561,7 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
   const life = u.avatar ? s.players[u.owner].life : def - u.damage;
   const disabled = isDisabled(s, u);
   const below = u.r === 'under' ? (isWater(s, u.c) ? 'Submerged' : 'Burrowed') : ''; const flying = !u.avatar && u.r !== 'under' && has(s, u, 'Airborne');
-  const tags = [flying ? 'Airborne' : '', below, warded(s, u) ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
+  const tags = [below, warded(s, u) ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
     ...new Set((u.mods ?? []).map((m) => m.kw ?? '').filter(Boolean))].filter(Boolean);
   const lanceCard = u.lance ? Object.values(s.cards).find((c) => c.name === 'Lance' && c.category === 'Token') : undefined;
   return (
@@ -680,7 +680,11 @@ function useHerald(g: Game, s: GameState, hot: boolean, pace: number, waiting: b
     for (const u of Object.values(s.units)) {
       const pu = prev.units[u.id];
       if (!pu) marks.set(u.c, 'to');
-      else if (pu.c !== u.c) { trails.push([pu.c, u.c]); if (!marks.has(pu.c)) marks.set(pu.c, 'from'); marks.set(u.c, 'to'); }
+      else if (pu.c !== u.c) {
+        // a teleport (or any jump of more than one square) is not a walk: mark where it left and arrived, no trail
+        const [x1, y1] = xy(pu.c), [x2, y2] = xy(u.c); const jumped = Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2)) > 1 || lines.some((l) => /teleports/.test(l) && l.includes(unitCard(s, u).name));
+        if (!jumped) trails.push([pu.c, u.c]); if (!marks.has(pu.c)) marks.set(pu.c, 'from'); marks.set(u.c, 'to');
+      }
       if (pu && u.damage > pu.damage) marks.set(u.c, 'hit');
     }
     for (const pu of Object.values(prev.units)) if (!s.units[pu.id]) marks.set(pu.c, 'hit');

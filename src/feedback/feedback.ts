@@ -50,4 +50,16 @@ export async function pushPending(remote: Remote): Promise<FeedbackItem[]> {
   await saveLocal(items);
   return items;
 }
+/** Change an entry after it was saved: locally, and on the server when it was sent there (admins may edit any entry). */
+export async function editItem(id: string, patch: Partial<Pick<FeedbackItem, 'title' | 'details' | 'status' | 'response'>>, remote: Remote | null): Promise<FeedbackItem[]> {
+  const items = await loadLocal(); const it = items.find((x) => x.id === id); if (!it) return items;
+  Object.assign(it, patch);
+  if (remote && it.synced) {
+    const res = await fetch(`${table(remote)}?id=eq.${encodeURIComponent(id)}`, { method: 'PATCH', headers: { ...headers(remote), prefer: 'return=minimal' }, body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }) });
+    if (!res.ok) throw new Error(`The server did not accept the change (${res.status}). Only an administrator can edit entries that were already sent.`);
+  }
+  await saveLocal(items);
+  return items;
+}
+export const CLOSED: FeedbackItem['status'][] = ['complete', 'infeasible', 'duplicate'];
 export function exportJson(items: FeedbackItem[]): string { return JSON.stringify({ app: 'sorcery-practice-table', exported_at: new Date().toISOString(), items }, null, 2); }

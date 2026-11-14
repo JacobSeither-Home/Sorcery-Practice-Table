@@ -31,6 +31,21 @@ export function keywordNumber(rules: string, word: 'Movement' | 'Ranged'): numbe
 // Hand-entered effects (Card library) always take precedence.
 export function effectsFromText(type: CardType, rules: string, name = ''): Effect[] { return readRules(type, rules, name).effects; }
 
+/** The keywords a card actually prints. The API's keyword list also names keywords the text only mentions
+ *  (Scent Hounds "…lose Stealth", Hailstriker "…is disabled", Accursed Tower "Break nearby Wards"), which would give
+ *  the card those keywords itself. A keyword counts as printed when it stands on its own in a comma-separated part
+ *  of a line ("Airborne, Movement +2", "Ranged 3, Stealth", "Fire Spellcaster"), or starts a Genesis / Deathrite line. */
+export function printedKeywords(rules: string, api: string[]): string[] {
+  const lines = rules.replace(/\r/g, '').split('\n').map((l) => l.trim().replace(/^(?:\([AEFW]\))+\s*(?:[—–]|-{1,2})\s*/, '')).filter(Boolean);
+  // a keyword line: every comma part is a short phrase ("Stealth, Can't be disabled"), not a sentence ("If …, it has +2 power, Ranged, and …")
+  const parts = lines.map((l) => l.replace(/\.$/, '').split(/,\s*/).map((x) => x.trim().toLowerCase())).filter((ps) => ps.every((x) => x.split(/\s+/).length <= 4 && !/^(and|or) /.test(x))).flat();
+  return api.filter((k) => {
+    const kl = k.toLowerCase();
+    if ((k === 'Genesis' || k === 'Deathrite') && lines.some((l) => new RegExp(`^(?:genesis\\s*&\\s*)?${kl}\\b`, 'i').test(l))) return true;
+    return parts.some((x) => x === kl || new RegExp(`^(?:(?:air|earth|fire|water)(?: and (?:air|earth|fire|water))? |non-\\w+ )?${kl}(?:\\s*\\+?\\s*\\d+)?$`).test(x));
+  });
+}
+
 export interface NormalizeReport { cards: CardDef[]; unknownFields: string[]; skipped: string[] }
 
 export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[]> = {}): NormalizeReport {
@@ -52,7 +67,7 @@ export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[
       continue;
     }
     const rules = str(e.rules);
-    const keywords = arr(e.keywords);
+    const keywords = printedKeywords(rules, arr(e.keywords));
     const printingsRaw = Array.isArray(o.printings) ? (o.printings as Record<string, unknown>[]) : [];
     for (const p of printingsRaw) if (p && typeof p === 'object') for (const k of Object.keys(p)) if (!KNOWN_PRINTING.includes(k)) unknown.add('printings.' + k);
     const first = printingsRaw[0] as { meta?: { typeline?: unknown } } | undefined;
