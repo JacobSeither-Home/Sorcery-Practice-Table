@@ -602,6 +602,8 @@ export const RULES: Rule[] = [
     build: () => [{ op: 'teleport', who: 'target', ref: true, dest: 'adjacentVoid', move: 'drag' }] },
   { id: 'transform-from-hand', label: 'Transform an ally … into this from your hand', re: /^transform an ally(?: with (\w+))? into this from your hand\.$/i,
     build: (m) => [{ op: 'transform', who: 'target', only: 'allyMinion', range: 'any', targets: false, ...(m[1] ? { kw: KEYWORDS.find((k) => k.toLowerCase() === m[1].toLowerCase()) } : {}) }] },
+  { id: 'token-where-died', label: 'Summon a <token> where it died', re: /^summon an? (skeleton|foot soldier|frog) token where it died\.$/i,
+    build: (m) => [{ op: 'summon', who: 'controller', n: 1, token: m[1].replace(/\b\w/g, (c) => c.toUpperCase()), places: 'whereDied' }] },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -668,8 +670,8 @@ export const RULES: Rule[] = [
     build: (m) => { if (!m[2]) return [{ op: 'castRule', who: 'self', less2: manaOf(m[1]) }]; const w = condOf(m[2]); return w ? [{ op: 'castRule', who: 'self', less2: manaOf(m[1]), when: w }] : null; } },
   { id: 'cast-from-cemetery', label: 'May be cast from your cemetery', re: /^(?:you )?may (?:be )?cast(?: this(?: spell)?)? from your cemetery(, banishing it afterward)?\.$/i,
     build: (m) => [{ op: 'castRule', who: 'self', fromCemetery: true, ...(m[1] ? { banishAfter: true } : {}) }] },
-  { id: 'cast-by-ally', label: 'May be cast by any ally / an allied X', re: /^may be cast by (?:any ally|an allied (\w+)(?: or (\w+))?)\.$/i,
-    build: (m) => { const subs = [m[1], m[2]].filter(Boolean).map((x) => subOf(x!)); if (subs.some((x) => !x)) return null; return [{ op: 'castRule', who: 'self', byAlly: true, ...(subs.length ? { bySub: subs as string[] } : {}) }]; } },
+  { id: 'cast-by-ally', label: 'May be cast by any ally / an allied X', re: /^may be cast by (?:any ally|an allied (\w+)(?: or (\w+))?|(\w+) and (\w+))\.$/i,
+    build: (m) => { const subs = [m[1], m[2], m[3], m[4]].filter(Boolean).map((x) => subOf(x!)); if (subs.some((x) => !x)) return null; return [{ op: 'castRule', who: 'self', byAlly: true, ...(subs.length ? { bySub: subs as string[] } : {}) }]; } },
   // deck-building rules apply when the deck is built (Decks screen), not during play
   // "may include any number of" is enforced by the deck builder (src/data/decks.ts copyLimit); "can't / must contain" is shown, not enforced
   { id: 'deckbuilding', label: 'Deck-building rule', re: /^your (?:spellbook|atlas|deck) (?:may include any number of|can'?t contain|must contain) .+\.$/i, build: () => [] },
@@ -851,7 +853,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) (?:takes damage|is damaged),\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^When(?:ever)? this is struck,\s*(.+)$/i))) { on = 'damaged'; ev = { self: true }; body = cap(m[1]); }
-    else if ((m = line.match(/^Whenever (?:this|bearer) (?:attacks and )?kills (?:an? (?:enemy|minion|unit)|an enemy minion),\s*(.+)$/i))) { on = 'kills'; ev = { self: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^Whenever (?:this|bearer) (?:attacks and )?kills? (?:an? (?:enemy|minion|unit)|an enemy minion),\s*(.+)$/i))) { on = 'kills'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^(?:Whenever|After) (this|bearer|an? (?:nearby |enemy )?avatar|an enemy|your opponent|an opponent) casts? (?:a |an )?(spell|magic(?: spell)?),\s*(.+)$/i))) { on = 'casts'; ev = /this|bearer/i.test(m[1]) ? { self: true } : { ...( /enemy|opponent/i.test(m[1]) ? { side: 'enemy' as const } : {}), ...(/avatar/i.test(m[1]) ? { avatar: true } : {}), ...(/nearby/i.test(m[1]) ? { range: 'nearby' as const } : {}) }; if (/magic/i.test(m[2])) ev.magic = true; body = cap(m[3]); }
     else if ((m = line.match(/^Whenever (?:this|bearer) attacks,\s*(.+)$/i))) { on = 'attacks'; ev = { self: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever (an?|another) (.+?) dies( nearby| here)?,\s*(.+)$/i)) && (ev = eventFilter(m[1], m[2], m[3]))) { on = 'dies'; body = cap(m[4]); }

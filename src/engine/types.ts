@@ -152,7 +152,7 @@ export interface Effect {
   /** startTurn / endTurn: on every player's turn, not just yours ("At the end of each turn") */
   eachTurn?: boolean;
   /** summon: where the tokens go (one at the source by default) */
-  places?: 'adjacentSites' | 'adjacentLocations' | 'bordersEnemy' | 'nearAvatar' | 'allyMinion' | 'allySite';
+  places?: 'adjacentSites' | 'adjacentLocations' | 'bordersEnemy' | 'nearAvatar' | 'allyMinion' | 'allySite' | 'whereDied';
   /** static on a site: units that can't enter it */
   /** occupied: only while a minion is already atop ("if there's already a minion atop") */
   /** the ability needs this threshold ("(A)(A)(A) — …", rulebook p18) */
@@ -448,6 +448,8 @@ export interface GameState {
   queue?: Queued[];
   /** controllers of units that left the realm this turn, by unit id ("its controller" after it died) */
   gone?: Record<string, PlayerId>;
+  /** where those units were ("summon a Skeleton token where it died") */
+  goneAt?: Record<string, number>;
   /** sites flooded "this turn" (they stop being flooded when the turn ends) */
   floods?: { c: number; turn: number }[];
   /** units not "at rest" while the current action resolves: the mover and its defenders (Codex "At Rest") */

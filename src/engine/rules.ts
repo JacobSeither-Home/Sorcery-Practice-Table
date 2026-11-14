@@ -357,6 +357,7 @@ export function clone(s: GameState): GameState {
     ...(s.busy ? { busy: s.busy.slice() } : {}),
     ...(s.floods ? { floods: s.floods.slice() } : {}),
     ...(s.gone ? { gone: { ...s.gone } } : {}),
+    ...(s.goneAt ? { goneAt: { ...s.goneAt } } : {}),
   };
 }
 
@@ -403,7 +404,7 @@ function startTurn(s: GameState, p: PlayerId) {
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
   if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.next !== p); if (!s.ongoing.length) delete s.ongoing; }
   if (s.floods) { s.floods = s.floods.filter((f) => f.turn >= s.turn); if (!s.floods.length) delete s.floods; }
-  delete s.gone; // rulebook p16 Start Phase: "Until next turn" effects end
+  delete s.gone; delete s.goneAt; // rulebook p16 Start Phase: "Until next turn" effects end
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
   s.players[p].mana = s.players[p].income = manaIncome(s, p);
   if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); fireAll(s, p, 'startTurn'); return; }
@@ -461,7 +462,7 @@ function breakWard(s: GameState, u: Unit, why: string) { u.ward = false; log(s, 
 function killUnit(s: GameState, u: Unit, force = false) {
   if (!s.units[u.id] || u.avatar) return;
   if (u.undying && !force) { log(s, `${unitCard(s, u).name} doesn't die until it's done.`, null); return; }
-  (s.gone ??= {})[u.id] = u.owner;
+  (s.gone ??= {})[u.id] = u.owner; (s.goneAt ??= {})[u.id] = u.c;
   if (!force && warded(s, u)) { breakWard(s, u, 'instead of being destroyed'); return; }
   if (!force && has(s, u, "Can't be destroyed")) { log(s, `${unitCard(s, u).name} can't be destroyed.`, null); return; }
   const d = unitCard(s, u);
@@ -937,6 +938,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
             : e.places === 'nearAvatar' ? nearby(av.c).filter((c) => s.sites[c]?.inst)
             : e.places === 'bordersEnemy' ? sitesOf(s, p).filter((c) => orthAdjacent(c).some((n) => s.sites[n]?.owner === other(p)))
             : e.places === 'allyMinion' ? (c2?.target && s.units[c2.target] ? [s.units[c2.target].c] : [])
+            : e.places === 'whereDied' ? (subject && s.goneAt?.[subject] !== undefined ? [s.goneAt[subject]] : [])
             : (c2?.cell !== undefined ? [c2.cell] : []);
           const tok0 = Object.values(s.cards).find((x) => x.name.toLowerCase() === (e.token ?? '').toLowerCase());
           if (!tok0) { log(s, `${d.name}: the ${e.token} token is not in the card pool; summon it by hand.`, p); break; }
@@ -1326,7 +1328,7 @@ function resolvePick(s: GameState, d: CardDef, e: Effect, p: PlayerId, loc: Loc 
   void names; void src;
 }
 function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
-  (s.gone ??= {})[u.id] = u.owner;
+  (s.gone ??= {})[u.id] = u.owner; (s.goneAt ??= {})[u.id] = u.c;
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; }
   delete s.units[u.id];
   const owner = Number(u.inst[0]) as PlayerId;
