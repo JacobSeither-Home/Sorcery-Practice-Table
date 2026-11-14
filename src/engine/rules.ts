@@ -348,7 +348,12 @@ function gainLife(s: GameState, p: PlayerId, n: number) {
   log(s, pl.life > before ? `${pname(p)} heals ${pl.life - before} (life ${pl.life}).` : `${pname(p)} is already at full life.`, null);
 }
 /** Codex "Ward": a warded unit or site is protected once from damage, destruction, or being targeted by the opponent; the Ward breaks instead. */
-export const warded = (s: GameState, u: Unit) => !!u.ward && !isDisabled(s, u);
+export const warded = (s: GameState, u: Unit) => !!u.ward && !isDisabled(s, u) && !isEvil(s, u);
+/** Codex "Evil": a minion that is an Undead, Demon or Monster (or says Evil). Codex "Ward": Evil minions can't be warded. */
+export function isEvil(s: GameState, u: Unit): boolean {
+  if (u.avatar) return false;
+  return unitCard(s, u).subtypes.some((x) => /^(undead|demon|monster|evil)$/i.test(x));
+}
 function breakWard(s: GameState, u: Unit, why: string) { u.ward = false; log(s, `${unitCard(s, u).name}'s Ward breaks (${why}).`, null); }
 function killUnit(s: GameState, u: Unit, force = false) {
   if (!s.units[u.id] || u.avatar) return;
@@ -358,10 +363,19 @@ function killUnit(s: GameState, u: Unit, force = false) {
   for (const m of s.perms) if (m.carrier === u.id) { m.c = u.c; delete m.carrier; } // what it carried stays where it fell
   delete s.units[u.id];
   log(s, `${d.name} dies.`, null);
-  if (d.category === 'Token') log(s, `${d.name} is a token and is banished.`, null); // Codex "Token"
-  else { const own = s.players[Number(u.inst[0]) as PlayerId]; own.cemetery.push(u.inst); if (own.died?.turn !== s.turn) own.died = { turn: s.turn, insts: [] }; own.died.insts.push(u.inst); }
-  react(s, 'dies', u);
+  // Codex "Deathrite" (rulebook p32): its Deathrite resolves before the card is placed in the cemetery. When the
+  // Deathrite waits for a choice, the card goes to the cemetery once that ability resolves or passes.
+  const before = s.queue?.length ?? 0;
   fire(s, u.inst, 'deathrite', u.owner, { c: u.c, r: u.r });
+  const waiting = (s.queue?.length ?? 0) > before ? s.queue![s.queue!.length - 1] : undefined;
+  if (d.category === 'Token') log(s, `${d.name} is a token and is banished.`, null); // Codex "Token"
+  else if (waiting) waiting.cemetery = u.inst;
+  else toCemetery(s, u.inst);
+  react(s, 'dies', u);
+}
+function toCemetery(s: GameState, inst: string) {
+  const own = s.players[Number(inst[0]) as PlayerId]; own.cemetery.push(inst);
+  if (own.died?.turn !== s.turn) own.died = { turn: s.turn, insts: [] }; own.died.insts.push(inst);
 }
 /** Where damage comes from, for prevention effects ("takes no damage from units with 4 or more power"). */
 interface DmgFrom { unit?: Unit; card?: CardDef }
@@ -391,6 +405,7 @@ export function forgetPrevention(cards: Record<string, CardDef>) { preventCache.
 function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: DmgFrom) {
   const killer = from?.unit;
   if (n0 <= 0 || !s.units[u.id]) return;
+  if (killer && s.units[killer.id]) killer.stealthLost = true; // Codex "Interact": dealing damage (even if prevented) ends Stealth
   if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
   let n = afterPrevention(s, u, n0, from);
   if (has(s, u, 'Immune to damage') || (from?.card?.type === 'Magic' && !from.unit && has(s, u, "Can't be damaged by magic"))) n = 0;
@@ -716,7 +731,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
           const [x0, y0] = xy(loc.c); const hits: Unit[] = [];
           for (let k = 0; k < 9; k++) { const cc = cell(x0 + c.dir[0] * k, y0 + c.dir[1] * k); if (cc < 0) break; hits.push(...Object.values(s.units).filter((u) => u.c === cc && sameRegion(s, u, loc!) && u.id !== self && !(k === 0 && u.owner === p) && !hasStealth(s, u))); }
           if (!hits.length) log(s, `${d.name}'s projectile hits nothing.`, p);
-          for (const h of hits) { log(s, `${d.name}'s projectile hits ${nm(h)} for ${n}.`, p); damageUnit(s, h, n, false, { card: d }); }
+          for (const h of hits) { log(s, `${d.name}'s projectile hits ${nm(h)} for ${n}.`, p); damageUnit(s, h, n, false, { card: d, ...(self && s.units[self] ? { unit: s.units[self] } : {}) }); }
           break;
         }
         const shots = e.shots === -1 ? Math.max(1, c?.n ?? 1) : e.shots ?? 1;
@@ -724,7 +739,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
           const hit = projectileHit(s, p, loc, c.dir[0], c.dir[1], 9, self, k === 0 ? c.hit : undefined);
           if (!hit) { log(s, `${d.name}'s projectile hits nothing.`, p); break; }
           const at: Loc = { c: hit.c, r: hit.r };
-          log(s, `${d.name}'s projectile hits ${nm(hit)} for ${n}.`, p); damageUnit(s, hit, n, false, { card: d });
+          log(s, `${d.name}'s projectile hits ${nm(hit)} for ${n}.`, p); damageUnit(s, hit, n, false, { card: d, ...(self && s.units[self] ? { unit: s.units[self] } : {}) });
           if (e.splash) for (const o of unitsAt(s, at)) if (o.id !== hit.id) { log(s, `${d.name} deals ${e.splash} damage to ${nm(o)}.`, p); damageUnit(s, o, e.splash, false, { card: d }); }
         }
         break;
@@ -883,8 +898,9 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       }
       case 'buff': case 'grant':
         if (e.who === 'siteHere' && e.keyword === 'Ward') { const st = loc ? s.sites[loc.c] : null; if (st?.inst) { st.ward = true; log(s, `${d.name} wards the site.`, p); } break; }
-        if (e.keyword === 'Ward') { for (const v of victims) { v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
+        if (e.keyword === 'Ward') { for (const v of victims) { if (isEvil(s, v)) { log(s, `${nm(v)} is Evil and can't be warded (${d.name}).`, p); continue; } v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
         if (e.keyword === 'Lance' && e.on !== 'static') { for (const v of victims) { v.lance = true; log(s, `${nm(v)} takes up a Lance (${d.name}).`, p); } break; }
+        if (e.keyword === 'Disabled') for (const v of victims) v.stealthLost = true; // Codex "Stealth": a minion that becomes disabled loses its Stealth mark
         for (const v of victims) {
           if (e.keyword === 'Movement') { (v.mods ??= []).push({ atk: 0, def: 0, move: e.n ?? 1, ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : {}), from: d.name }); log(s, `${nm(v)} gets Movement +${e.n ?? 1} (${d.name}).`, p); continue; }
           (v.mods ??= []).push({ atk: e.op === 'buff' ? e.atk ?? 0 : 0, def: e.op === 'buff' ? e.def ?? 0 : 0, ...(e.keyword ? { kw: e.keyword } : {}), ...(e.until === 'turn' ? { turn: s.turn } : e.until === 'next' ? { next: p } : e.until === 'hurt' ? { hurt: true } : {}), from: d.name });
@@ -1471,6 +1487,7 @@ export function apply(state: GameState, a: Action): GameState {
         else if ('perm' in a.src) { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); if (m) m.tapped = true; }
         else if ('site' in a.src) s.sites[a.src.site]!.tapped = true;
       } else (s.used ??= {})[`${srcKey(a.src)}:${e.line ?? a.fx}`] = s.turn;
+      if (src.unit && s.units[src.unit.id]) s.units[src.unit.id].stealthLost = true; // Codex "Interact" / rulebook p34: activating a special ability ends Stealth
       if (e.cost) pl.mana -= e.cost;
       if (e.banishDead) {
         const dead = pl.cemetery.filter((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0);
@@ -1488,6 +1505,7 @@ export function apply(state: GameState, a: Action): GameState {
       const q = s.queue!.splice(at, 1)[0]; const d = cardOf(s, q.inst);
       if (a.skip) log(s, `${pname(q.by)} lets ${d.name}'s ability pass.`, q.by);
       else resolve(s, d, q.fx, q.by, q.loc, a.choices ?? [], q.src, q.subject);
+      if (q.cemetery) toCemetery(s, q.cemetery); // a dead minion whose Deathrite waited for this
       if (!s.queue!.length) delete s.queue;
       break;
     }

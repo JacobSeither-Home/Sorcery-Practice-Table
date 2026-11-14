@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
-  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates,
+  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
@@ -553,7 +553,7 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
   const life = u.avatar ? s.players[u.owner].life : def - u.damage;
   const disabled = isDisabled(s, u);
   const below = u.r === 'under' ? (isWater(s, u.c) ? 'Submerged' : 'Burrowed') : ''; const flying = !u.avatar && u.r !== 'under' && has(s, u, 'Airborne');
-  const tags = [flying ? 'Airborne' : '', below, u.ward && !disabled ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
+  const tags = [flying ? 'Airborne' : '', below, warded(s, u) ? 'Ward' : '', hasStealth(s, u) ? 'Stealth' : '', disabled ? 'Disabled' : '', u.lance ? 'Lance' : '', summoningSick(s, u) ? 'Entered this turn' : '', u.noUntap ? "Won't untap" : '', u.ctrl ? 'Controlled' : '',
     ...new Set((u.mods ?? []).map((m) => m.kw ?? '').filter(Boolean))].filter(Boolean);
   const lanceCard = u.lance ? Object.values(s.cards).find((c) => c.name === 'Lance' && c.category === 'Token') : undefined;
   return (

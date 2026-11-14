@@ -298,6 +298,8 @@ export type Source = { unit: string } | { site: number } | { perm: string };
 /** A triggered ability waiting for its controller to make choices (targets, numbers) or to skip it. */
 export interface Queued {
   id: string;
+  /** a dead minion's card, placed in the cemetery after this (its Deathrite) resolves (Codex "Deathrite") */
+  cemetery?: string;
   by: PlayerId;
   inst: string;
   /** indices into the card's effects that resolve together */

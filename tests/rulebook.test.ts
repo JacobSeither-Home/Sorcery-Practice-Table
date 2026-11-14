@@ -167,7 +167,7 @@ describe('AUDIT: mana', () => {
 });
 
 describe('AUDIT: keyword edges', () => {
-  it('wards an Evil minion (rulebook p36: "Evil minions can\'t be warded")', () => {
+  it('does not ward an Evil minion (Codex "Ward", "Evil")', () => {
     let s = start(0);
     site(s, 0, cell(2, 3));
     const evil = T('Evil Thing', 'Minion', { attack: 2, defense: 2, subtypes: ['Evil'] });
@@ -175,10 +175,10 @@ describe('AUDIT: keyword edges', () => {
     const bless = T('Bless', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'grant', who: 'target', range: 'any', keyword: 'Ward', until: 'permanent' }] });
     const inst = give(s, 0, bless);
     s = apply(s, { t: 'cast', inst, choices: [{ target: u }] });
-    expect(s.units[u].ward).toBe(true);                          // warded anyway  <-- deviation
+    expect(s.units[u].ward ?? false).toBe(false);
   });
 
-  it('keeps Stealth after the minion uses an activated ability (rulebook p34/p35: that is interacting)', () => {
+  it('loses Stealth when the minion uses an activated ability (p34 "Stealth"; Codex "Interact")', () => {
     let s = start(0);
     site(s, 0, cell(2, 3));
     const sneak = T('Sneak', 'Minion', {
@@ -187,7 +187,7 @@ describe('AUDIT: keyword edges', () => {
     });
     const u = unit(s, 0, cell(2, 3), sneak);
     s = apply(s, { t: 'ability', src: { unit: u }, fx: 0 });
-    expect(s.units[u].stealthLost).toBe(false);                  // still hidden  <-- deviation
+    expect(s.units[u].stealthLost).toBe(true);
   });
 
   it('lets a Voidwalk minion step from the void straight to a subsurface it can live in (p35, Codex "Voidwalk")', () => {
@@ -304,5 +304,18 @@ describe('spellcasters', () => {
     const spell = T('Plain Spell', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'draw', n: 1, who: 'controller', deck: 'spellbook' }] });
     s = apply(s, { t: 'cast', inst: give(s, 0, spell), caster: u });
     expect(s.units[u].stealthLost).toBe(true);
+  });
+});
+
+describe('deathrite timing', () => {
+  it('a Deathrite resolves before its card reaches the cemetery (p32; Codex "Deathrite")', () => {
+    let s = start(0); site(s, 0, cell(2, 3));
+    const martyr = T('Test Martyr', 'Minion', { attack: 1, effects: [{ on: 'deathrite', op: 'damage', n: 1, who: 'target', range: 'any', targets: true }] });
+    const u = unit(s, 0, cell(2, 3), martyr); const inst = s.units[u].inst;
+    s = apply(s, { t: 'manual', op: 'destroy', unit: u });
+    expect(s.queue?.length).toBe(1);                       // waiting for a target
+    expect(s.players[0].cemetery).not.toContain(inst);     // not in the cemetery yet
+    s = apply(s, { t: 'trigger', skip: true });
+    expect(s.players[0].cemetery).toContain(inst);
   });
 });
