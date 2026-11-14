@@ -306,7 +306,11 @@ export function Table() {
   const leaveGame = () => { if (confirm('Leave this game?')) { useStore.getState().leave(); useStore.setState({ game: null }); } };
 
   return (
-    <div className={`table board-${boardSize} ${settings.infoPanel === false ? 'no-info' : ''}`} style={{ '--pace': pace } as React.CSSProperties}>
+    <div className={`table board-${boardSize} ${settings.infoPanel === false ? 'no-info' : ''}`} style={{ '--pace': pace } as React.CSSProperties}
+      onClick={(e) => { // a click on empty table puts down what was picked up
+        if (dragged.current || (e.target as HTMLElement).closest('button, a, input, select, textarea, label, summary, [role=dialog], [data-cell], [data-unit], .cellmenu, .handcard, .spell-veil, .sheet-veil, .cardlink')) return;
+        if (sel || menu) { setSel(null); setMenu(null); }
+      }}>
       <ElementAura s={s} />
       <aside className="rail left">
         <PlayerPanel g={g} p={opp} manual={manual} />
