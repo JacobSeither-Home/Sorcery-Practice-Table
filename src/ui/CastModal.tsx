@@ -15,7 +15,7 @@ import { TRIGGER_SHORT, describe } from './abilityText';
 import { usePace } from './pace';
 import { HowItWorks } from './Explain';
 import { GRIDS, gridSquares } from '../data/grids';
-import { useBoardPick } from './boardPick';
+import { focusCells, useBoardPick } from './boardPick';
 
 export type CastReq =
   /** at / unit: where a magic was dropped on the realm: preselects that location and that unit as its choices */
@@ -25,6 +25,8 @@ export type CastReq =
   /** after an action: only the hand tools for the sentences that were not automated */
   | { k: 'hand'; inst: string; lines: string[]; title: string };
 
+/** The squares in a straight line from a square, for lighting up a projectile's path. */
+const lineFrom = (c0: number | undefined, [dx, dy]: [number, number]) => { if (c0 === undefined) return []; const out: number[] = []; let [x, y] = xy(c0); for (;;) { x += dx; y += dy; const c = cell(x, y); if (c < 0) break; out.push(c); } return out; };
 const sq = (c: number) => `${'ABCDE'[xy(c)[0]]}${4 - xy(c)[1]}`;
 
 /** The squares a line lets the player choose on the board, or null when the line does not choose a square there. */
@@ -104,7 +106,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
       (c) => { setChoices((cs) => { const n = cs.slice(); n[i] = { ...(n[i] ?? {}), cell: c }; return n; }); setPicking(null); },
       () => { setDeclined((d) => [...d, i]); setPicking(null); });
   }, [picking]);
-  useEffect(() => () => useBoardPick.getState().clear(), []);
+  useEffect(() => () => { useBoardPick.getState().clear(); focusCells([]); }, []);
   if (!pl) return null;
   const { d } = pl; const el = mainElement(d);
   const set = (i: number, p: Partial<Choice>) => setChoices((c) => { const n = c.slice(); n[i] = { ...(n[i] ?? {}), ...p }; return n; });
@@ -129,10 +131,12 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
   };
   const skip = () => { if (act({ t: 'trigger', skip: true })) close(); };
   const mine = req.k === 'hand' || g.mode === 'hotseat' || actor(s) === g.local;
+  // with something to choose, the pop-up sits at the side so the board stays in view (and lights up what is pointed at)
+  const docked = req.k !== 'hand' && (casters.length > 1 || pl.idx.some((i) => needsChoice(d.effects[i])));
 
   return (
-    <motion.div className={`spell-veil el-${el} ${phase} ${picking !== null ? 'picking' : ''}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 * pace }}
-      onClick={() => req.k !== 'trigger' && phase === 'choose' && close()} style={{ '--sp': `var(--${el}, var(--brass))` } as React.CSSProperties}>
+    <motion.div className={`spell-veil el-${el} ${phase} ${picking !== null ? 'picking' : ''} ${docked ? 'docked' : ''}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 * pace }}
+      onClick={() => !docked && req.k !== 'trigger' && phase === 'choose' && close()} style={{ '--sp': `var(--${el}, var(--brass))` } as React.CSSProperties}>
       {picking !== null && <div className="pick-bar" role="status" onClick={(e) => e.stopPropagation()}>
         <span><b>Choose a square on the board.</b> {pl.d.name}: {describe(d.effects[picking])}</span>
         <button onClick={() => { setDeclined((x) => [...x, picking]); setPicking(null); }}>Back to the card</button>
@@ -191,7 +195,7 @@ function Line({ s, pl, i, e, c, all, set, focus, pickOnBoard }: { s: GameState; 
         {e.alt && (all[e.alt.at]?.alt ?? 0) !== e.alt.opt && <small className="none"> — not chosen</small>}
         {e.optional && <button className={`maybe ${c?.skip ? '' : 'on'}`} onClick={() => set({ skip: !c?.skip })} aria-pressed={!c?.skip} data-tip="The card says you may: choose whether this part happens">{c?.skip ? 'Skipped — do it' : 'You may: skip it'}</button>}
         {e.op === 'manual' && <small> — not automated: the hand tools open after it resolves</small>}
-        {loc && (loc.length ? <div className="chips targets loc-pick">{c?.cell !== undefined ? <span className="chip on">{sq(c.cell)}<small> {locName(c.cell)}</small></span> : <small>No square chosen yet.</small>}
+        {loc && (loc.length ? <div className="chips targets loc-pick">{c?.cell !== undefined ? <span className="chip on" onPointerEnter={() => focusCells([c.cell!])} onPointerLeave={() => focusCells([])}>{sq(c.cell)}<small> {locName(c.cell)}</small></span> : <small>No square chosen yet.</small>}
           {pickOnBoard && loc.length > 1 && <button className="chip" onClick={pickOnBoard}>{c?.cell !== undefined ? 'Change it on the board' : 'Choose it on the board'}</button>}</div>
           : <small className="none"> — {e.op === 'moveSite' ? 'no void nearby' : e.op === 'teleport' ? 'nowhere to go' : 'no location in range'}</small>)}
         {e.op === 'raise' && (() => { const dead = ([0, 1] as PlayerId[]).flatMap((q) => s.players[q].cemetery.map((x) => ({ q, x }))).filter((o) => cardOf(s, o.x).type === 'Minion');
@@ -269,13 +273,13 @@ function Line({ s, pl, i, e, c, all, set, focus, pickOnBoard }: { s: GameState; 
             {(g.turn === 'reflect' || g.turn === 'both') && <span className="xpick">{g.anchor === 'edge' ? <><button className={!c?.flip ? 'on' : ''} onClick={() => set({ flip: false })}>From the left edge</button><button className={c?.flip ? 'on' : ''} onClick={() => set({ flip: true })}>From the right edge</button></> : <button className={c?.flip ? 'on' : ''} onClick={() => set({ flip: !c?.flip })}>Mirror it</button>}</span>}
             {pl.d.name === 'Holy Nova' && (() => { const ws = Object.values(s.units).filter((u) => u.owner === pl.p && u.ward); return ws.length ? <div className="chips targets"><small>Break an allied Ward to centre it there instead (optional):</small>{ws.map((u) => <button key={u.id} className={`chip ${c?.target === u.id ? 'on' : ''}`} onClick={() => set({ target: c?.target === u.id ? undefined : u.id })}>{unitCard(s, u).name}</button>)}</div> : null; })()}
             {g.anchor === 'impact' ? <small className="none"> — centred where the projectile lands</small> : anchor === undefined && g.anchor !== 'edge' ? <small className="none"> — choose the location above first</small> : (
-              <div className="gridprev" aria-label="Squares the area hits">{Array.from({ length: 20 }, (_, k) => <span key={k} className={`${cellsHit.has(k) ? 'hit' : ''} ${k === anchor ? 'anchor' : ''}`}>{cellsHit.get(k) || (k === anchor ? '•' : '')}</span>)}</div>)}
+              <div className="gridprev" aria-label="Squares the area hits" onPointerEnter={() => focusCells([...cellsHit.keys()])} onPointerLeave={() => focusCells([])}>{Array.from({ length: 20 }, (_, k) => <span key={k} className={`${cellsHit.has(k) ? 'hit' : ''} ${k === anchor ? 'anchor' : ''}`}>{cellsHit.get(k) || (k === anchor ? '•' : '')}</span>)}</div>)}
           </div>;
         })()}
         {e.op === 'roll' && <span className="xpick">{([[0, -1], [0, 1], [-1, 0], [1, 0]] as [number, number][]).map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
         {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);
-          return <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })} data-tip={`The joint between ${a.map(sq).join(', ')}`}>{sq(a[0])}–{sq(a[3])}<small> {a.map(sq).join(' ')}</small></button>; })}</div>}
-        {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv, hit: undefined })}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
+          return <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })} onPointerEnter={() => focusCells(a)} onPointerLeave={() => focusCells([])} data-tip={`The joint between ${a.map(sq).join(', ')}`}>{sq(a[0])}–{sq(a[3])}<small> {a.map(sq).join(' ')}</small></button>; })}</div>}
+        {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv, hit: undefined })} onPointerEnter={() => focusCells(lineFrom(pl.origins[0]?.c, dv))} onPointerLeave={() => focusCells([])}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
         {e.op === 'shoot' && !e.pierce && c?.dir && pl.origins[0] && (() => { const there = projectileCandidates(s, pl.p, pl.origins[0], c.dir[0], c.dir[1], 9, pl.self); return there.length > 1 ? <div className="chips targets"><small>It lands where {there.length} units are — you choose which it hits:</small>{there.map((u) => {
           const on = (c.hit ?? there[0].id) === u.id;
           return <button key={u.id} className={`chip p${u.owner} ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ hit: u.id })} onPointerEnter={() => focus(u.id)} onPointerLeave={() => focus(null)}>{unitCard(s, u).name}</button>; })}</div> : null; })()}

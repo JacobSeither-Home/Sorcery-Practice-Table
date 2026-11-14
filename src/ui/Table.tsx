@@ -8,7 +8,7 @@ import {
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
 import { PACES } from '../store';
-import { useBoardPick } from './boardPick';
+import { useBoardFocus, useBoardPick } from './boardPick';
 import { CardFace, Pips, STATUSES, clearZoom, hoverProps, mainElement, useStatusPop, useHover, useInspect } from './CardFace';
 import { spring, usePace } from './pace';
 import { type CastReq, CastModal, abilityList } from './CastModal';
@@ -113,7 +113,7 @@ export function Table() {
   const selCard = sel?.k === 'hand' ? cardOf(s, sel.inst) : undefined;
 
   // ---- legal-move highlights (teaching aid) ----
-  const boardPick = useBoardPick((b) => b.cells);
+  const boardPick = useBoardPick((b) => b.cells); const lit = useBoardFocus((b) => b.cells);
   const { cells: hiCells, units: hiUnits } = useMemo(() => {
     const cells = new Map<number, 'go' | 'hit' | 'place'>(); const units = new Set<string>();
     if (boardPick) { for (const c of boardPick) cells.set(c, 'place'); return { cells, units }; } // an open pop-up is waiting for a location
@@ -179,6 +179,7 @@ export function Table() {
 
   function clickCell(c: number) {
     { const bp = useBoardPick.getState(); if (bp.cells) { if (bp.cells.includes(c)) bp.pick?.(c); else toast('Choose one of the glowing squares, or Cancel at the top.'); return; } }
+    if (cast) return; // a pop-up is open at the side: finish or cancel it first
     if (!myInput || s.pending) return;
     setMenu(null);
     if (sel?.k === 'hand' && selCard) {
@@ -204,6 +205,7 @@ export function Table() {
   function clickUnit(u: Unit, e: React.MouseEvent) {
     e.stopPropagation();
     if (useBoardPick.getState().cells) { clickCell(u.c); return; }
+    if (cast) return;
     if (manual) { setMenu(null); setSel({ k: 'unit', id: u.id }); return; }
     if (!myInput || s.pending) return;
     if (sel?.k === 'hand' && selCard?.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst: sel.inst, at: u.c, unit: u.id }); return; }
@@ -347,7 +349,7 @@ export function Table() {
               const rub = site && !site.inst ? rubble : undefined; // Rubble is a token card in the pool: show its art and let it be read like any card
               const [x, y] = xy(c); const mark = herald?.marks.get(c);
               return (
-                <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''}`}
+                <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''} ${lit.includes(c) ? 'lit' : ''}`}
                   onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d ?? rub)} onPointerDown={(e) => { hoverProps(d ?? rub).onPointerDown(e); siteDown(c, e); }} data-cell={c}>
                   {d && <SiteArt id={d.id} />}
                   {rub && <SiteArt id={rub.id} upright={rub.type !== 'Site'} />}

@@ -8,3 +8,7 @@ export const useBoardPick = create<BoardPick & { start: (cells: number[], label:
   start: (cells, label, pick, cancel) => set({ cells, label, pick, cancel }),
   clear: () => set({ cells: null, label: '', pick: null, cancel: null }),
 }));
+
+/** Squares to light up on the board while the player points at an option in a pop-up (an area, a direction, a location). */
+export const useBoardFocus = create<{ cells: number[]; set: (cells: number[]) => void }>((set) => ({ cells: [], set: (cells) => set({ cells }) }));
+export const focusCells = (cells: number[]) => useBoardFocus.getState().set(cells);
