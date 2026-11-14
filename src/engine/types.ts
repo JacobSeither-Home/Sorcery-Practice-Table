@@ -23,10 +23,18 @@ export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | '
   | 'stops';
 export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts', 'stops'];
 /** Which events a reaction listens to, relative to the card that has it. */
-export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** enters: a water site in the aura's area */ affectedWater?: boolean; /** stops: at a site this artifact has not stopped at before */ newSite?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
+export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** enters: a water site in the aura's area */ affectedWater?: boolean; /** stops: at a site this artifact has not stopped at before */ newSite?: boolean; /** enters: only the first unit ever to do so (Dark Alley) */ first?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** two units trade places (Choice.target and Choice.chain[0]) */
+  | 'swap'
+  /** minions adjacent to the chosen water site step into it, then all minions there are submerged (Call of the Sea) */
+  | 'gather'
+  /** the target ally becomes the copy of this card from your hand (Choice.card) (Codex "Transform") */
+  | 'transform'
+  /** this turn, the next Evil cast to this site costs `n` less and ignores threshold (Den of Evil) */
+  | 'discountHere'
   /** an ally fights each enemy near it, one at a time, and doesn't die until it's done (Blaze of Glory) */
   | 'glory'
   /** "If any are Demons, this becomes one and gains +2 power permanently" (after a pick) */
@@ -155,6 +163,12 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** shoot: the projectile travels at most this many steps ("melts before the third step" = 2) */
+  steps?: number;
+  /** several shots, each aimed on its own (Choice.dirs) */
+  aimEach?: boolean;
+  /** cost: break this unit's own Stealth mark ("Break Stealth → …") */
+  breakStealth?: boolean;
   /** shoot: what happens to the unit it hits instead of damage (Holy Water: banish if Evil, else Ward) */
   onHit?: 'holyWater';
   /** target filter: a minion that was summoned this turn */
@@ -171,6 +185,10 @@ export interface Effect {
   evil?: boolean;
   /** summon restriction: "Must be cast to an allied site occupied by an enemy" */
   onEnemyOccupied?: boolean;
+  /** castRule: where it must be cast ("to an outer column", "to a corner void", "submerged") */
+  castWhere?: 'outerColumn' | 'cornerVoid' | 'submerged';
+  /** castRule: costs `n` less for each … at the square it is cast to */
+  lessPer?: { n: number; kind: 'unitsAdjacent' | 'enemiesInBody' };
   /** shoot (piercing): damage at each of the first locations along the path, up to one unit at each (Ice Lance: 3, 2, 1) */
   falloff?: number[];
   /** teleport/step: stays within the body of water of the card's site (Undertow) */
@@ -236,7 +254,7 @@ export interface Effect {
   fromBottom?: boolean;
   /** teleport (movement): where to. Chosen: a nearby / adjacent location or any site; fixed: this card's location ("here"),
    *  the caster's, one step toward / away from this card, a random site or void, or the location of the chosen unit ("to") */
-  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid' | 'body' | 'closestEvil';
+  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid' | 'body' | 'closestEvil' | 'adjacentVoid';
   /** movement kind (Codex "Forced Movement"): teleport and drag move anyone; a step is the unit's own and Immobile stops it */
   move?: 'teleport' | 'drag' | 'step';
   /** only units with less power than this card ("target weaker minion") */
@@ -270,7 +288,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string; /** op chain: the extra targets, in order */ chain?: string[]; /** either/or: which option (0 or 1) */ alt?: number }
+export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string; /** op chain: the extra targets, in order */ chain?: string[]; /** either/or: which option (0 or 1) */ alt?: number; /** shots aimed one by one */ dirs?: [number, number][] }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -367,6 +385,10 @@ export interface PlayerState {
   cast?: { turn: number; ids: string[] };
   /** the site this player's "until you do so again" flood is on */
   flooded?: number;
+  /** Harbinger: the three random squares chosen at setup, and the turn their once-per-turn cast was used */
+  portals?: number[]; portalTurn?: number;
+  /** Den of Evil: the next Evil cast to this site this turn costs less and ignores threshold */
+  discount?: { turn: number; c: number; n: number };
   /** the element total of the cards banished for the last ability's cost */
   banished?: number;
   /** threshold (and mana already added) from "Provides … this turn" effects, for the turn given */
@@ -514,6 +536,8 @@ export interface ZonePick {
   shuffle?: boolean;
   /** summon/cast: where (the ability's location, or a square the player chooses) */
   where?: 'here' | 'choose' | 'avatar';
+  /** summon/cast: submerged ("Cast a Shoggoth submerged here") */
+  under?: boolean;
   /** the chosen card is shown to everyone */
   reveal?: boolean;
 }

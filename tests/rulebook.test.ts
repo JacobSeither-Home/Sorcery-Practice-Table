@@ -765,3 +765,40 @@ describe('Gothic Persecutor', () => {
     expect(s.players[1].life).toBe(life - 1);
   });
 });
+
+describe('Gothic Harbinger', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  it('casting-location rules: outer column; corner void with a discount; cast submerged with a discount per enemy in the body', async () => {
+    const { summonCells, costOf } = await import('../src/engine/rules');
+    const s = start(0); for (const c of [cell(0, 3), cell(2, 3), cell(1, 3)]) site(s, 0, c, 'Mill Pond');
+    const fors = await read('Minion', 'Test Forsaken', 'Voidwalk\n\nMust be cast to an outer column.', { attack: 2, keywords: ['Voidwalk'] });
+    expect(summonCells(s, 0, s.cards[fors]).every((c) => [0, 4].includes(c % 5))).toBe(true);
+    const dorm = await read('Minion', 'Test Dormant', 'Voidwalk\n\nMust be cast to a corner void, costing (2) less for each unit in an adjacent square.', { attack: 8, cost: 7, keywords: ['Voidwalk'] });
+    expect(summonCells(s, 0, s.cards[dorm]).sort()).toEqual([cell(0, 0), cell(4, 0), cell(4, 3)].sort());
+    unit(s, 1, cell(3, 3), id('Kiln Brute'));
+    expect(costOf(s, 0, s.cards[dorm], cell(4, 3))).toBe(5);
+    const krak = await read('Minion', 'Test Hearken', 'Submerge\n\nMust be cast submerged, and costs (1) less for each enemy in its body of water.', { attack: 5, cost: 5, keywords: ['Submerge'] });
+    unit(s, 1, cell(1, 3), id('Reed Lurker'));
+    expect(costOf(s, 0, s.cards[krak], cell(0, 3))).toBe(4);
+  });
+  it('Dark Alley: only the first minion to enter gains Stealth', async () => {
+    const { hasStealth } = await import('../src/engine/rules');
+    let s = start(0); site(s, 0, cell(2, 3));
+    const alley = await read('Site', 'Test Alley', 'The first minion that enters here gains Stealth.');
+    const k = '0talley'; s.inst[k] = alley; s.sites[cell(2, 2)] = { inst: k, owner: 0 };
+    const a = unit(s, 0, cell(2, 3), id('Kiln Brute')), b = unit(s, 0, cell(2, 3), id('Kiln Brute'));
+    s = apply(s, { t: 'move', unit: a, path: [{ c: cell(2, 2), r: 'surface' }] });
+    s = apply(s, { t: 'move', unit: b, path: [{ c: cell(2, 2), r: 'surface' }] });
+    expect(hasStealth(s, s.units[a])).toBe(true);
+    expect(hasStealth(s, s.units[b])).toBe(false);
+    expect(s.units[a].mods?.some((m) => m.kw === 'Stealth')).toBe(true);
+    expect(s.units[b].mods?.some((m) => m.kw === 'Stealth') ?? false).toBe(false);
+  });
+  it('Swap: two minions trade places', async () => {
+    let s = start(0); for (const c of [cell(2, 3), cell(0, 3)]) site(s, 0, c); site(s, 1, cell(2, 0));
+    const sw = await read('Magic', 'Test Swap', 'Swap the location of target minion or artifact with another target minion or artifact.', { cost: 0 });
+    const a = unit(s, 0, cell(0, 3), id('Kiln Brute')), b = unit(s, 1, cell(2, 0), id('Kiln Brute'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, sw), choices: [{ target: a, chain: [b] }] });
+    expect(s.units[a].c).toBe(cell(2, 0)); expect(s.units[b].c).toBe(cell(0, 3));
+  });
+});

@@ -297,6 +297,7 @@ export function Table() {
                   {d && <div className="site-label"><span>{d.name}</span><Pips t={d.thresholds} /></div>}
                   {site && !site.inst && <div className="site-label"><span>Rubble</span></div>}
                   <span className="coord">{'ABCDE'[x]}{4 - y}</span>
+                  {([0, 1] as PlayerId[]).filter((q) => s.players[q].portals?.includes(c)).map((q) => <span key={q} className={`portal p${q}`} data-tip={`${PNAME(g, q)}'s Harbinger square: once on their turn they may cast a minion here for 1 less`}>✧</span>)}
                   {([other(bottomPlayer), bottomPlayer] as PlayerId[]).map((p) => (
                     <div key={p} className={`side ${p === bottomPlayer ? 'near' : 'far'}`}>
                       {s.perms.filter((m) => m.c === c && m.owner === p && !m.carrier && m.kind !== 'aura').map((m) => {

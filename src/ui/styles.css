@@ -644,3 +644,7 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .alloc-row small { opacity: .7; }
 .alloc-row .stepper { display: inline-flex; align-items: center; gap: 6px; }
 .alloc-row .stepper b { min-width: 2ch; text-align: center; }
+
+/* Harbinger's random squares */
+.cell .portal { position: absolute; top: 4px; right: 6px; font-size: 14px; opacity: .8; pointer-events: auto; }
+.cell .portal.p0 { color: var(--p0, #7fb3ff); } .cell .portal.p1 { color: var(--p1, #ff9f7f); }

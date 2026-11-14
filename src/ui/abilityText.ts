@@ -13,7 +13,7 @@ export const TRIGGER_SHORT: Record<Trigger, string> = {
   kills: 'When it kills', casts: 'When a spell is cast', stops: 'When it stops',
 };
 export const OP_LABEL: Record<Op, string> = {
-  glory: 'Fight each enemy near it', becomeIfPicked: 'Become one of them', wardBoost: 'Break Wards for more damage', slide: 'Slide units', dealOut: 'Deal out spells to your back row', swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
+  swap: 'Swap two units', gather: 'Call minions into the water', transform: 'Transform', discountHere: 'Cheaper Evil here', glory: 'Fight each enemy near it', becomeIfPicked: 'Become one of them', wardBoost: 'Break Wards for more damage', slide: 'Slide units', dealOut: 'Deal out spells to your back row', swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
   control: 'Gain control', castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
@@ -90,6 +90,10 @@ export function describe(e: Effect): string {
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
     case 'moveAura': return 'Move this aura one step, to a neighbouring joint';
+    case 'swap': return 'Two chosen units trade places';
+    case 'gather': return 'Minions next to the chosen water site step into it, then all minions there are submerged';
+    case 'transform': return 'The chosen ally becomes the copy of this card from your hand';
+    case 'discountHere': return `This turn, the next Evil cast here costs ${e.n ?? 1} less and ignores threshold`;
     case 'glory': return 'An ally fights each enemy near it, one at a time, and does not die until it is done';
     case 'becomeIfPicked': return `If any chosen card is a ${e.sub?.[0] ?? '?'}, this becomes one and gains +${e.atk ?? 0} power permanently`;
     case 'wardBoost': return 'Break any number of your Wards: +1 damage each';
