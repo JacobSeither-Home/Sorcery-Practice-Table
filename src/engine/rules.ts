@@ -12,6 +12,17 @@ export const xy = (c: number): [number, number] => [c % COLS, Math.floor(c / COL
 export const cell = (x: number, y: number) => (x < 0 || y < 0 || x >= COLS || y >= ROWS ? -1 : y * COLS + x);
 export const AVATAR_START: [number, number] = [cell(2, ROWS - 1), cell(2, 0)];
 const locKey = (l: Loc) => l.c + (l.r === 'surface' ? 's' : 'u');
+/** The four regions (rulebook Oct 2024 p13 and p34 "Region"; Codex "Region"): the surface, underground (below
+ *  a land site), underwater (below a water site) and the void (a square with no site). A unit stores only its
+ *  layer (`r`); its region follows the square, so a site that floods turns its underground into underwater. */
+export type RealmRegion = 'surface' | 'underground' | 'underwater' | 'void';
+export function regionOf(s: GameState, l: Loc): RealmRegion {
+  if (!s.sites[l.c]) return 'void';
+  if (l.r === 'surface') return 'surface';
+  return isWater(s, l.c) ? 'underwater' : 'underground';
+}
+/** Rulebook p15: only locations in the same region are adjacent or nearby; p35 "Target": the same region. */
+export const sameRegion = (s: GameState, a: Loc, b: Loc) => regionOf(s, a) === regionOf(s, b);
 
 export function cardOf(s: GameState, inst: string): CardDef { return s.cards[s.inst[inst]]; }
 export function unitCard(s: GameState, u: Unit): CardDef { return cardOf(s, u.inst); }
@@ -90,7 +101,7 @@ export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc 
     case 'yourTurn': r = s.active === p; break;
     case 'enemyTurn': r = s.active !== p; break;
     case 'inVoid': r = !!at && !s.sites[at.c]; break;
-    case 'adjacentAlly': r = !!at && Object.values(s.units).some((u) => u.owner === p && u.id !== self && u.r === at.r && [at.c, ...orthAdjacent(at.c)].includes(u.c) && (subOk(unitCard(s, u)) || (!!w.sub && has(s, u, w.sub)))); break;
+    case 'adjacentAlly': r = !!at && Object.values(s.units).some((u) => u.owner === p && u.id !== self && sameRegion(s, u, at) && [at.c, ...orthAdjacent(at.c)].includes(u.c) && (subOk(unitCard(s, u)) || (!!w.sub && has(s, u, w.sub)))); break;
     case 'noEnemiesHere': r = !!at && !Object.values(s.units).some((u) => u.owner !== p && u.c === at.c); break;
   }
   return w.not ? !r : r;
@@ -114,7 +125,7 @@ const AURA_HERE: Partial<Record<Effect['who'], Effect['who']>> = { unitsHere: 'a
 function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, self?: string, bearer?: string): boolean {
   if (e.only === 'minion' && u.avatar) return false;
   if (e.other && u.id === self) return false;
-  const here = u.c === at.c && u.r === at.r, near = u.r === at.r && nearby(at.c).includes(u.c);
+  const here = u.c === at.c && u.r === at.r, near = sameRegion(s, u, at) && nearby(at.c).includes(u.c);
   const inArea = u.r === 'surface' && auraArea(at.c).includes(u.c);
   if (at.aura && AURA_HERE[e.who]) { // Codex "Here": for an aura, its four locations
     if (!inArea) return false;
@@ -143,7 +154,7 @@ function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, s
 function countFor(s: GameState, per: NonNullable<Effect['per']>, d: CardDef, p: PlayerId, at: Loc, self?: string): number {
   const [x, y] = xy(at.c);
   switch (per.kind) {
-    case 'sameNearby': return Object.values(s.units).filter((u) => u.id !== self && unitCard(s, u).name === d.name && u.r === at.r && nearby(at.c).includes(u.c)).length;
+    case 'sameNearby': return Object.values(s.units).filter((u) => u.id !== self && unitCard(s, u).name === d.name && sameRegion(s, u, at) && nearby(at.c).includes(u.c)).length;
     case 'adjacentSites': return [at.c, ...orthAdjacent(at.c)].filter((c) => s.sites[c]?.inst).length;
     case 'nearbySites': return nearby(at.c).filter((c) => s.sites[c]?.inst && (!per.el || (per.el === 'water' ? isWater(s, c) : cardOf(s, s.sites[c]!.inst!).thresholds[per.el] > 0))).length;
     case 'wards': return Object.values(s.units).filter((u) => u.ward).length + s.sites.filter((st) => st?.ward).length;
@@ -275,7 +286,7 @@ function startTurn(s: GameState, p: PlayerId) {
   for (const m of s.perms) if (m.owner === p) m.tapped = false;
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
-  s.players[p].mana = manaIncome(s, p);
+  s.players[p].mana = s.players[p].income = manaIncome(s, p);
   if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); fireAll(s, p, 'startTurn'); return; }
   const pl = s.players[p];
   if (!pl.spellbook.length && !pl.atlas.length) { log(s, `${pname(p)} must draw from an empty deck and loses.`); win(s, other(p)); return; }
@@ -383,13 +394,19 @@ function drawCard(s: GameState, p: PlayerId, deck: 'spellbook' | 'atlas'): boole
 function spellcasters(s: GameState, p: PlayerId): Unit[] {
   return Object.values(s.units).filter((u) => u.owner === p && (u.avatar || has(s, u, 'Spellcaster')) && !isDisabled(s, u));
 }
-function inRange(from: Loc, to: Loc, range: Effect['range'], sameRegion = false): boolean {
-  if (range === 'any' || !range) return !sameRegion || from.r === to.r; // Codex "Target": the source must be in the target's region
-  if (from.r !== to.r) return false;
-  if (range === 'here') return from.c === to.c;
-  if (range === 'two' || range === 'three') { const [a, b] = xy(from.c), [c2, d2] = xy(to.c); return Math.abs(a - c2) + Math.abs(b - d2) <= (range === 'two' ? 2 : 3); } // up to N steps away
-  if (range === 'adjacent') return from.c === to.c || orthAdjacent(from.c).includes(to.c);
-  return nearby(from.c).includes(to.c);
+function inRange(s: GameState, from: Loc, to: Loc, range: Effect['range'], targeted = false): boolean {
+  if (range === 'any' || !range) return !targeted || sameRegion(s, from, to); // rulebook p35 "Target": only within the Spellcaster's or card's region
+  if (!sameRegion(s, from, to)) return false; // p15: adjacent and nearby only count locations in the same region
+  return squareInRange(from.c, to.c, range);
+}
+/** Square distance only, for effects that pick a square (a void to fill, a site to flood) rather than a location in a region. */
+function squareInRange(from: number, to: number, range: Effect['range']): boolean {
+  if (range === 'any' || !range) return true;
+  const f = { c: from }, t = { c: to };
+  if (range === 'here') return f.c === t.c;
+  if (range === 'two' || range === 'three') { const [a, b] = xy(f.c), [c2, d2] = xy(t.c); return Math.abs(a - c2) + Math.abs(b - d2) <= (range === 'two' ? 2 : 3); } // up to N steps away
+  if (range === 'adjacent') return f.c === t.c || orthAdjacent(f.c).includes(t.c);
+  return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
 export const needsChoice = (e: Effect) => e.op === 'moveAura' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
@@ -414,7 +431,7 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins: Loc[]): n
     if (e.op === 'rubble' && s.sites[c]) continue;
     if (e.op === 'replaceRubble' && !(s.sites[c] && !s.sites[c]!.inst)) continue;
     if (e.op === 'flood' && !(s.sites[c]?.inst && nearby(c).some((x) => x !== c && isWater(s, x)))) continue;
-    if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c) || e.op === 'rubble') && origins.some((o) => inRange(o, { c, r: o.r }, e.range))) out.push(c);
+    if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c) || e.op === 'rubble') && origins.some((o) => squareInRange(o.c, c, e.range))) out.push(c);
   }
   const busy = (c: number) => Object.values(s.units).some((u) => u.c === c) ? 0 : 1;
   return out.sort((a, b) => busy(a) - busy(b) || a - b); // squares with units first
@@ -479,7 +496,7 @@ export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, ori
     }
     if (e.other && u.id === self) return false;
     if (!fits(s, e, u, self, d.attack)) return false;
-    return origins.some((o) => inRange(o, u, e.range, targeted));
+    return origins.some((o) => inRange(s, o, u, e.range, targeted));
   }).map((u) => u.id);
 }
 /** Where targeted magic is measured from. */
@@ -552,7 +569,8 @@ function react(s: GameState, on: 'dies' | 'damaged' | 'attacks' | 'enters' | 'ki
   if (reacting > 6 || s.phase === 'over') return; // a chain of reactions stops eventually
   reacting++;
   try {
-    for (const p of [s.active, other(s.active)] as PlayerId[]) for (const x of sourcesOf(s, p)) {
+    // Rulebook p31 "Triggered Abilities": competing events go on the storyline non-active player first.
+    for (const p of [other(s.active), s.active] as PlayerId[]) for (const x of sourcesOf(s, p)) {
       if (on === 'dies' && x.unit?.id === u.id) continue;
       const d = cardOf(s, x.inst);
       const idx = d.effects.map((e, i) => [e, i] as const).filter(([e]) => e.on === on && e.ev && evMatches(s, e.ev, p, x.loc, x.unit?.id, x.src, u) && (!e.ev.magic || spell?.type === 'Magic')).map(([, i]) => i);
@@ -571,7 +589,7 @@ function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: 
   if (f.minion && u.avatar) return false;
   if (f.sub?.length && !f.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
   if (f.range === 'here' && u.c !== at.c) return false;
-  if (f.range === 'nearby' && !(u.r === at.r && nearby(at.c).includes(u.c))) return false;
+  if (f.range === 'nearby' && !(sameRegion(s, u, at) && nearby(at.c).includes(u.c))) return false;
   return true;
 }
 function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
@@ -612,8 +630,9 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       : e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
     const all = Object.values(s.units);
     const auraSrc = !!src && 'perm' in src && s.perms.find((m) => m.id === src.perm)?.kind === 'aura';
-    const here = (u: Unit) => !!loc && (auraSrc ? u.r === 'surface' && auraArea(loc.c).includes(u.c) : u.c === loc.c && u.r === loc.r);
-    const near = (u: Unit) => !!loc && u.r === loc.r && nearby(loc.c).includes(u.c);
+    // Rulebook p33 "Here & There": when a site is referenced, here means both its surface and subsurface.
+    const here = (u: Unit) => !!loc && (auraSrc ? u.r === 'surface' && auraArea(loc.c).includes(u.c) : u.c === loc.c && (u.r === loc.r || (!!src && 'site' in src)));
+    const near = (u: Unit) => !!loc && sameRegion(s, u, loc) && nearby(loc.c).includes(u.c);
     let victims: Unit[] = [];
     switch (e.who) {
       case 'target': {
@@ -971,21 +990,42 @@ function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
   else log(s, `${unitCard(s, u).name} is banished (${why}).`, null);
 }
 
+/** Codex "Mana" (current; the Oct 2024 rulebook p17 said the opposite for a lost site): mana sources you gain or
+ *  lose during your turn change your available mana at once. Available = sources you control now + mana you gained
+ *  − mana you spent, so it can sit below zero after a source is lost (shown as 0) until a new source covers it. */
+function followMana(s: GameState) {
+  if (s.phase !== 'main') return;
+  const pl = s.players[s.active]; const now = manaIncome(s, s.active);
+  if (pl.income !== undefined && now !== pl.income) pl.mana += now - pl.income;
+  pl.income = now;
+}
+
 // ---------- movement ----------
+/** Can this unit live in that region? Rulebook p13 (subsurface), p12 (void), p5/p35 (Avatars never enter the void). */
+function canOperate(s: GameState, u: Unit, r: RealmRegion): boolean {
+  if (r === 'surface') return true;
+  if (r === 'void') return !u.avatar && has(s, u, 'Voidwalk');
+  return r === 'underwater' ? has(s, u, 'Submerge') : has(s, u, 'Burrowing');
+}
+/** One step (rulebook p15 "Steps": between adjacent locations, which p15 keeps within one region). Airborne steps
+ *  diagonally on the surface (p32); Burrowing/Submerge step between a site's surface and subsurface (p32, p35);
+ *  Voidwalk steps into the void, between voids, and out of it to a site's surface or, when the unit can live
+ *  there, straight to its subsurface (p35 "Voidwalk"; Codex "Voidwalk"). */
 function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
+  if (!s.sites[to.c] && to.r !== 'surface') return false; // a void square has one location
   if (from.c !== to.c && entryBlocked(s, u, to.c)) return false;
+  const rf = regionOf(s, from), rt = regionOf(s, to);
   if (from.c === to.c) {
-    if (from.r === to.r || !s.sites[to.c]) return false;
-    return isWater(s, to.c) ? has(s, u, 'Submerge') : has(s, u, 'Burrowing');
+    if (from.r === to.r || rt === 'void') return false;
+    return canOperate(s, u, rf === 'surface' ? rt : rf);
   }
-  if (from.r !== to.r) return false;
   const [x1, y1] = xy(from.c), [x2, y2] = xy(to.c);
   const dx = Math.abs(x1 - x2), dy = Math.abs(y1 - y2);
   if (dx > 1 || dy > 1) return false;
-  if (dx + dy === 2 && !(to.r === 'surface' && has(s, u, 'Airborne'))) return false;
-  if (!s.sites[to.c]) return to.r === 'surface' && !u.avatar && has(s, u, 'Voidwalk');
-  if (to.r === 'under') return isWater(s, to.c) ? has(s, u, 'Submerge') : has(s, u, 'Burrowing');
-  return true;
+  if (dx + dy === 2 && !(rf === 'surface' && rt === 'surface' && has(s, u, 'Airborne'))) return false;
+  if (rf === 'void' || rt === 'void') return !u.avatar && has(s, u, 'Voidwalk') && canOperate(s, u, rt);
+  if (rf !== rt) return false;
+  return canOperate(s, u, rt);
 }
 /** Every location the unit can end a move on, with one path to it. Includes staying put (empty path). */
 export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
@@ -999,7 +1039,7 @@ export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
     const next: Loc[][] = [];
     for (const path of frontier) {
       const from = path.length ? path[path.length - 1] : start;
-      const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...nearby(from.c).filter((c) => c !== from.c).map((c) => ({ c, r: from.r }))];
+      const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...nearby(from.c).filter((c) => c !== from.c).flatMap((c) => [{ c, r: 'surface' as const }, { c, r: 'under' as const }])];
       for (const to of cands) {
         if (out.has(locKey(to)) || !stepOk(s, u, from, to)) continue;
         const p = [...path, to]; out.set(locKey(to), p); next.push(p);
@@ -1122,7 +1162,7 @@ function castOrigins(s: GameState, p: PlayerId, d: CardDef): Loc[] {
 }
 function affordable(s: GameState, p: PlayerId, d: CardDef): Check {
   const cost = costOf(s, p, d);
-  if (s.players[p].mana < cost) return { ok: false, reason: `${d.name} costs ${cost} mana${cost !== d.cost ? ` (${d.cost} printed)` : ''} and you have ${s.players[p].mana}. Sites give 1 mana each at the start of your turn.`, keyword: 'Mana' };
+  if (s.players[p].mana < cost) return { ok: false, reason: `${d.name} costs ${cost} mana${cost !== d.cost ? ` (${d.cost} printed)` : ''} and you have ${Math.max(0, s.players[p].mana)}. Sites give 1 mana each at the start of your turn.`, keyword: 'Mana' };
   const t = thresholdOf(s, p);
   for (const e of ELEMENTS) if (t[e] < d.thresholds[e]) return { ok: false, reason: `${d.name} needs ${d.thresholds[e]} ${e} threshold and your sites provide ${t[e]}. Threshold is counted from the element symbols on sites you control; it is not spent.`, keyword: 'Threshold' };
   return { ok: true };
@@ -1136,8 +1176,13 @@ export function check(s: GameState, a: Action): Check {
   if (a.t === 'manual') return s.pending ? no('Resolve the pending defend or intercept first.', 'Defend') : { ok: true };
   if (!s.pending && s.queue?.length) {
     if (a.t !== 'trigger') return no(`${pname(s.queue[0].by)} must first resolve ${cardOf(s, s.queue[0].inst).name}'s triggered ability.`, 'Triggered ability');
+    let at = 0;
+    if (a.id) { // only one of the same player's abilities waiting together at the front of the queue
+      at = s.queue.findIndex((x) => x.id === a.id);
+      if (at < 0 || s.queue.slice(0, at + 1).some((x) => x.by !== s.queue![0].by)) return no('That ability is not next on the storyline.', 'Storyline');
+    }
     if (a.skip) return { ok: true };
-    const q = s.queue[0]; const d = cardOf(s, q.inst);
+    const q = s.queue[at]; const d = cardOf(s, q.inst);
     const self = q.src && 'unit' in q.src ? q.src.unit : undefined;
     return checkChoices(s, q.by, d, q.fx, a.choices ?? [], q.loc ? [q.loc] : casterOrigins(s, q.by), self);
   }
@@ -1297,8 +1342,7 @@ export function apply(state: GameState, a: Action): GameState {
       s.units[pl.avatar].tapped = true;
       pl.hand.splice(pl.hand.indexOf(a.inst), 1);
       s.sites[a.c] = { inst: a.inst, owner: p, ...(cardOf(s, a.inst).keywords.includes('Ward') ? { ward: true } : {}) };
-      pl.mana += 1;
-      log(s, `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`);
+      log(s, `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`); // the +1 comes from followMana below
       (s.players[p].cast ??= { turn: s.turn, ids: [] }); if (s.players[p].cast!.turn !== s.turn) s.players[p].cast = { turn: s.turn, ids: [] };
       s.players[p].cast!.ids.push('site:' + s.inst[a.inst]);
       fire(s, a.inst, 'genesis', p, { c: a.c, r: 'surface' }, { site: a.c });
@@ -1359,7 +1403,8 @@ export function apply(state: GameState, a: Action): GameState {
       break;
     }
     case 'trigger': {
-      const q = s.queue!.shift()!; const d = cardOf(s, q.inst);
+      const at = a.id ? s.queue!.findIndex((x) => x.id === a.id) : 0;
+      const q = s.queue!.splice(at, 1)[0]; const d = cardOf(s, q.inst);
       if (a.skip) log(s, `${pname(q.by)} lets ${d.name}'s ability pass.`, q.by);
       else resolve(s, d, q.fx, q.by, q.loc, a.choices ?? [], q.src, q.subject);
       if (!s.queue!.length) delete s.queue;
@@ -1402,13 +1447,15 @@ export function apply(state: GameState, a: Action): GameState {
         m.turns = (m.turns ?? 0) + 1;
         if (m.turns >= n) { s.perms.splice(s.perms.indexOf(m), 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); log(s, `${cardOf(s, m.inst).name} is dispelled (it lasted ${n} turns).`, p); }
       }
-      for (const u of Object.values(s.units)) { if (u.owner === p && !u.avatar) u.damage = 0; if (u.mods?.some((m) => m.turn !== undefined)) { u.mods = u.mods.filter((m) => m.turn === undefined); if (!u.mods.length) delete u.mods; } }
+      // Rulebook p16 End Phase step 2: "Players remove all damage from their minions" — both players, not just the active one.
+      for (const u of Object.values(s.units)) { if (!u.avatar) u.damage = 0; if (u.mods?.some((m) => m.turn !== undefined)) { u.mods = u.mods.filter((m) => m.turn === undefined); if (!u.mods.length) delete u.mods; } }
       pl.mana = 0;
       startTurn(s, other(p));
       break;
     }
     case 'manual': manual(s, a); break;
   }
+  followMana(s);
   // carried artifacts go where their bearer goes; if the bearer is gone they stay where it fell
   for (const m of s.perms) if (m.carrier) { const b = s.units[m.carrier]; if (b) m.c = b.c; else delete m.carrier; }
   return s;

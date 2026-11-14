@@ -210,7 +210,7 @@ export function HandTools({ g, lines, p }: { g: Game; lines: string[]; p: Player
         <div key={q} className={`ht-player p${q}`}>
           <b>{g.names[q]}</b>
           <span>♥ {s.players[q].life}<button onClick={() => m({ op: 'life', p: q, n: -1 })} aria-label="Lose 1 life">−</button><button onClick={() => m({ op: 'life', p: q, n: 1 })} aria-label="Gain 1 life">+</button></span>
-          <span>✦ {s.players[q].mana}<button onClick={() => m({ op: 'mana', p: q, n: -1 })} aria-label="1 less mana">−</button><button onClick={() => m({ op: 'mana', p: q, n: 1 })} aria-label="1 more mana">+</button></span>
+          <span>✦ {Math.max(0, s.players[q].mana)}<button onClick={() => m({ op: 'mana', p: q, n: -1 })} aria-label="1 less mana">−</button><button onClick={() => m({ op: 'mana', p: q, n: 1 })} aria-label="1 more mana">+</button></span>
           <span><button onClick={() => m({ op: 'draw', p: q, deck: 'spellbook' })}>Draw spell</button><button onClick={() => m({ op: 'draw', p: q, deck: 'atlas' })}>Draw site</button></span>
         </div>
       ))}</div>

@@ -17,7 +17,10 @@ function give(s: GameState, p: PlayerId, cardId: string): string {
   const k = `${p}x${Object.keys(s.inst).length}`; s.inst[k] = cardId; s.players[p].hand.push(k); return k;
 }
 function site(s: GameState, p: PlayerId, c: number, name = p === 0 ? 'Cinder Field' : 'Mill Pond') {
-  const k = `${p}t${Object.keys(s.inst).length}`; s.inst[k] = id(name); s.sites[c] = { inst: k, owner: p };
+  const k = `${p}t${Object.keys(s.inst).length}`; s.inst[k] = id(name);
+  // a site put down by hand during setup is not "gained mid-turn": count it in the turn's income so it adds no mana
+  if (s.sites[c]?.owner !== p && s.players[p].income !== undefined) s.players[p].income! += 1;
+  s.sites[c] = { inst: k, owner: p };
 }
 function unit(s: GameState, p: PlayerId, c: number, cardId: string, o: Partial<GameState['units'][string]> = {}) {
   const k = `${p}u${Object.keys(s.inst).length}`; s.inst[k] = cardId; const uid = `u${s.nextId++}`;
@@ -159,13 +162,13 @@ describe('combat', () => {
     expect(s.units[guard].damage).toBe(4); expect(s.units[brute].damage).toBe(2); // guard survives at 5 defense
     expect(s.units[brute].tapped).toBe(true);
   });
-  it('minion damage clears at the end of its controller\'s turn, not the opponent\'s', () => {
+  it('minion damage clears at the end of every turn, for both players (rulebook p16 End Phase step 2)', () => {
     let s = rig();
     const brute = unit(s, 0, cell(2, 2), id('Kiln Brute'));
     const guard = unit(s, 1, cell(2, 1), id('Granite Guard'), { tapped: true });
     s = apply(s, { t: 'move', unit: brute, path: [{ c: cell(2, 1), r: 'surface' }], attack: { unit: guard } });
     s = apply(s, { t: 'endTurn' });
-    expect(s.units[brute].damage).toBe(0); expect(s.units[guard].damage).toBe(4);
+    expect(s.units[brute].damage).toBe(0); expect(s.units[guard].damage).toBe(0);
   });
   it('attacking an undefended site makes its controller lose life', () => {
     let s = rig();
@@ -373,7 +376,7 @@ describe('art matching', () => {
 describe('official precon lists', () => {
   it('every bundled deck has 36 spells and 16 sites and resolves against a pool that has its cards', async () => {
     const { OFFICIAL_DECKS, resolveOfficial } = await import('../src/data/officialDecks');
-    expect(OFFICIAL_DECKS.length).toBe(4);
+    expect(OFFICIAL_DECKS.length).toBe(8);
     const pool: Record<string, CardDef> = {};
     for (const d of OFFICIAL_DECKS) {
       expect(d.spellbook.reduce((n, [k]) => n + k, 0)).toBe(36);
@@ -381,6 +384,7 @@ describe('official precon lists', () => {
       const av = makeCard({ name: d.avatar, type: 'Avatar', life: 20, source: 'api' }); pool[av.id] = av;
       for (const [, n] of d.spellbook) { const c = makeCard({ name: n, type: 'Minion', source: 'api' }); pool[c.id] = c; }
       for (const [, n] of d.atlas) { const c = makeCard({ name: n, type: 'Site', source: 'api' }); pool[c.id] = c; }
+      for (const [, n] of d.collection ?? []) { const c = makeCard({ name: n, type: 'Minion', source: 'api' }); pool[c.id] ??= c; }
     }
     for (const r of resolveOfficial(pool)) { expect(r.missing).toEqual([]); expect(r.deck.spellbook.length).toBe(36); expect(r.deck.atlas.length).toBe(16); expect(pool[r.deck.avatar].type).toBe('Avatar'); }
     expect(resolveOfficial({})[0].missing.length).toBeGreaterThan(20); // nothing synced: listed, not playable
@@ -822,7 +826,7 @@ describe('choosing cards from zones, the collection, and targets', () => {
   it('a named card is cast from the collection (casual play: always available), paying its cost', () => {
     let s = board(); s.players[0].mana = 5;
     const town = read('Site', 'Test Town', 'Genesis → You may cast a Kiln Brute from your collection to this site.');
-    s.sites[cell(1, 3)] = null; s.units[s.players[0].avatar].tapped = false;
+    s.sites[cell(1, 3)] = null; s.players[0].income! -= 1; s.units[s.players[0].avatar].tapped = false;
     s = apply(s, { t: 'playSite', inst: give(s, 0, town), c: cell(1, 3) });
     expect(s.queue?.length).toBe(1);
     const opts = (s.queue![0]); void opts;
@@ -933,10 +937,11 @@ describe('auras occupy a 2×2 area (Codex "Casting Auras")', () => {
   it('"here" on an aura means all four squares', () => {
     let s = board();
     const storm = read('Aura', 'Test Storm', 'At the end of your turn, deal 1 damage to each unit here.', { cost: 1 });
-    const a = unit(s, 1, cell(2, 0), id('Ember Runner')), b = unit(s, 1, cell(3, 1), id('Ember Runner'));
+    const a = unit(s, 1, cell(2, 0), id('Wind Sprite')), b = unit(s, 1, cell(3, 1), id('Wind Sprite')), c = unit(s, 1, cell(0, 0), id('Wind Sprite'));
     s = apply(s, { t: 'cast', inst: give(s, 0, storm), c: cell(2, 0) });
     s = apply(s, { t: 'endTurn' });
-    expect(s.units[a].damage + s.units[b].damage).toBe(2);                 // both squares of the area were hit (enemy damage clears at the end of their own turn)
+    expect(s.units[a]).toBeUndefined(); expect(s.units[b]).toBeUndefined();  // both squares of the area were hit (1 power: 1 damage kills)
+    expect(s.units[c]).toBeDefined();                                         // outside the area
   });
 });
 

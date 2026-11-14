@@ -252,7 +252,10 @@ export interface PlayerState {
   deathsDoor: boolean;
   /** turn number on which death's door was reached (immune for the rest of that turn) */
   ddTurn: number;
+  /** available mana this turn; below zero after a mana source was lost mid-turn (shown as 0) */
   mana: number;
+  /** mana from sources counted into `mana` this turn (sites, "Provides (1)"), so a source gained or lost mid-turn changes it */
+  income?: number;
   spellbook: string[];
   atlas: string[];
   hand: string[];
@@ -353,8 +356,9 @@ export type Action =
   | { t: 'cast'; inst: string; c?: number; target?: string; choices?: Choice[] }
   /** use an activated ability (Tap → … or similar) of a unit, site or permanent you control */
   | { t: 'ability'; src: Source; fx: number; choices?: Choice[] }
-  /** resolve (or skip) the first triggered ability in the queue */
-  | { t: 'trigger'; choices?: Choice[]; skip?: boolean }
+  /** resolve (or skip) the first triggered ability in the queue; `id` picks another of the same player's
+   *  waiting abilities from the front of the queue (rulebook p31: a player orders their own simultaneous events) */
+  | { t: 'trigger'; id?: string; choices?: Choice[]; skip?: boolean }
   | { t: 'move'; unit: string; path: Loc[]; attack?: { unit?: string; site?: boolean } }
   | { t: 'shoot'; unit: string; dx: number; dy: number }
   | { t: 'respond'; units: string[]; removeOriginal?: boolean }

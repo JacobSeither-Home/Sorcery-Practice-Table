@@ -557,7 +557,7 @@ function PlayerPanel({ g, p, manual }: { g: Game; p: PlayerId; manual: boolean }
       <header><b>{g.names[p]}</b>{s.active === p && s.phase !== 'over' && <span className="tag">turn</span>}{pl.deathsDoor && <span className="tag danger" data-tip="At 0 life. The next damage after this turn is a death blow. Cannot gain life.">death's door</span>}</header>
       <div className="stats">
         <div data-tip="Avatar life"><Num n={pl.life} className="big" /><small>life</small>{manual && <span className="pm"><button onClick={() => adj('life', -1)}>−</button><button onClick={() => adj('life', 1)}>+</button></span>}</div>
-        <div data-tip="Mana this turn. Each site gives 1 at the start of your turn."><Num n={pl.mana} className="big" /><small>mana</small>{manual && <span className="pm"><button onClick={() => adj('mana', -1)}>−</button><button onClick={() => adj('mana', 1)}>+</button></span>}</div>
+        <div data-tip="Mana this turn. Each site gives 1 at the start of your turn."><Num n={Math.max(0, pl.mana)} className="big" /><small>mana</small>{manual && <span className="pm"><button onClick={() => adj('mana', -1)}>−</button><button onClick={() => adj('mana', 1)}>+</button></span>}</div>
         <div className="thr" data-tip="Threshold: element symbols on sites you control">{ELEMENTS.map((e) => <span key={e} className={t[e] ? '' : 'zero'}><i className={`pip ${e}`} />{t[e]}</span>)}</div>
       </div>
       <footer>
@@ -583,7 +583,7 @@ function PlayerStrip({ g, p, manual, onLog, near }: { g: Game; p: PlayerId; manu
       <b className="who">{g.names[p]}</b>
       {pl.deathsDoor && <span className="tag danger">death's door</span>}
       <span className="stat-l"><i className="sym" aria-hidden>♥</i><Num n={pl.life} /><small>life</small>{manual && <><button onClick={() => act({ t: 'manual', op: 'life', p, n: -1 })}>−</button><button onClick={() => act({ t: 'manual', op: 'life', p, n: 1 })}>+</button></>}</span>
-      <span className="stat-m"><i className="sym" aria-hidden>✦</i><Num n={pl.mana} /><small>mana</small>{manual && <><button onClick={() => act({ t: 'manual', op: 'mana', p, n: -1 })}>−</button><button onClick={() => act({ t: 'manual', op: 'mana', p, n: 1 })}>+</button></>}</span>
+      <span className="stat-m"><i className="sym" aria-hidden>✦</i><Num n={Math.max(0, pl.mana)} /><small>mana</small>{manual && <><button onClick={() => act({ t: 'manual', op: 'mana', p, n: -1 })}>−</button><button onClick={() => act({ t: 'manual', op: 'mana', p, n: 1 })}>+</button></>}</span>
       <span className="thr-s">{ELEMENTS.map((e) => t[e] ? <span key={e}><i className={`pip ${e}`} />{t[e]}</span> : null)}</span>
       <button className="counts" onClick={onLog} aria-label="Open the game log">✋{pl.hand.length} · 📖{pl.spellbook.length} · 🗺{pl.atlas.length} · 🪦{pl.cemetery.length}</button>
     </section>

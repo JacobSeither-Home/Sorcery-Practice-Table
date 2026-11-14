@@ -62,7 +62,12 @@ export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[
       id, name, slug, type,
       rarity: str(e.rarity) || null,
       rules,
-      cost: num(e.cost), attack: num(e.attack), defense: num(e.defense), life: num(e.life),
+      // Rulebook p7: a minion's power "also describes how much damage they can take before dying"; a separate
+      // defence value is printed only on split-power cards. The API sends defense: null for the rest (38
+      // minions on 2026-11-13), so a null defense takes the power. Other null numbers mean "not printed"
+      // (a site's cost, a Magic's power) or "set by the card's text" (Evil Twin and Stitched Abomination
+      // ship attack: null; their text decides their power), and read as 0.
+      cost: num(e.cost), attack: num(e.attack), defense: typeof e.defense === 'number' && isFinite(e.defense) ? e.defense : num(e.attack), life: num(e.life),
       thresholds: { air: num(e.air), earth: num(e.earth), fire: num(e.fire), water: num(e.water) },
       subtypes: [...arr(e.subtypes), ...arr(e.umbrellas)],
       keywords,
