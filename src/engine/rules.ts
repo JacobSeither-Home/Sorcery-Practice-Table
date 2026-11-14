@@ -135,6 +135,16 @@ function moveSite(s: GameState, from: number, to: number) {
   for (const m of s.perms) if (m.c === from && m.kind === 'artifact' && !m.carrier) m.c = to;
   s.sites[to] = s.sites[from]; s.sites[from] = null;
 }
+/** The damage effect a chain repeats: the targeted damage before it on the card. */
+export function chainBase(d: CardDef, idx: number[], i: number): number | undefined {
+  return idx.slice(0, idx.indexOf(i)).reverse().find((k) => d.effects[k].op === 'damage' && d.effects[k].who === 'target' && !d.effects[k].ref);
+}
+/** Units a chain may add next: valid targets nearby the previous one, not hit already. */
+export function chainNext(s: GameState, p: PlayerId, d: CardDef, i: number, prev: string | undefined, used: (string | undefined)[]): string[] {
+  const u = prev ? s.units[prev] : undefined; if (!u) return [];
+  const asTarget = { ...d, effects: d.effects.map((x, j) => (j === i ? { ...x, who: 'target' as const } : x)) };
+  return targetsFor(s, p, asTarget, i, [{ c: u.c, r: u.r }]).filter((x) => !used.includes(x));
+}
 /** Has the player the threshold an ability asks for ("(A)(A)(A) — …", rulebook p18)? */
 export const needMet = (s: GameState, p: PlayerId, e: Effect) => !e.need || ELEMENTS.every((el) => thresholdOf(s, p)[el] >= (e.need![el] ?? 0));
 /** Where an aura at top-left square `c` can go in one step: the joints next to its own, up, down, left or right. */
@@ -479,7 +489,7 @@ function squareInRange(from: number, to: number, range: Effect['range']): boolea
   return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => e.op === 'moveAura' || e.op === 'moveSite' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -605,6 +615,12 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
     if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
+    if (e.op === 'chain' && c?.chain?.length) {
+      const k = chainBase(d, idx, i); let prev = k !== undefined ? ch[k]?.target : undefined; const used = [prev];
+      for (const id of c.chain) { if (!chainNext(s, p, d, i, prev, used).includes(id)) return no('Each extra target must be a new unit nearby the previous one, in its region.', 'Target'); used.push(id); prev = id; }
+      const left = s.players[p].mana - (d.type === 'Magic' && idx.includes(i) && d.effects[i].on === 'cast' ? costOf(s, p, d) : 0);
+      if ((e.pay ?? 0) * c.chain.length > left) return no(`Each extra target costs ${e.pay} mana: ${c.chain.length} cost ${(e.pay ?? 0) * c.chain.length} and you would have ${Math.max(0, left)} left.`, 'Mana');
+    }
     if (e.op === 'moveSite' && !c?.skip && (c?.cell === undefined || !origins[0] || !siteMoveCells(s, origins[0].c).includes(c.cell))) return no('Choose a nearby void for the site to move to.', 'Site');
     if (e.op === 'moveAura' && (c?.cell === undefined || !origins[0] || !auraSteps(origins[0].c).includes(c.cell))) return no('Choose a neighbouring joint for the aura, or skip the move.', 'Aura');
     if (e.op === 'teleport' && chosenDest(e) && (e.who === 'target' || e.who === 'self')) { const u = c?.target ? s.units[c.target] : self ? s.units[self] : undefined; if (c?.cell === undefined || !teleportCells(s, e, u, origins[0]).includes(c.cell)) return no('Choose where it goes.'); }
@@ -698,7 +714,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
     const e = d.effects[i]; const c = ch[i] ?? undefined;
     if (s.phase === 'over') return;
     if (e.optional && c?.skip) { log(s, `${pname(p)} chooses not to: ${e.text ?? ''}`, p); continue; }
-    if (e.pay) { if (s.players[p].mana < e.pay) { log(s, `${pname(p)} cannot pay ${e.pay} mana for ${d.name}.`, p); continue; } s.players[p].mana -= e.pay; log(s, `${pname(p)} pays ${e.pay} mana (${d.name}).`, p); }
+    if (e.pay && e.op !== 'chain') { if (s.players[p].mana < e.pay) { log(s, `${pname(p)} cannot pay ${e.pay} mana for ${d.name}.`, p); continue; } s.players[p].mana -= e.pay; log(s, `${pname(p)} pays ${e.pay} mana (${d.name}).`, p); }
     if (e.cond === 'onlyCopy' && sitesOf(s, p).filter((x) => s.sites[x]!.inst && cardOf(s, s.sites[x]!.inst!).name === d.name).length !== 1) continue;
     if (e.refCell) { const prev = idx.slice(0, idx.indexOf(i)).reverse().find((k) => ch[k]?.cell !== undefined); ch = ch.slice(); ch[i] = { ...(ch[i] ?? {}), cell: prev !== undefined ? ch[prev]!.cell : undefined }; }
     const c2 = ch[i] ?? undefined;
@@ -851,6 +867,18 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
+      case 'chain': {
+        const k = chainBase(d, idx, i); if (k === undefined) break;
+        const dmg = d.effects[k].n ?? 1; const hit = [ch[k]?.target];
+        for (const id of c?.chain ?? []) {
+          const t = s.units[id]; if (!t || hit.includes(id)) continue;
+          if (s.players[p].mana < (e.pay ?? 0)) { log(s, `${pname(p)} cannot pay ${e.pay} more mana for ${d.name}.`, p); break; }
+          s.players[p].mana -= e.pay ?? 0; hit.push(id);
+          if (t.owner !== p && warded(s, t)) { breakWard(s, t, `${d.name} targeted it`); continue; }
+          log(s, `${pname(p)} pays ${e.pay} mana: ${d.name} also deals ${dmg} damage to ${nm(t)}.`, p); damageUnit(s, t, dmg, false, { card: d });
+        }
+        break;
+      }
       case 'moveSite': {
         const from = loc?.c; if (from === undefined || c?.cell === undefined || !siteMoveCells(s, from).includes(c.cell)) break;
         moveSite(s, from, c.cell); log(s, `${d.name} flies to ${'ABCDE'[xy(c.cell)[0]]}${4 - xy(c.cell)[1]}, with everything on it.`, p);

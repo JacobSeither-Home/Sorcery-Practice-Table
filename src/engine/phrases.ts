@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  chain: 'Damage',
   moveSite: 'Movement & position',
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
@@ -443,6 +444,8 @@ export const RULES: Rule[] = [
   // rulebook p28 "When Sites Move": everything atop and under it moves with it
   { id: 'site-fly', label: 'This site flies to a nearby void', re: /^(?:this site )?(?:may )?fly to a nearby void\.$/i,
     build: (_m, on) => (on !== 'static' ? [{ op: 'moveSite', who: 'siteHere', dest: 'nearbyVoid' }] : null) },
+  { id: 'chain', label: 'Any number of times, spend ② to also target a new unit nearby the previous one', re: /^any number of times, you may spend ([①-⑳]|\(\d+\)) to additionally target a new (unit|minion) nearby the previous one\.$/i,
+    build: (m, on) => (on !== 'static' ? [{ op: 'chain', who: 'controller', range: 'nearby', targets: true, pay: manaOf(m[1]), ...(m[2].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}) }] : null) },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,

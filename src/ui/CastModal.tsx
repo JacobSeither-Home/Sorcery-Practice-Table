@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, Reorder, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, chainBase, chainNext, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, hoverProps, mainElement } from './CardFace';
@@ -112,7 +112,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
             return <button key={u.id} className={`chip p${u.owner} ${caster === u.id ? 'on' : ''}`} aria-pressed={on} onClick={() => setCaster(caster === u.id ? undefined : u.id)} onPointerEnter={() => focus(u.id)} onPointerLeave={() => focus(null)} data-tip={d.type === 'Magic' ? 'The spell happens where this spellcaster stands: range and targets count from there' : 'Who casts it (casting ends that unit\'s Stealth)'}>{unitCard(s, u).name}{u.avatar ? ' (Avatar)' : ''}</button>; })}
             {!caster && <small> — or leave it: the table uses your Avatar, or the first spellcaster that can reach your choices</small>}</div>}
           {req.k !== 'hand' && <ol className="incant">
-            {pl.idx.map((i) => <Line key={i} s={s} pl={pl} i={i} e={d.effects[i]} c={choices[i]} set={(p) => set(i, p)} focus={focus} />)}
+            {pl.idx.map((i) => <Line key={i} s={s} pl={pl} i={i} e={d.effects[i]} c={choices[i]} all={choices} set={(p) => set(i, p)} focus={focus} />)}
           </ol>}
           {others.length > 0 && <div className="spell-other"><b>Its other abilities</b>{others.map((e, i) => <p key={i}><span className="trig">{TRIGGER_SHORT[e.on]}</span> {describe(e)}{e.op === 'manual' ? <em> (by hand)</em> : ''}</p>)}</div>}
           {manualLines.length > 0 && req.k === 'hand' && <HandTools g={g} lines={manualLines} p={pl.p} />}
@@ -134,7 +134,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
 }
 
 /** One ability line, with whatever choice it needs. */
-function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: number; e: Effect; c?: Choice; set: (p: Partial<Choice>) => void; focus: (u: string | null) => void }) {
+function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: number; e: Effect; c?: Choice; all: Choice[]; set: (p: Partial<Choice>) => void; focus: (u: string | null) => void }) {
   const targets = e.who === 'target' && !e.ref ? targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self) : [];
   const cells = e.who === 'atTarget' && !e.refCell ? cellsFor(s, pl.d, i, pl.origins) : [];
   const dirs = e.op === 'shoot' ? shotDirs(s, pl.p, pl.origins[0] ?? { c: 0, r: 'surface' }) : [];
@@ -188,6 +188,15 @@ function Line({ s, pl, i, e, c, set, focus }: { s: GameState; pl: Plan; i: numbe
         {e.op === 'scry' && (() => { const top = s.players[pl.p][e.deck ?? 'spellbook'][0]; return top ? <div className="lookrow"><small>Only you see this. It is the top card of your {e.deck ?? 'spellbook'}.</small>
           <div className="look-cards"><div className="look-card" {...hoverProps(cardOf(s, top))}><CardFace card={cardOf(s, top)} size="md" /></div>
             <span className="xpick col"><button className={!c?.bottom ? 'on' : ''} onClick={() => set({ bottom: false })}>▲ Leave it on top</button><button className={c?.bottom ? 'on' : ''} onClick={() => set({ bottom: true })}>▼ Put it on the bottom</button></span></div></div> : <small className="none"> — the deck is empty</small>; })()}
+        {e.op === 'chain' && (() => {
+          const k = chainBase(pl.d, pl.idx, i); const chosen = c?.chain ?? []; const used = [k !== undefined ? all[k]?.target : undefined, ...chosen];
+          const prev = used[used.length - 1]; const next = chainNext(s, pl.p, pl.d, i, prev, used);
+          if (!prev) return <small className="none"> — choose the first target above, then add more here</small>;
+          return <div className="chips targets"><small>Extra targets ({e.pay} mana each){chosen.length ? `: ${chosen.length} chosen, ${chosen.length * (e.pay ?? 0)} mana` : ''}</small>
+            {chosen.map((id, n) => <button key={id} className="chip on" onClick={() => set({ chain: chosen.slice(0, n) })} data-tip="Remove this and the ones after it">{n + 1}. {s.units[id] ? unitCard(s, s.units[id]).name : '?'} ✕</button>)}
+            {next.map((id) => <button key={id} className={`chip p${s.units[id].owner}`} onClick={() => set({ chain: [...chosen, id] })} onPointerEnter={() => focus(id)} onPointerLeave={() => focus(null)}>+ {unitCard(s, s.units[id]).name}</button>)}
+            {!next.length && <small> — no new unit nearby the last one</small>}</div>;
+        })()}
         {e.op === 'moveSite' && pl.origins[0] && (() => { const cl = siteMoveCells(s, pl.origins[0].c); return cl.length ? <div className="chips targets"><small>Fly to:</small>{cl.map((x) => <button key={x} className={`chip ${c?.cell === x ? 'on' : ''}`} onClick={() => set({ cell: x })}>{sq(x)}<small> void</small></button>)}</div> : <small className="none"> — no void nearby</small>; })()}
         {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);
           return <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })} data-tip={`The joint between ${a.map(sq).join(', ')}`}>{sq(a[0])}–{sq(a[3])}<small> {a.map(sq).join(' ')}</small></button>; })}</div>}

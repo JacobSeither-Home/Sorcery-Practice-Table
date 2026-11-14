@@ -417,4 +417,16 @@ describe('Beta Air minions and spells', () => {
     expect(s.units[foe].damage).toBe(3);                                                  // the only other unit here
     expect(s.units[j].tapped).toBe(false);                                                // no tap: it can be used again
   });
+  it('Chain Lightning: each extra target is new, nearby the previous one, and costs ②', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(2, 3), cell(2, 2), cell(2, 1), cell(2, 0)]) site(s, 0, c); s.players[0].mana = 5;
+    const chain = T('Test Chain', 'Magic', { cost: 1, effects: effectsFromText('Magic', 'Deal 2 damage to target unit nearby. Any number of times, you may spend ② to additionally target a new unit nearby the previous one.', 'Test Chain') });
+    const a = unit(s, 1, cell(2, 2), id('Kiln Brute')), b = unit(s, 1, cell(2, 1), id('Kiln Brute')), c2 = unit(s, 1, cell(2, 0), id('Kiln Brute'));
+    const inst = give(s, 0, chain);
+    expect(check(s, { t: 'cast', inst, choices: [{ target: a }, { chain: [c2] }] }).ok).toBe(false);       // not nearby the previous one
+    expect(check(s, { t: 'cast', inst, choices: [{ target: a }, { chain: [b, a] }] }).ok).toBe(false);     // not new
+    s = apply(s, { t: 'cast', inst, choices: [{ target: a }, { chain: [b, c2] }] });
+    expect([a, b, c2].map((x) => s.units[x].damage)).toEqual([2, 2, 2]);
+    expect(s.players[0].mana).toBe(0);                                                                     // 1 + 2 + 2
+  });
 });
