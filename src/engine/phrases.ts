@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  fight: 'Damage',
   roll: 'Damage',
   ongoing: 'Keyword grants',
   chain: 'Damage',
@@ -475,6 +476,11 @@ export const RULES: Rule[] = [
     build: (m, on) => { const sb = subOf(m[1]); return on === 'static' && sb ? [{ op: 'grant', who: 'self', keyword: `Controls all ${sb}`, until: 'permanent' }] : null; } },
   { id: 'damage-discarded', label: "Deal damage equal to the discarded card's mana cost to …", re: /^deal damage equal to the discarded card'?s mana cost to (.+)\.$/i,
     build: (m) => { const v = nounPhrase(m[1]); return v ? [{ op: 'damage', ...v, amount: 'discardedCost' }] : null; } },
+  { id: 'additional-discard', label: 'As an additional cost to cast this, discard a site/spell/card', re: /^as an additional cost to cast this, discard an? (site|spell|card)\.$/i,
+    build: (m, on) => (on === 'cast' || on === 'genesis' ? [{ op: 'discard', who: 'controller', n: 1, isCost: true, ...(m[1].toLowerCase() === 'site' ? { deck: 'atlas' as const } : m[1].toLowerCase() === 'spell' ? { deck: 'spellbook' as const } : {}) }] : null) },
+  // the area of effect is a shape printed on the card, not in its text: the site is destroyed here, the damage is left by hand
+  { id: 'destroy-site-aoe', label: 'Destroy target site and deal damage … in the area of effect', re: /^destroy target site and deal damage to (.+?) in the area of effect:?\.?$/i,
+    build: (m) => [{ op: 'destroySite', who: 'atTarget', range: 'any', targets: true }, { op: 'manual', who: 'controller', text: `Deal damage to ${m[1]} in the area of effect shown on the card.` }] },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -723,6 +729,13 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     const ss = sentences(body);
     for (let k = 0; k < ss.length; k++) {
       let sentence = ss[k];
+      // "Shoot a projectile." + "If it hits a unit, drag it to this location." [+ "This may fight it when it arrives."] (Pudge Butcher)
+      if (/^shoot a projectile\.$/i.test(sentence) && /^if it hits a unit, (?:drag|pull) it to this location\.$/i.test(ss[k + 1] ?? '')) {
+        rl.effects.push({ on, op: 'shoot', who: 'controller', n: 0, drag: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-drag', auto: true, ...(cost ? { cost } : {}) });
+        k++;
+        if (/^(?:this|\w+) may fight it when it arrives\.$/i.test(ss[k + 1] ?? '')) /* the card's own name or part of it (Codex "Abilities that Reference the Card's Own Name") */ { rl.effects.push({ on, op: 'fight', who: 'self', optional: true, line: lineNo, text: ss[k + 1], rule: 'fight-dragged', auto: true }); k++; }
+        continue;
+      }
       // "Shoot a projectile." + "It deals N damage on impact[, and M damage to each other unit at that location]."
       const imp = ss[k + 1]?.match(/^It deals (\d+) damage(?: on impact)?(?:,? and (\d+) damage to each other unit (?:at|there|at that location)[^.]*)?\.$/i);
       const many = sentence.match(new RegExp(`^shoot ${NUM} projectiles in the same direction, one at a time\\.$`, 'i'));
@@ -767,7 +780,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       if (hit && ev?.self) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined } : e)) };
       // "it" must have something to point back to on this line
       if (hit?.got.some((e) => e.ref) && !(ev && !ev.self) && ![...rl.effects, ...hit.got].some((e, i, arr) => e.who === 'target' && !e.ref && i < arr.findIndex((x) => x.ref))) hit = null;
-      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}), ...(eachTurn ? { eachTurn: true } : {}) })));
+      if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: e.op === 'manual' && e.text ? e.text : sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}), ...(eachTurn ? { eachTurn: true } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
     if (roll) rl.effects.push({ on, op: 'roll', who: 'controller', n: roll, repeat: true, line: lineNo, text: `Push it: it rolls as far as possible, ${roll} damage to each other unit along its path`, rule: 'roll', auto: true });

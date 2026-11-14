@@ -528,6 +528,18 @@ describe('Beta Earth', () => {
     expect(s.perms.find((m) => m.id === 'mr')!.c).toBe(cell(3, 2));                                         // stopped before the void at (4,2)
     expect(s.units[pusher].damage).toBe(0);
   });
+  it('Pudge Butcher: the projectile drags the unit it hits here, then Pudge may fight it', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(1, 3), cell(1, 2), cell(1, 1)]) site(s, 0, c);
+    const txt = 'Immobile\n\nTap → Shoot a projectile. If it hits a unit, drag it to this location. Test Pudge may fight it when it arrives.';
+    const pudge = T('Test Pudge', 'Minion', { attack: 5, keywords: ['Immobile'], effects: effectsFromText('Minion', txt, 'Test Pudge') });
+    const u = unit(s, 0, cell(1, 2), pudge); const foe = unit(s, 1, cell(1, 0), id('Kiln Brute')); site(s, 1, cell(1, 0));
+    const d = s.cards[pudge]; const sh = d.effects.findIndex((e) => e.op === 'shoot');
+    const ch: { dir?: [number, number] }[] = []; ch[sh] = { dir: [0, -1] };
+    s = apply(s, { t: 'ability', src: { unit: u }, fx: sh, choices: ch });
+    expect(s.units[foe]).toBeUndefined();          // dragged to Pudge, then fought: 5 damage kills the 4/4
+    expect(s.units[u].damage).toBe(4);
+  });
   it('Monks of Kobalsa: can\'t be modified, except by Wards', async () => {
     const { effectsFromText } = await import('../src/engine/cards');
     let s = start(0); site(s, 0, cell(2, 3));

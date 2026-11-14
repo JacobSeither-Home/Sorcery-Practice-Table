@@ -25,6 +25,8 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** this unit fights the unit an earlier effect on the line brought to it (Pudge Butcher) */
+  | 'fight'
   /** this artifact rolls in a chosen direction as far as it can, dealing `n` damage to each other unit along its path (Rolling Boulder) */
   | 'roll'
   /** leave an ongoing effect (`fx`, read like static text) at the ability's location until the controller's next turn */
@@ -127,6 +129,8 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** shoot: the hit unit is dragged to the shooter's location (forced movement) */
+  drag?: boolean;
   /** the ability taps the artifact's bearer as (part of) its cost ("Tap bearer and another ally here →") */
   tapBearer?: boolean;
   noEnter?: { minPower?: number; side?: 'ally' | 'enemy'; ground?: boolean; occupied?: boolean };

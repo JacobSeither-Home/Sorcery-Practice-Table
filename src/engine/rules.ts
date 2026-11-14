@@ -731,6 +731,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
   let loc = loc0;
   const shielded = new Set<string>(); // targets a Ward protected: the rest of the effect on them does not resolve
   let discardedCost = 0; // "damage equal to the discarded card's mana cost"
+  let lastHit: string | undefined; // the unit a projectile on this line hit
   for (const i of idx) {
     const e = d.effects[i]; const c = ch[i] ?? undefined;
     if (s.phase === 'over') return;
@@ -811,6 +812,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         for (let k = 0; k < shots && (s.phase as string) !== 'over'; k++) {
           const hit = projectileHit(s, p, loc, c.dir[0], c.dir[1], 9, self, k === 0 ? c.hit : undefined);
           if (!hit) { log(s, `${d.name}'s projectile hits nothing.`, p); break; }
+          lastHit = hit.id;
+          if (e.drag) { log(s, `${d.name}'s projectile hits ${nm(hit)} and drags it here.`, p); if (self) s.units[self].stealthLost = true; hit.c = loc.c; hit.r = loc.r; react(s, 'enters', hit); continue; } // Codex "Forced Movement"
           const at: Loc = { c: hit.c, r: hit.r };
           log(s, `${d.name}'s projectile hits ${nm(hit)} for ${n}.`, p); damageUnit(s, hit, n, false, { card: d, ...(self && s.units[self] ? { unit: s.units[self] } : {}) });
           if (e.splash) for (const o of unitsAt(s, at)) if (o.id !== hit.id) { log(s, `${d.name} deals ${e.splash} damage to ${nm(o)}.`, p); damageUnit(s, o, e.splash, false, { card: d }); }
@@ -889,6 +892,11 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
+      case 'fight': { // "This may fight it when it arrives"
+        const me = self ? s.units[self] : undefined; const them = lastHit ? s.units[lastHit] : undefined;
+        if (me && them && them.owner !== me.owner && them.c === me.c && them.r === me.r) { log(s, `${nm(me)} fights ${nm(them)}.`, p); fight(s, me.id, [them.id], null); }
+        break;
+      }
       case 'roll': {
         const m = src && 'perm' in src ? s.perms.find((x) => x.id === src.perm) : undefined;
         if (!m || m.carrier || !c?.dir) break;
@@ -1462,6 +1470,7 @@ export function check(s: GameState, a: Action): Check {
       if (d.type === 'Site') return no('Sites are played with your Avatar ability, not cast.', 'Site');
       if (d.type === 'Avatar') return no('Avatars are not cast.');
       const aff = affordable(s, p, d); if (!aff.ok) return aff;
+      for (const ce of d.effects) if (ce.isCost && ce.op === 'discard' && !pl.hand.some((x) => x !== a.inst && (ce.deck === 'atlas' ? cardOf(s, x).type === 'Site' : ce.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true))) return no(`${d.name} has an additional cost: discard a ${ce.deck === 'atlas' ? 'site' : ce.deck === 'spellbook' ? 'spell' : 'card'}, and you have none in hand.`, 'Discard');
       const casters = castersFor(s, p, d);
       if (!casters.length) return no(`None of your units can cast ${d.name}. Your Avatar can't cast right now, and your other spellcasters are limited to other elements or kinds of spell.`, 'Spellcaster');
       if (a.caster && !casters.some((u) => u.id === a.caster)) { const u = s.units[a.caster]; return no(u ? `${unitCard(s, u).name} can't cast ${d.name}${casterKinds(s, u).length ? `: it is a ${casterKinds(s, u).join(' / ').replace(/Spellcaster \((.+)\)/g, '$1 Spellcaster').replace(/\+/g, ' and ')}` : ': it is not a spellcaster'}.` : 'Choose a spellcaster you control.', 'Spellcaster'); }
