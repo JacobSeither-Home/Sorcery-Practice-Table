@@ -1485,6 +1485,7 @@ function stepWhyNot(s: GameState, u: Unit, from: Loc, to: Loc): Check {
   if (!s.sites[to.c]) return no(u.avatar ? 'An Avatar can never enter the void.' : 'That square is void. A minion entering the void is banished unless it has Voidwalk.', 'Voidwalk');
   const rt = regionOf(s, to), rf = regionOf(s, from);
   if (rt === 'underground' || rt === 'underwater') if (!canOperate(s, u, rt)) return no(`Only ${rt === 'underwater' ? 'Submerge units can go underwater' : 'Burrowing units can go underground'}.`, rt === 'underwater' ? 'Submerge' : 'Burrowing');
+  if (rf === 'void' && !has(s, u, 'Voidwalk')) return no(`${name} is in the void: only Voidwalk units step from the void.`, 'Voidwalk');
   if (from.c !== to.c && rf !== rt && rf !== 'void') return no('A step stays in one region: from the surface to the surface, underground to underground, underwater to underwater.', 'Region');
   return no('A step goes to a bordering square. Diagonal steps need Airborne.', 'Airborne');
 }
@@ -1845,7 +1846,7 @@ export function check(s: GameState, a: Action): Check {
       if (!a.path.length && !a.attack) return no('Choose a square to move to or something to attack.', 'Move and Attack');
       { let cost = 0, at: Loc = { c: u.c, r: u.r }; for (const to of a.path) { cost += stepCost(s, u, at, to); at = to; }
         if (cost > 1 + moveOf(s, u)) return no(`${unitCard(s, u).name} can take ${1 + moveOf(s, u)} step(s) per move.`, 'Movement'); }
-      if (a.path.length && unitCard(s, u).keywords.includes('Immobile')) return no(`${unitCard(s, u).name} is Immobile and cannot take steps.`, 'Immobile');
+      if (a.path.length && (has(s, u, 'Immobile') || unitCard(s, u).keywords.includes('Immobile'))) return no(`${unitCard(s, u).name} is Immobile and cannot take steps.`, 'Immobile');
       // Rulebook p21: declare every step, then resolve them in order. The only limit on declaring is that a step
       // (from one location to the next) is not repeated; each step is checked as it resolves and an illegal one is
       // skipped. A declaration with no step that could be taken right now is refused, with the reason.

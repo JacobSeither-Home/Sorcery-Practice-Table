@@ -910,3 +910,43 @@ describe('Frost Mage vs Lavamancer, batch B (card text from the API)', () => {
     expect(s.units[talus].mods?.some((m) => m.kw === 'Disabled') ?? false).toBe(false);
   });
 });
+
+describe('site kinds the API leaves out (no primary source; see siteKinds in src/engine/cards.ts)', () => {
+  const api = (name: string, type: string, rules: string, subtypes: string[] = [], attack: number | null = null) =>
+    ({ id: name, name, slug: name.toLowerCase().replace(/\W+/g, '_'), engine: { type, category: type === 'Site' ? 'Site' : 'Spell', rarity: 'Ordinary', rules, cost: type === 'Site' ? null : 3, attack, defense: null, life: null, air: 1, earth: 0, fire: 0, water: 0, elements: ['Air'], subtypes, keywords: [], umbrellas: [] }, printings: [] });
+  it('Dark Tower is a Tower, Watchtower is not, Blessed Village is a Village', () => {
+    const { cards: cs } = normalizeApiCards([api('Dark Tower', 'Site', ''), api('Watchtower', 'Site', ''), api('Blessed Village', 'Site', ''), api('Humble Village', 'Site', '', ['Village'])]);
+    expect(cs.map((c) => c.subtypes)).toEqual([['Tower'], [], ['Village'], ['Village']]);
+  });
+  it('Spire Lich atop a Tower has +2 power and Ranged, so it can shoot (rule ticket 2026-11-14)', async () => {
+    const { rangedOf } = await import('../src/engine/rules');
+    const { cards: cs } = normalizeApiCards([api('Spire Lich', 'Minion', 'If Spire Lich is atop a Tower, it has +2 power, Ranged, and Spellcaster.', ['Undead'], 3), api('Dark Tower', 'Site', ''), api('Plain Site', 'Site', '')]);
+    for (const c of cs) { cards[c.id] = c; } forgetStatics(cards);
+    const s = start(0);
+    const tower = `0t${Object.keys(s.inst).length}`; s.inst[tower] = 'Dark Tower'; s.sites[cell(1, 2)] = { inst: tower, owner: 0 };
+    const plain = `0t${Object.keys(s.inst).length}`; s.inst[plain] = 'Plain Site'; s.sites[cell(3, 2)] = { inst: plain, owner: 0 };
+    const on = unit(s, 0, cell(1, 2), 'Spire Lich'), off = unit(s, 0, cell(3, 2), 'Spire Lich');
+    expect([rangedOf(s, s.units[on]), rangedOf(s, s.units[off])]).toEqual([1, 0]);
+    expect(power(s, s.units[on])).toBe(5);
+  });
+});
+
+describe('Quagmire (rule ticket 2026-11-14: it is not optional)', () => {
+  it('every unit on a nearby site, either side, can not move until its controller\'s next turn; no choice is offered', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0);
+    const fx = effectsFromText('Site', 'Genesis → Until your next turn, units are Immobile while they occupy nearby sites.', 'Test Quag 2');
+    expect(fx.some((e) => e.optional)).toBe(false);
+    const quag = T('Test Quag 2', 'Site', { effects: fx });
+    site(s, 0, AVATAR_START_0); site(s, 1, cell(2, 1), 'Mill Pond'); site(s, 0, cell(1, 2)); site(s, 1, cell(3, 1), 'Mill Pond'); site(s, 1, cell(4, 1), 'Mill Pond');
+    const foe = unit(s, 1, cell(2, 1), id('Kiln Brute')), mine = unit(s, 0, cell(1, 2), id('Kiln Brute')), later = unit(s, 1, cell(4, 1), id('Kiln Brute'));
+    s.units[s.players[0].avatar].tapped = false;
+    s = apply(s, { t: 'playSite', inst: give(s, 0, quag), c: cell(2, 2) });
+    expect(check(s, { t: 'move', unit: mine, path: [{ c: cell(1, 1), r: 'surface' }] }).ok).toBe(false);
+    s = apply(s, { t: 'endTurn' }); s = apply(s, { t: 'draw', deck: 'spellbook' });
+    expect(check(s, { t: 'move', unit: foe, path: [{ c: cell(2, 0), r: 'surface' }] }).ok).toBe(false);
+    s = apply(s, { t: 'move', unit: later, path: [{ c: cell(3, 1), r: 'surface' }] }); // walks onto a nearby site
+    s.units[later].tapped = false;
+    expect(check(s, { t: 'move', unit: later, path: [{ c: cell(4, 1), r: 'surface' }] }).ok).toBe(false);
+  });
+});

@@ -42,6 +42,8 @@ wording was checked against all 1,100 cards from GET https://api.sorcerytcg.com/
 - **Either/or** ("A, or B", "gains or loses N power"): the player picks one in the pop-up.
 - **Follow-up actions**: a step right after a ranged strike; a ranged strike from a square on the path just taken.
 - **Costs**: discard a card/spell/site, tap the bearer and another ally here, tap a unit here, sacrifice a minion here, break Stealth, additional discard on cast; casting-location rules (outer column, corner void, submerged, allied site with an enemy) and costs that depend on the square.
+- **Site kinds from the name** (no primary source): the API gives Village, River and Desert as subtypes to only some of those sites and Tower to none, so a site whose name has the word Tower, Village, River or Desert on its own counts as that kind (Spire Lich "atop a Tower"). This follows the way the Codex defines Royalty by a word in the name; no rulebook or Codex entry defines these site kinds. Watchtower does not count as a Tower.
+- **Immobile given by another card** (Quagmire) now stops a player's own moves; before, only the AI was held by it.
 - **Release**: units disabled "until an adjacent Spellcaster taps to release" get a release action.
 - **Traps** (Codex "Trap"): a Trap site enters face down as its draft-site counterpart and is revealed for its Trap cost when its condition is met.
 - **Silenced sites**, **Protected from X**, **Outerbound**, **Can't be disabled** (Codex entries of the same names).

@@ -675,3 +675,7 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .log .cardlink:hover, .log .cardlink:focus-visible { color: var(--brass, #d9b46a); text-decoration-style: solid; outline: none; }
 
 .cancel-act kbd { font: inherit; font-size: .75em; opacity: .7; margin-left: 4px; padding: 0 4px; border: 1px solid currentColor; border-radius: 4px; }
+
+/* power changed by a card: the total shows in the badge, with a green (raised) or red (lowered) ring on the badge and the unit */
+.unit .badge.up { box-shadow: 0 0 0 2px #3fd17a, 0 2px 4px #000a; } .unit .badge.down { box-shadow: 0 0 0 2px #ff5a45, 0 2px 4px #000a; }
+.unit.pw-up .unit-face { box-shadow: 0 0 0 2px #3fd17a, 0 0 10px #3fd17a88; } .unit.pw-down .unit-face { box-shadow: 0 0 0 2px #ff5a45, 0 0 10px #ff5a4588; }

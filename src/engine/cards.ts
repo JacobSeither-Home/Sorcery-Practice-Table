@@ -35,6 +35,19 @@ export function effectsFromText(type: CardType, rules: string, name = ''): Effec
  *  (Scent Hounds "…lose Stealth", Hailstriker "…is disabled", Accursed Tower "Break nearby Wards"), which would give
  *  the card those keywords itself. A keyword counts as printed when it stands on its own in a comma-separated part
  *  of a line ("Airborne, Movement +2", "Ranged 3, Stealth", "Fire Spellcaster"), or starts a Genesis / Deathrite line. */
+/** Site kinds the API leaves out. Card text names Towers, Villages, Rivers and Deserts ("If Spire Lich is atop a Tower",
+ *  "Reactivate the Genesis abilities of your nearby Deserts"), but the API's subtypes give Village, River and Desert to
+ *  only some of those sites (Humble Village has it, Blessed Village does not) and Tower to none. No rulebook or Codex
+ *  entry defines these words. The Codex defines Royalty the same way, by a word in the card's name (Codex "Royalty"),
+ *  so a site whose name has the word on its own counts as that kind. Watchtower is not a Tower by this reading.
+ *  Listed in docs/RULES_COVERAGE.md as a reading without a primary source. */
+const SITE_KINDS = ['Desert', 'River', 'Tower', 'Village'];
+function siteKinds(type: string, name: string, subs: string[]): string[] {
+  if (type !== 'Site') return subs;
+  const add = SITE_KINDS.filter((k) => !subs.includes(k) && new RegExp(`\\b${k}\\b`).test(name));
+  return add.length ? [...subs, ...add] : subs;
+}
+
 export function printedKeywords(rules: string, api: string[]): string[] {
   const lines = rules.replace(/\r/g, '').split('\n').map((l) => l.trim().replace(/^(?:\([AEFW]\))+\s*(?:[—–]|-{1,2})\s*/, '')).filter(Boolean);
   // a keyword line: every comma part is a short phrase ("Stealth, Can't be disabled"), not a sentence ("If …, it has +2 power, Ranged, and …")
@@ -84,7 +97,7 @@ export function normalizeApiCards(raw: unknown, overlays: Record<string, Effect[
       // ship attack: null; their text decides their power), and read as 0.
       cost: num(e.cost), attack: num(e.attack), defense: typeof e.defense === 'number' && isFinite(e.defense) ? e.defense : num(e.attack), life: num(e.life),
       thresholds: { air: num(e.air), earth: num(e.earth), fire: num(e.fire), water: num(e.water) },
-      subtypes: [...arr(e.subtypes), ...arr(e.umbrellas)],
+      subtypes: siteKinds(type, name, [...arr(e.subtypes), ...arr(e.umbrellas)]),
       keywords,
       movement: keywords.includes('Movement') ? Math.max(1, keywordNumber(rules, 'Movement')) : 0,
       ranged: keywords.includes('Ranged') ? Math.max(1, keywordNumber(rules, 'Ranged')) : 0,

@@ -624,12 +624,12 @@ function UnitToken({ s, u, pace, selected, target, dropping, onClick }: { s: Gam
     ...new Set((u.mods ?? []).map((m) => m.kw ?? '').filter(Boolean))].filter(Boolean);
   const lanceCard = u.lance ? Object.values(s.cards).find((c) => c.name === 'Lance' && c.category === 'Token') : undefined;
   return (
-    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${d.category === 'Token' ? 'token' : ''} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${below ? 'under ' + below.toLowerCase() : ''} ${flying ? 'airborne' : ''} ${isDisabled(s, u) ? 'disabled' : ''}`}
+    <motion.button layout layoutId={u.inst} className={`unit p${u.owner} ${d.category === 'Token' ? 'token' : ''} ${u.avatar ? 'avatar' : ''} ${u.tapped ? 'tapped' : ''} ${selected ? 'sel' : ''} ${target ? 'tgt' : ''} ${dropping ? 'dropping' : ''} ${below ? 'under ' + below.toLowerCase() : ''} ${flying ? 'airborne' : ''} ${isDisabled(s, u) ? 'disabled' : ''} ${!u.avatar && atk > d.attack ? 'pw-up' : !u.avatar && atk < d.attack ? 'pw-down' : ''}`}
       animate={{ rotate: u.tapped ? 90 : 0, scale: selected ? 1.12 : 1 }} transition={spring(pace)} onClick={onClick} {...hoverProps(d)}
       data-unit={u.id} aria-label={`${d.name}${u.tapped ? ', tapped' : ''}`}>
       <span className="unit-face">{art ? <img src={art} alt="" draggable={false} /> : <span className="unit-name">{d.name}</span>}</span>
       {u.avatar ? <span className="aura-ring" aria-hidden /> : null}
-      {!u.avatar && <motion.span key={u.damage + ':' + life + ':' + atk} className={`badge ${u.damage ? 'hurt' : ''} ${atk > d.attack ? 'up' : atk < d.attack ? 'down' : ''}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{atk === def && !u.damage ? atk : `${atk}/${life}`}</motion.span>}
+      {!u.avatar && <motion.span key={u.damage + ':' + life + ':' + atk} className={`badge ${u.damage ? 'hurt' : ''} ${atk > d.attack ? 'up' : atk < d.attack ? 'down' : ''}`} data-tip={atk !== d.attack ? `Power ${atk}: printed ${d.attack}, ${atk > d.attack ? '+' : ''}${atk - d.attack} from cards` : `Power ${atk}`} initial={{ scale: 1.8 }} animate={{ scale: 1 }} transition={spring(pace, 500, 22)}>{atk === def && !u.damage ? atk : `${atk}/${life}`}</motion.span>}
       {boosted && <span className="mods" data-tip={[...(u.mods ?? []).map((m) => `${m.kw ? m.kw : `${m.atk >= 0 ? '+' : ''}${m.atk} power`}${m.turn !== undefined ? ' this turn' : ''} (${m.from})`), atk !== d.attack + (u.mods ?? []).reduce((n, m) => n + m.atk, 0) ? 'boosted by a card nearby' : ''].filter(Boolean).join(', ')}>✦</span>}
       {carried.length > 0 && <span className="attached">{carried.map((m) => { const ac = cardOf(s, m.inst); return <AttachTab key={m.id} card={ac} />; })}</span>}
       {below && <span className="region-tag">{below === 'Submerged' ? '≈ Submerged' : '▼ Burrowed'}</span>}
