@@ -508,7 +508,7 @@ function squareInRange(from: number, to: number, range: Effect['range']): boolea
   return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -633,6 +633,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
+    if (e.op === 'roll' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose which way to push it.');
     if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
     if (e.op === 'chain' && c?.chain?.length) {
       const k = chainBase(d, idx, i); let prev = k !== undefined ? ch[k]?.target : undefined; const used = [prev];
@@ -729,6 +730,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
   const self = selfUnit(s, src), bearer = bearerOf(s, src);
   let loc = loc0;
   const shielded = new Set<string>(); // targets a Ward protected: the rest of the effect on them does not resolve
+  let discardedCost = 0; // "damage equal to the discarded card's mana cost"
   for (const i of idx) {
     const e = d.effects[i]; const c = ch[i] ?? undefined;
     if (s.phase === 'over') return;
@@ -741,6 +743,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
     if (e.afterSite && !(s.players[p].cast?.turn === s.turn && lastSiteEl(s, p) === e.afterSite)) continue;
     const n = e.amount === 'airCastThisTurn' ? (s.players[p].cast?.turn === s.turn ? s.players[p].cast!.ids.reduce((t, id) => t + (s.cards[id]?.thresholds.air ?? 0), 0) : 0)
       : e.amount === 'banishedElement' ? s.players[p].banished ?? 0
+      : e.amount === 'discardedCost' ? discardedCost
       : e.x ? Math.max(0, c?.n ?? 0) : e.n ?? 1;
     const all = Object.values(s.units);
     const auraSrc = !!src && 'perm' in src && s.perms.find((m) => m.id === src.perm)?.kind === 'aura';
@@ -886,6 +889,18 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
+      case 'roll': {
+        const m = src && 'perm' in src ? s.perms.find((x) => x.id === src.perm) : undefined;
+        if (!m || m.carrier || !c?.dir) break;
+        const pusher = idx.map((k) => d.effects[k].isCost && d.effects[k].op === 'tap' ? ch[k]?.target : undefined).find(Boolean);
+        const [x0, y0] = xy(m.c); let k = 1;
+        for (;; k++) { const nc = cell(x0 + c.dir[0] * k, y0 + c.dir[1] * k); if (nc < 0 || !s.sites[nc]) break; // it rolls on until the edge of the realm or the void
+          m.c = nc;
+          for (const v of Object.values(s.units).filter((u) => u.c === nc && u.r === 'surface' && u.id !== pusher)) { log(s, `${d.name} rolls over ${nm(v)} for ${n}.`, p); damageUnit(s, v, n, false, { card: d }); }
+        }
+        log(s, k > 1 ? `${d.name} rolls ${k - 1} square${k > 2 ? 's' : ''}.` : `${d.name} can't roll that way.`, p);
+        break;
+      }
       case 'ongoing': {
         if (!loc || !e.fx?.length) break;
         (s.ongoing ??= []).push({ id: `o${s.nextId++}`, p, from: d.name, loc: { ...loc, ...(src && 'site' in src ? { site: true } : {}) }, fx: e.fx, next: p });
@@ -981,7 +996,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       }
       case 'mill': { const pl = s.players[p]; const deck = e.deck ?? 'spellbook'; const top = pl[deck].splice(0, n); pl.cemetery.push(...top); log(s, `${pname(p)} discards the top ${top.length} of the ${deck}: ${top.map((x) => cardOf(s, x).name).join(', ') || 'nothing'}.`, p); break; }
       case 'discard':
-        if (!e.random && e.who === 'controller') { const h = s.players[p].hand; const pickI = c?.card && h.includes(c.card) ? c.card : h.find((x) => (e.deck === 'atlas' ? cardOf(s, x).type === 'Site' : e.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true)); if (pickI) { h.splice(h.indexOf(pickI), 1); s.players[p].cemetery.push(pickI); log(s, `${pname(p)} discards ${cardOf(s, pickI).name} (${d.name}).`, p); } break; }
+        if (!e.random && e.who === 'controller') { const h = s.players[p].hand; const pickI = c?.card && h.includes(c.card) ? c.card : h.find((x) => (e.deck === 'atlas' ? cardOf(s, x).type === 'Site' : e.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true)); if (pickI) { discardedCost = cardOf(s, pickI).cost; h.splice(h.indexOf(pickI), 1); s.players[p].cemetery.push(pickI); log(s, `${pname(p)} discards ${cardOf(s, pickI).name} (${d.name}).`, p); } break; }
         for (const q of players.length ? players : victims.filter((v) => v.avatar).map((v) => v.owner)) for (let k = 0; k < n; k++) {
         const h = s.players[q].hand; if (!h.length) break;
         const [x] = h.splice(Math.floor(rand(s) * h.length), 1); s.players[q].cemetery.push(x);
@@ -1473,7 +1488,19 @@ export function check(s: GameState, a: Action): Check {
       if (!e || (e.on !== 'tap' && e.on !== 'activated') || e.afterSite) return no(`${d.name} has no ability to use there.`);
       if (!effectsOn(d, e.on, a.fx).length) return no(`${d.name} has no ability to use there.`);
       if (src.unit && isDisabled(s, src.unit)) return no(`${d.name} is disabled and its abilities do not work.`, 'Disabled');
-      if (e.on === 'tap') {
+      const bearerU = 'perm' in a.src ? (() => { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); return m?.carrier ? s.units[m.carrier] : undefined; })() : undefined;
+      if (e.tapBearer) {
+        if (!bearerU) return no(`${d.name} must be carried: its cost taps the bearer.`, 'Carry');
+        const can = canAct(s, bearerU); if (!can.ok) return can;
+      }
+      for (const i of effectsOn(d, e.on, a.fx)) { const ce = d.effects[i]; if (!(ce.isCost && ce.op === 'tap')) continue;
+        const t = a.choices?.[i]?.target ? s.units[a.choices[i]!.target!] : undefined;
+        const ok = (x: Unit) => x.owner === p && !x.tapped && !summoningSick(s, x) && !isDisabled(s, x) && x.c === src.loc.c && x.r === src.loc.r && !(ce.other && x.id === bearerU?.id);
+        if (!Object.values(s.units).some(ok)) return no(`That ability's cost taps ${ce.other ? 'another' : 'an'} untapped ally here, and there is none (units that arrived this turn can't tap unless they have Charge).`, 'Tap');
+        if (!t || !ok(t)) return no(`Choose ${ce.other ? 'another' : 'an'} untapped ally here to tap for the cost.`, 'Tap');
+      }
+      if (e.on === 'tap' && e.tapBearer) { /* the bearer pays, checked above */ }
+      else if (e.on === 'tap') {
         if (src.unit) { const can = canAct(s, src.unit); if (!can.ok) return can; }
         else if (src.tapped) return no(`${d.name} is already tapped. A tap ability can be used again after it untaps at the start of your turn.`, 'Tap');
       } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`, 'Activated ability');
@@ -1630,7 +1657,8 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'ability': {
       const src = sourceOf(s, a.src)!; const d = cardOf(s, src.inst); const e = d.effects[a.fx];
-      if (e.on === 'tap') {
+      if (e.on === 'tap' && e.tapBearer) { const m = s.perms.find((x) => 'perm' in a.src && x.id === a.src.perm); if (m?.carrier && s.units[m.carrier]) s.units[m.carrier].tapped = true; }
+      else if (e.on === 'tap') {
         if (src.unit) s.units[src.unit.id].tapped = true;
         else if ('perm' in a.src) { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); if (m) m.tapped = true; }
         else if ('site' in a.src) s.sites[a.src.site]!.tapped = true;

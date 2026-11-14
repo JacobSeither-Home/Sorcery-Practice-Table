@@ -498,6 +498,36 @@ describe('Beta Earth', () => {
     s = apply(s, { t: 'manual', op: 'destroy', unit: k });
     expect(s.units[theirs].owner).toBe(1);
   });
+  it('Siege Ballista: tap the bearer and another ally here to deal 3 damage up to two steps away', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(2, 3), cell(2, 2), cell(2, 1)]) site(s, 0, c);
+    const ballista = T('Test Ballista', 'Artifact', { effects: effectsFromText('Artifact', 'Tap bearer and another ally here → Deal 3 damage to target unit up to two steps away.', 'Test Ballista') });
+    const crew1 = unit(s, 0, cell(2, 2), id('Kiln Brute')); const crew2 = unit(s, 0, cell(2, 2), id('Granite Guard'));
+    const foe = unit(s, 1, cell(2, 0), id('Kiln Brute')); site(s, 1, cell(2, 0));
+    const mk = '0tball'; s.inst[mk] = ballista; s.perms.push({ id: 'mb', inst: mk, owner: 0, c: cell(2, 2), kind: 'artifact', carrier: crew1 });
+    const d = s.cards[ballista]; const tapI = d.effects.findIndex((e) => e.isCost); const dmgI = d.effects.findIndex((e) => e.op === 'damage');
+    const ch: { target?: string }[] = []; ch[dmgI] = { target: foe };
+    expect(check(s, { t: 'ability', src: { perm: 'mb' }, fx: dmgI, choices: ch }).ok).toBe(false);          // no ally chosen to tap
+    ch[tapI] = { target: crew1 };
+    expect(check(s, { t: 'ability', src: { perm: 'mb' }, fx: dmgI, choices: ch }).ok).toBe(false);          // not the bearer itself
+    ch[tapI] = { target: crew2 };
+    s = apply(s, { t: 'ability', src: { perm: 'mb' }, fx: dmgI, choices: ch });
+    expect(s.units[crew1].tapped && s.units[crew2].tapped).toBe(true);
+    expect(s.units[foe].damage).toBe(3);
+  });
+  it('Rolling Boulder: a unit here taps to push it; it rolls to the edge or the void and hits each other unit on the way', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(0, 2), cell(1, 2), cell(2, 2), cell(3, 2)]) site(s, 0, c);
+    const boulder = T('Test Boulder', 'Artifact', { effects: effectsFromText('Artifact', 'Units here have “Tap → Give Test Boulder a push. It rolls as far as possible and deals 4 damage to each other unit along its path.”', 'Test Boulder') });
+    const pusher = unit(s, 0, cell(0, 2), id('Kiln Brute')); const foe = unit(s, 1, cell(2, 2), id('Kiln Brute'));
+    const mk = '0tbould'; s.inst[mk] = boulder; s.perms.push({ id: 'mr', inst: mk, owner: 0, c: cell(0, 2), kind: 'artifact' });
+    const d = s.cards[boulder]; const tapI = d.effects.findIndex((e) => e.isCost); const rollI = d.effects.findIndex((e) => e.op === 'roll');
+    const ch: { target?: string; dir?: [number, number] }[] = []; ch[tapI] = { target: pusher }; ch[rollI] = { dir: [1, 0] };
+    s = apply(s, { t: 'ability', src: { perm: 'mr' }, fx: rollI, choices: ch });
+    expect(s.units[foe]).toBeUndefined();
+    expect(s.perms.find((m) => m.id === 'mr')!.c).toBe(cell(3, 2));                                         // stopped before the void at (4,2)
+    expect(s.units[pusher].damage).toBe(0);
+  });
   it('Monks of Kobalsa: can\'t be modified, except by Wards', async () => {
     const { effectsFromText } = await import('../src/engine/cards');
     let s = start(0); site(s, 0, cell(2, 3));

@@ -25,6 +25,8 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** this artifact rolls in a chosen direction as far as it can, dealing `n` damage to each other unit along its path (Rolling Boulder) */
+  | 'roll'
   /** leave an ongoing effect (`fx`, read like static text) at the ability's location until the controller's next turn */
   | 'ongoing'
   /** "Any number of times, you may spend ② to additionally target a new unit nearby the previous one": the earlier
@@ -125,6 +127,8 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** the ability taps the artifact's bearer as (part of) its cost ("Tap bearer and another ally here →") */
+  tapBearer?: boolean;
   noEnter?: { minPower?: number; side?: 'ally' | 'enemy'; ground?: boolean; occupied?: boolean };
   /** castRule: mana off the cost; may be cast from the cemetery (and is banished afterwards); may be cast by any ally (of these subtypes) */
   less2?: number; fromCemetery?: boolean; banishAfter?: boolean; byAlly?: boolean; bySub?: string[];
@@ -162,7 +166,8 @@ export interface Effect {
   less?: number; fromMinPower?: number; fromSub?: string[]; fromMagic?: boolean; fromElement?: string; fromSite?: string[];
   /** the number comes from the game: the (A) on spells you cast this turn, or the (F) on dead minions banished for the cost */
   /** victimBody: each victim's own body of water's site count ("heals an amount equal to the number of sites in its body of water") */
-  amount?: 'airCastThisTurn' | 'banishedElement' | 'victimBody';
+  /** discardedCost: the mana cost of the card discarded to pay for this ability */
+  amount?: 'airCastThisTurn' | 'banishedElement' | 'victimBody' | 'discardedCost';
   /** use the location chosen by the previous effect on the line ("… there") */
   refCell?: boolean;
   /** leave out units with this keyword ("minions without Submerge") */

@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  roll: 'Damage',
   ongoing: 'Keyword grants',
   chain: 'Damage',
   moveSite: 'Movement & position',
@@ -472,6 +473,8 @@ export const RULES: Rule[] = [
     } },
   { id: 'control-all', label: 'You control all <subtype>', re: /^you control all (\w+)\.$/i,
     build: (m, on) => { const sb = subOf(m[1]); return on === 'static' && sb ? [{ op: 'grant', who: 'self', keyword: `Controls all ${sb}`, until: 'permanent' }] : null; } },
+  { id: 'damage-discarded', label: "Deal damage equal to the discarded card's mana cost to …", re: /^deal damage equal to the discarded card'?s mana cost to (.+)\.$/i,
+    build: (m) => { const v = nounPhrase(m[1]); return v ? [{ op: 'damage', ...v, amount: 'discardedCost' }] : null; } },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -692,7 +695,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       const fx = parts.map((x) => x.trim().match(LIMITED_SC)).filter(Boolean).map((mm) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: limitedSpellcaster(mm![1])!, until: 'permanent' as const, line: lineNo, text: mm![0], rule: 'limited-spellcaster', auto: true }));
       out.lines.push({ text: raw, on: fx.length ? 'static' : 'keywords', effects: fx, manual: [] }); out.effects.push(...fx); return;
     }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false; let discardCost = '';
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false; let discardCost = ''; let tapBearer = false; let tapAlly: '' | 'other' | 'any' = ''; let roll = 0;
     if ((m = line.match(/^Genesis\s*&\s*Deathrite\s*→\s*(.+)$/i))) { on = 'genesis'; body = m[1]; both = true; }
     else if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
@@ -703,6 +706,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Once (?:on your turn|per turn|each turn),\s*(?:(?:this|its|the)\s+)?(?:bearer|minion|unit|site|artifact|you|this)?\s*may\s+(.+)$/i))) { on = 'activated'; body = m[1].replace(/^./, (c) => c.toUpperCase()); }
     else if ((m = line.match(/^(Dies|Untaps|Gains (\w+)) at the end of your turn\.$/i))) { on = 'endTurn'; body = /^dies/i.test(m[1]) ? 'Kill this.' : /^untaps/i.test(m[1]) ? 'Untap this.' : `This gains ${m[2]}.`; }
     else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
+    else if ((m = line.match(/^Tap bearer and another ally here(, discard an? (?:spell|site|card))?\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; tapBearer = true; tapAlly = 'other'; if (m[1]) discardCost = m[1].match(/(spell|site|card)/i)![1].toLowerCase(); }
+    else if ((m = line.match(/^Units here have [“"]Tap → Give (?:this|.+?) a push\. It rolls as far as possible and deals (\d+) damage to each other unit along its path\.?[”"]\.?$/i))) { on = 'activated'; body = ''; tapAlly = 'any'; repeat = true; roll = +m[1]; }
     else if ((m = line.match(/^Discard an? (spell|site|card)\s*→\s*(.+)$/i))) { on = 'activated'; body = m[2]; repeat = true; discardCost = m[1].toLowerCase(); }
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
@@ -765,6 +770,10 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}), ...(eachTurn ? { eachTurn: true } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
+    if (roll) rl.effects.push({ on, op: 'roll', who: 'controller', n: roll, repeat: true, line: lineNo, text: `Push it: it rolls as far as possible, ${roll} damage to each other unit along its path`, rule: 'roll', auto: true });
+    // "Tap bearer and another ally here →" / "Units here have 'Tap → …'": tapping an ally here is part of the cost
+    if (tapAlly) rl.effects.unshift({ on, op: 'tap', who: 'target', only: 'ally', range: 'here', targets: false, isCost: true, ...(tapAlly === 'other' ? { other: true } : {}), ...(repeat ? { repeat: true } : {}), line: lineNo, text: tapAlly === 'other' ? 'Tap another ally here' : 'Tap a unit here', rule: 'tap-cost', auto: true });
+    if (tapBearer) rl.effects.forEach((e) => { e.tapBearer = true; });
     // "Discard a spell → …": the discard is the cost, paid first (the ability can't be used without a card to discard)
     if (discardCost) rl.effects.unshift({ on, op: 'discard', who: 'controller', n: 1, ...(discardCost === 'spell' ? { deck: 'spellbook' as const } : discardCost === 'site' ? { deck: 'atlas' as const } : {}), isCost: true, repeat: true, line: lineNo, text: `Discard a ${discardCost}`, rule: 'discard-cost', auto: true });
     if (both) rl.effects.push(...rl.effects.map((e) => ({ ...e, on: 'deathrite' as const })));

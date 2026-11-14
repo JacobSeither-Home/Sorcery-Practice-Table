@@ -197,6 +197,7 @@ function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: 
             {next.map((id) => <button key={id} className={`chip p${s.units[id].owner}`} onClick={() => set({ chain: [...chosen, id] })} onPointerEnter={() => focus(id)} onPointerLeave={() => focus(null)}>+ {unitCard(s, s.units[id]).name}</button>)}
             {!next.length && <small> — no new unit nearby the last one</small>}</div>;
         })()}
+        {e.op === 'roll' && <span className="xpick">{([[0, -1], [0, 1], [-1, 0], [1, 0]] as [number, number][]).map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
         {e.op === 'moveSite' && pl.origins[0] && (() => { const cl = siteMoveCells(s, pl.origins[0].c); return cl.length ? <div className="chips targets"><small>Fly to:</small>{cl.map((x) => <button key={x} className={`chip ${c?.cell === x ? 'on' : ''}`} onClick={() => set({ cell: x })}>{sq(x)}<small> void</small></button>)}</div> : <small className="none"> — no void nearby</small>; })()}
         {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);
           return <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })} data-tip={`The joint between ${a.map(sq).join(', ')}`}>{sq(a[0])}–{sq(a[3])}<small> {a.map(sq).join(' ')}</small></button>; })}</div>}
