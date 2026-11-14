@@ -240,11 +240,16 @@ describe('AUDIT: API null stats', () => {
 
 describe('AUDIT: card text readings', () => {
 
-  it('drops the "if it\'s a minion" clause, so an Avatar bearer gets all three (rulebook p5)', () => {
+  it('keeps the "if it\'s a minion" clause: an Avatar bearer gets none of it (p5)', () => {
     const fx = effectsFromText('Artifact', "Bearer has Burrowing, Submerge, and Voidwalk, if it's a minion.", 'All-terrain Vestments');
     const grants = fx.filter((e) => e.op === 'grant');
     expect(grants.map((e) => e.keyword)).toEqual(['Burrowing', 'Submerge', 'Voidwalk']);
-    expect(grants.every((e) => e.when === undefined)).toBe(true);   // no condition attached
+    expect(grants.every((e) => e.only === 'minion')).toBe(true);
+  });
+  it('an Avatar never leaves the surface, whatever it is given (p5)', () => {
+    const s = start(0); site(s, 0, cell(2, 3));
+    const av = s.players[0].avatar; s.units[av].mods = [{ atk: 0, def: 0, kw: 'Burrowing', from: 'test' }];
+    expect(check(s, { t: 'move', unit: av, path: [{ c: cell(2, 3), r: 'under' }] }).ok).toBe(false);
   });
 });
 

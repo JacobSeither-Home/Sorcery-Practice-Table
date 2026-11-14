@@ -185,7 +185,7 @@ export function Decks() {
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => {
           const n = count(c.id), lim = copyLimit(c), isAvatar = c.type === 'Avatar';
           return (
-            <button key={c.id} className={`gridcard ${!isAvatar && n >= lim ? 'maxed' : ''}`} onClick={() => add(c)} {...hoverProps(c)} aria-label={`${c.name}, ${c.rarity ?? 'no rarity'}${isAvatar ? '' : `, ${n} of ${lim} in deck`}`}>
+            <button key={c.id} className={`gridcard ${!isAvatar && n >= lim ? 'maxed' : ''}`} onClick={() => add(c)} {...hoverProps(c)} aria-label={`${c.name}, ${c.rarity ?? 'no rarity'}${isAvatar ? '' : `, ${n} of ${lim === Infinity ? 'any number' : lim} in deck`}`}>
               <CardFace card={c} size="sm" />
               {!isAvatar && <span className={`rar rar-${c.rarity ?? 'none'}`} data-tip={`${c.rarity ?? 'No rarity'}: up to ${lim} cop${lim === 1 ? 'y' : 'ies'}`}>{(c.rarity ?? '?')[0]}{c.rarity === 'Elite' ? 'l' : c.rarity === 'Exceptional' ? 'x' : ''}</span>}
               {!isAvatar && n > 0 && <span className="n">{n}/{lim}</span>}{cur.avatar === c.id && <span className="n">✓</span>}
@@ -203,7 +203,7 @@ export function Decks() {
             {w === 'collection' && <p className="note">Cards outside your decks that some cards fetch ("… from your collection"). They count toward each card's copy limit here. <a href={codexUrl('Collection')} target="_blank" rel="noreferrer">Collection in the Codex ↗</a></p>}
             <ul className="decklines">{group(ids).map((x) => { const all = count(x.id), lim = copyLimit(x.c); return (
               <li key={x.id} {...hoverProps(x.c)} className={all > lim ? 'over' : ''}>
-                <span><i className={`rar rar-${x.c?.rarity ?? 'none'}`} data-tip={`${x.c?.rarity ?? 'No rarity'}: up to ${lim}`}>{(x.c?.rarity ?? '?')[0]}</i> {x.n}× {x.c?.name ?? x.id}{all > lim ? ` (${all}/${lim})` : ''}</span>
+                <span><i className={`rar rar-${x.c?.rarity ?? 'none'}`} data-tip={lim === Infinity ? 'Its text allows any number of copies' : `${x.c?.rarity ?? 'No rarity'}: up to ${lim}`}>{(x.c?.rarity ?? '?')[0]}</i> {x.n}× {x.c?.name ?? x.id}{all > lim ? ` (${all}/${lim})` : ''}</span>
                 <span className="row tight"><button onClick={() => move(x.id, w)} data-tip={w === 'collection' ? 'Move one into the deck' : 'Move one to the collection'} aria-label={w === 'collection' ? 'Move one into the deck' : 'Move one to the collection'}>{w === 'collection' ? '↑' : '↓'}</button><button onClick={() => drop(x.id, w)} aria-label="Remove one">−</button></span>
               </li>); })}</ul>
             {!ids.length && <p className="note">{w === 'collection' ? 'Empty. Switch "adds it to" above to the collection, or use ↓ on a card in the deck.' : 'Empty.'}</p>}

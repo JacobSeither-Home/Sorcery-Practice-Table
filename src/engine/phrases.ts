@@ -503,6 +503,7 @@ export const RULES: Rule[] = [
   { id: 'cast-by-ally', label: 'May be cast by any ally / an allied X', re: /^may be cast by (?:any ally|an allied (\w+)(?: or (\w+))?)\.$/i,
     build: (m) => { const subs = [m[1], m[2]].filter(Boolean).map((x) => subOf(x!)); if (subs.some((x) => !x)) return null; return [{ op: 'castRule', who: 'self', byAlly: true, ...(subs.length ? { bySub: subs as string[] } : {}) }]; } },
   // deck-building rules apply when the deck is built (Decks screen), not during play
+  // "may include any number of" is enforced by the deck builder (src/data/decks.ts copyLimit); "can't / must contain" is shown, not enforced
   { id: 'deckbuilding', label: 'Deck-building rule', re: /^your (?:spellbook|atlas|deck) (?:may include any number of|can'?t contain|must contain) .+\.$/i, build: () => [] },
   { id: 'prevent', label: 'Takes no / less damage (from …)', re: /^(.+?) takes? (no|(\d+) less) damage(?: from (.+?))?\.$/i,
     build: (m, on) => {
@@ -565,8 +566,8 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   if (/^can'?t (be |untap|attack|defend)|^is immune/i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^(has|have|gains|takes) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
-  // ", if it's a minion" after something given to a bearer changes nothing here
-  if (/, if it'?s a minion\.$/i.test(sentence)) return matchSentence(sentence.replace(/, if it'?s a minion\.$/i, '.'), on, type, top);
+  // ", if it's a minion": only a minion bearer gets it, an Avatar bearer does not (rulebook p5: Avatars never leave the surface)
+  if (/, if it'?s a minion\.$/i.test(sentence)) { const r = matchSentence(sentence.replace(/, if it'?s a minion\.$/i, '.'), on, type, top); return r ? { got: r.got.map((e) => ({ ...e, only: 'minion' as const })), rule: r.rule + '+minion' } : null; }
   // "You may X." / "May X." / "This may X.": X is optional for the player
   const may = top && sentence.match(/^(?:you |this |it |bearer )?may (.+)$/i);
   if (may) { const r = matchSentence(may[1].replace(/^./, (c) => c.toUpperCase()), on, type, false); if (r) return { got: r.got.map((e) => ({ ...e, optional: true })), rule: 'may+' + r.rule }; }

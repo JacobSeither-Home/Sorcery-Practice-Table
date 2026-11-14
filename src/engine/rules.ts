@@ -1077,6 +1077,7 @@ function followMana(s: GameState) {
 /** Can this unit live in that region? Rulebook p13 (subsurface), p12 (void), p5/p35 (Avatars never enter the void). */
 function canOperate(s: GameState, u: Unit, r: RealmRegion): boolean {
   if (r === 'surface') return true;
+  if (u.avatar) return false; // rulebook p5: "Avatars can never enter a region other than the surface"
   if (r === 'void') return !u.avatar && has(s, u, 'Voidwalk');
   return r === 'underwater' ? has(s, u, 'Submerge') : has(s, u, 'Burrowing');
 }

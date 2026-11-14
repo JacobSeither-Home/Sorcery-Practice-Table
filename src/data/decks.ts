@@ -5,7 +5,10 @@ export const RARITY_LIMIT: Record<string, number> = { Ordinary: 4, Exceptional: 
 export const RARITIES = ['Ordinary', 'Exceptional', 'Elite', 'Unique'] as const;
 const LIMIT = RARITY_LIMIT;
 /** Cards with no rarity in the data (none seen so far) are treated like Ordinary. */
-export const copyLimit = (c: CardDef | undefined) => RARITY_LIMIT[c?.rarity ?? ''] ?? 4;
+/** Copies allowed by rarity (rulebook p33-p35: Ordinary 4, Exceptional 3, Elite 2, Unique 1), unless the card itself says
+ *  "Your spellbook may include any number of …" (Grey Wolves, Relentless Crowd): card text takes precedence (p5). */
+export const anyNumber = (c: CardDef | undefined) => !!c && /your (?:spellbook|deck) may include any number of/i.test(c.rules);
+export const copyLimit = (c: CardDef | undefined) => (anyNumber(c) ? Infinity : RARITY_LIMIT[c?.rarity ?? ''] ?? 4);
 /** Copies of a card across spellbook, atlas and collection: the copy limit is counted over all three here. */
 export const copiesOf = (d: DeckList, id: string) => [...d.spellbook, ...d.atlas, ...(d.collection ?? [])].filter((x) => x === id).length;
 export const SPELLBOOK_MIN = 60, ATLAS_MIN = 30, COLLECTION_MAX = 10;
