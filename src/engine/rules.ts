@@ -126,6 +126,17 @@ export function summonCells(s: GameState, p: PlayerId, d: CardDef): number[] {
   }
   return out;
 }
+/** Rulebook p28 "When Sites Move": a site moves only to a void; everything atop and under it goes with it (they
+ *  are not considered to have moved), and anything in that void ends up atop the site. Here: nearby voids. */
+export function siteMoveCells(s: GameState, from: number): number[] { return nearby(from).filter((c) => c !== from && !s.sites[c]); }
+function moveSite(s: GameState, from: number, to: number) {
+  for (const u of Object.values(s.units)) if (u.c === to) u.r = 'surface';
+  for (const u of Object.values(s.units)) if (u.c === from) u.c = to;
+  for (const m of s.perms) if (m.c === from && m.kind === 'artifact' && !m.carrier) m.c = to;
+  s.sites[to] = s.sites[from]; s.sites[from] = null;
+}
+/** Has the player the threshold an ability asks for ("(A)(A)(A) — …", rulebook p18)? */
+export const needMet = (s: GameState, p: PlayerId, e: Effect) => !e.need || ELEMENTS.every((el) => thresholdOf(s, p)[el] >= (e.need![el] ?? 0));
 /** Where an aura at top-left square `c` can go in one step: the joints next to its own, up, down, left or right. */
 export function auraSteps(c: number): number[] { const [x, y] = xy(c); return [[x, y - 1], [x - 1, y], [x + 1, y], [x, y + 1]].filter(([a, b]) => a >= 0 && b >= 0 && a <= COLS - 2 && b <= ROWS - 2).map(([a, b]) => cell(a, b)); }
 /** The four squares an aura at top-left square `c` covers (Codex "Casting Auras"). */
@@ -135,7 +146,7 @@ const AURA_HERE: Partial<Record<Effect['who'], Effect['who']>> = { unitsHere: 'a
 function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, self?: string, bearer?: string): boolean {
   if (e.only === 'minion' && u.avatar) return false;
   if (e.other && u.id === self) return false;
-  const here = u.c === at.c && u.r === at.r, near = sameRegion(s, u, at) && nearby(at.c).includes(u.c);
+  const here = u.c === at.c && (u.r === at.r || !!at.site), near = sameRegion(s, u, at) && nearby(at.c).includes(u.c); // p33: a site's "here" is its surface and subsurface
   const inArea = u.r === 'surface' && auraArea(at.c).includes(u.c);
   if (at.aura && AURA_HERE[e.who]) { // Codex "Here": for an aura, its four locations
     if (!inArea) return false;
@@ -182,13 +193,13 @@ export function bonus(s: GameState, u: Unit): Bonus {
   for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
   const set = staticCards(s); if (!set.size) return b;
   const add = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
-    for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && condHolds(s, e.when, p, at, self ?? bearer)) {
+    for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && condHolds(s, e.when, p, at, self ?? bearer) && needMet(s, p, e)) {
       if (e.op === 'buff') { const k = e.per ? countFor(s, e.per, d, p, at, self) : 1; b.atk += (e.atk ?? 0) * k; b.def += (e.def ?? 0) * k; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
     }
   };
   for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !d.keywords.includes('Disabled')) add(d, v.owner, v, v.id); }
   for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) add(d, m.owner, { c: m.c, r: m.carrier ? s.units[m.carrier]?.r ?? 'surface' : 'surface', ...(m.kind === 'aura' ? { aura: true } : {}) }, undefined, m.carrier); }
-  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface' }); } }
+  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface', site: true }); } }
   return b;
 }
 export function isDisabled(s: GameState, u: Unit): boolean {
@@ -468,7 +479,7 @@ function squareInRange(from: number, to: number, range: Effect['range']): boolea
   return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => e.op === 'moveAura' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => e.op === 'moveAura' || e.op === 'moveSite' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -594,6 +605,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
     if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
+    if (e.op === 'moveSite' && !c?.skip && (c?.cell === undefined || !origins[0] || !siteMoveCells(s, origins[0].c).includes(c.cell))) return no('Choose a nearby void for the site to move to.', 'Site');
     if (e.op === 'moveAura' && (c?.cell === undefined || !origins[0] || !auraSteps(origins[0].c).includes(c.cell))) return no('Choose a neighbouring joint for the aura, or skip the move.', 'Aura');
     if (e.op === 'teleport' && chosenDest(e) && (e.who === 'target' || e.who === 'self')) { const u = c?.target ? s.units[c.target] : self ? s.units[self] : undefined; if (c?.cell === undefined || !teleportCells(s, e, u, origins[0]).includes(c.cell)) return no('Choose where it goes.'); }
   }
@@ -669,7 +681,7 @@ function entryBlocked(s: GameState, u: Unit, c: number, ground = true): boolean 
   const st = s.sites[c]; if (!st?.inst) return false;
   // a site's own rule, or one from a minion standing on it ("Allies can't enter this site")
   const holders = [cardOf(s, st.inst), ...Object.values(s.units).filter((x) => x.c === c && x.id !== u.id).map((x) => unitCard(s, x))];
-  return holders.some((hd) => hd.effects.some((e) => e.on === 'static' && e.noEnter && (!e.noEnter.ground || (ground && !has(s, u, 'Airborne'))) && (e.noEnter.minPower === undefined || powerValue(s, u) >= e.noEnter.minPower)
+  return holders.some((hd) => hd.effects.some((e) => e.on === 'static' && e.noEnter && (!e.noEnter.ground || (ground && !has(s, u, 'Airborne'))) && (!e.noEnter.occupied || Object.values(s.units).some((x) => x.id !== u.id && !x.avatar && x.c === c && x.r === 'surface')) && (e.noEnter.minPower === undefined || powerValue(s, u) >= e.noEnter.minPower)
     && (!e.noEnter.side || (e.noEnter.side === 'ally' ? u.owner === st.owner : u.owner !== st.owner))));
 }
 
@@ -839,6 +851,11 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
+      case 'moveSite': {
+        const from = loc?.c; if (from === undefined || c?.cell === undefined || !siteMoveCells(s, from).includes(c.cell)) break;
+        moveSite(s, from, c.cell); log(s, `${d.name} flies to ${'ABCDE'[xy(c.cell)[0]]}${4 - xy(c.cell)[1]}, with everything on it.`, p);
+        break;
+      }
       case 'moveAura': {
         const m = src && 'perm' in src ? s.perms.find((x) => x.id === src.perm) : undefined;
         if (m && m.kind === 'aura' && c?.cell !== undefined && auraSteps(m.c).includes(c.cell)) { m.c = c.cell; log(s, `${pname(p)} moves ${d.name} one step.`, p); }
@@ -1087,7 +1104,8 @@ function canOperate(s: GameState, u: Unit, r: RealmRegion): boolean {
  *  there, straight to its subsurface (p35 "Voidwalk"; Codex "Voidwalk"). */
 function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
   if (!s.sites[to.c] && to.r !== 'surface') return false; // a void square has one location
-  if (from.c !== to.c && entryBlocked(s, u, to.c)) return false;
+  // rulebook p33 "Ground Movement": a step between the surfaces of two sites, unless Airborne
+  if (from.c !== to.c && entryBlocked(s, u, to.c, from.r === 'surface' && to.r === 'surface' && !!s.sites[from.c])) return false;
   const rf = regionOf(s, from), rt = regionOf(s, to);
   if (from.c === to.c) {
     if (from.r === to.r || rt === 'void') return false;
@@ -1111,25 +1129,31 @@ function stepWhyNot(s: GameState, u: Unit, from: Loc, to: Loc): Check {
   if (from.c !== to.c && rf !== rt && rf !== 'void') return no('A step stays in one region: from the surface to the surface, underground to underground, underwater to underwater.', 'Region');
   return no('A step goes to a bordering square. Diagonal steps need Airborne.', 'Airborne');
 }
+/** What a step costs against the unit's steps: 0 when it "moves freely" (rulebook p34 "Moves Freely": the step's
+ *  start and end satisfy the condition), e.g. an Airborne minion leaving a site that lets it move freely away. */
+export function stepCost(s: GameState, u: Unit, from: Loc, to: Loc): number {
+  if (from.c === to.c || from.r !== 'surface' || u.avatar) return 1;
+  const st = s.sites[from.c]; if (!st?.inst) return 1;
+  return cardOf(s, st.inst).effects.some((e) => e.on === 'static' && e.keyword === 'Moves freely away' && (!e.kw || has(s, u, e.kw))) ? 0 : 1;
+}
 /** Every location the unit can end a move on, with one path to it. Includes staying put (empty path). */
 export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const out = new Map<string, Loc[]>();
   const start: Loc = { c: u.c, r: u.r };
   out.set(locKey(start), []);
   if (has(s, u, 'Immobile') || unitCard(s, u).keywords.includes('Immobile')) return out;
-  const steps = 1 + moveOf(s, u);
-  let frontier: Loc[][] = [[]];
-  for (let i = 0; i < steps; i++) {
-    const next: Loc[][] = [];
-    for (const path of frontier) {
-      const from = path.length ? path[path.length - 1] : start;
-      const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...nearby(from.c).filter((c) => c !== from.c).flatMap((c) => [{ c, r: 'surface' as const }, { c, r: 'under' as const }])];
-      for (const to of cands) {
-        if (out.has(locKey(to)) || !stepOk(s, u, from, to)) continue;
-        const p = [...path, to]; out.set(locKey(to), p); next.push(p);
-      }
+  const budget = 1 + moveOf(s, u);
+  const best = new Map<string, number>([[locKey(start), 0]]);
+  const queue: { at: Loc; path: Loc[]; cost: number }[] = [{ at: start, path: [], cost: 0 }];
+  while (queue.length) {
+    const { at: from, path, cost } = queue.shift()!;
+    const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...nearby(from.c).filter((c) => c !== from.c).flatMap((c) => [{ c, r: 'surface' as const }, { c, r: 'under' as const }])];
+    for (const to of cands) {
+      if (!stepOk(s, u, from, to)) continue;
+      const c2 = cost + stepCost(s, u, from, to); const k = locKey(to);
+      if (c2 > budget || (best.has(k) && best.get(k)! <= c2)) continue;
+      best.set(k, c2); const p = [...path, to]; out.set(k, p); queue.push({ at: to, path: p, cost: c2 });
     }
-    frontier = next;
   }
   return out;
 }
@@ -1378,6 +1402,7 @@ export function check(s: GameState, a: Action): Check {
       } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`, 'Activated ability');
       const cost = e.cost ?? 0;
       if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`, 'Mana');
+      if (!needMet(s, p, e)) return no(`That ability needs ${ELEMENTS.filter((el) => e.need![el]).map((el) => `${e.need![el]} ${el}`).join(' and ')} threshold, from the element symbols on sites you control.`, 'Threshold');
       if (e.banishDead && !pl.cemetery.some((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0)) return no(`You have no dead ${e.banishDead} minions to banish.`);
       const idx = effectsOn(d, e.on, a.fx);
       return checkChoices(s, p, d, idx, a.choices ?? [], [src.loc], src.unit?.id);
@@ -1387,7 +1412,8 @@ export function check(s: GameState, a: Action): Check {
       if (!u || u.owner !== p) return no('That is not your unit.');
       const can = canAct(s, u); if (!can.ok) return can;
       if (!a.path.length && !a.attack) return no('Choose a square to move to or something to attack.', 'Move and Attack');
-      if (a.path.length > 1 + moveOf(s, u)) return no(`${unitCard(s, u).name} can take ${1 + moveOf(s, u)} step(s) per move.`, 'Movement');
+      { let cost = 0, at: Loc = { c: u.c, r: u.r }; for (const to of a.path) { cost += stepCost(s, u, at, to); at = to; }
+        if (cost > 1 + moveOf(s, u)) return no(`${unitCard(s, u).name} can take ${1 + moveOf(s, u)} step(s) per move.`, 'Movement'); }
       if (a.path.length && unitCard(s, u).keywords.includes('Immobile')) return no(`${unitCard(s, u).name} is Immobile and cannot take steps.`, 'Immobile');
       // Rulebook p21: declare every step, then resolve them in order. The only limit on declaring is that a step
       // (from one location to the next) is not repeated; each step is checked as it resolves and an illegal one is
@@ -1546,6 +1572,9 @@ export function apply(state: GameState, a: Action): GameState {
         if (!s.units[u.id] || u.halted) break;
         const from: Loc = { c: u.c, r: u.r };
         if (!stepOk(s, u, from, to)) { log(s, `${unitCard(s, u).name} can't take a step it declared (${(stepWhyNot(s, u, from, to) as { reason: string }).reason}); it skips it.`); continue; }
+        // "Minions here can traverse the void, gaining Voidwalk until leaving it" (Planar Gate)
+        if (!s.sites[to.c] && s.sites[from.c]?.inst && cardOf(s, s.sites[from.c]!.inst!).effects.some((e) => e.keyword === 'Void gate') && !u.mods?.some((m) => m.void)) (u.mods ??= []).push({ atk: 0, def: 0, kw: 'Voidwalk', void: true, from: cardOf(s, s.sites[from.c]!.inst!).name });
+        if (s.sites[to.c] && u.mods?.some((m) => m.void)) { u.mods = u.mods.filter((m) => !m.void); if (!u.mods.length) delete u.mods; }
         u.c = to.c; u.r = to.r; took++;
         if (to.c !== from.c) react(s, 'enters', u);
       }
@@ -1652,6 +1681,7 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
     if (e.who === 'target' && !e.ref) { const t = targetsFor(s, p, d, i, origins, self); if (!t.length) return []; if (spread < 0) spread = i; base[i] = { target: t[0] }; }
     if (e.x) base[i] = { ...(base[i] ?? {}), n: 1 };
     if (e.op === 'draw' && !e.deck) base[i] = { ...(base[i] ?? {}), deck: 'spellbook' };
+    if (e.op === 'moveSite') { const cl = origins[0] ? siteMoveCells(s, origins[0].c) : []; if (!cl.length) return []; base[i] = { cell: cl[0] }; }
     if (e.op === 'moveAura') base[i] = e.optional ? { skip: true } : { cell: origins[0] ? auraSteps(origins[0].c)[0] : undefined }; // the AI leaves its auras where they are
     if (e.who === 'atTarget' && !e.refCell && !['damage', 'destroy', 'banish', 'strike', 'tap', 'sink', 'choose'].includes(e.op)) { const cl = cellsFor(s, d, i, origins); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }
     else if (e.who === 'atTarget' && !e.refCell) {

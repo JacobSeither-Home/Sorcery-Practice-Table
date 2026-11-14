@@ -6,7 +6,7 @@ export type CardType = 'Avatar' | 'Minion' | 'Magic' | 'Aura' | 'Artifact' | 'Si
 export type Thresholds = Record<Element, number>;
 export type PlayerId = 0 | 1;
 export type Region = 'surface' | 'under';
-export interface Loc { c: number; r: Region; /** an aura's location: its 2×2 area */ aura?: boolean }
+export interface Loc { c: number; r: Region; /** an aura's location: its 2×2 area */ aura?: boolean; /** a site's location: "here" is its surface and subsurface (rulebook p33) */ site?: boolean }
 
 /** When an ability happens.
  *  cast      — a magic spell resolves
@@ -25,6 +25,8 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** the site this card is (or is at) moves to a chosen square (Choice.cell), with everything atop and under it (rulebook p28) */
+  | 'moveSite'
   | 'damage' | 'heal' | 'loseLife' | 'draw' | 'mana' | 'destroy' | 'banish' | 'bounce'
   | 'tap' | 'untap' | 'buff' | 'grant' | 'discard'
   /** mana and/or threshold: static ("Provides (F)") or for this turn ("Genesis → Provides (A)(E) this turn") */
@@ -109,7 +111,10 @@ export interface Effect {
   /** summon: where the tokens go (one at the source by default) */
   places?: 'adjacentSites' | 'adjacentLocations' | 'bordersEnemy' | 'nearAvatar' | 'allyMinion' | 'allySite';
   /** static on a site: units that can't enter it */
-  noEnter?: { minPower?: number; side?: 'ally' | 'enemy'; ground?: boolean };
+  /** occupied: only while a minion is already atop ("if there's already a minion atop") */
+  /** the ability needs this threshold ("(A)(A)(A) — …", rulebook p18) */
+  need?: Partial<Thresholds>;
+  noEnter?: { minPower?: number; side?: 'ally' | 'enemy'; ground?: boolean; occupied?: boolean };
   /** castRule: mana off the cost; may be cast from the cemetery (and is banished afterwards); may be cast by any ally (of these subtypes) */
   less2?: number; fromCemetery?: boolean; banishAfter?: boolean; byAlly?: boolean; bySub?: string[];
   /** only while / if this holds ("while Warded", "if you're on Death's Door", "during enemy turns" …) */
@@ -161,7 +166,7 @@ export interface Effect {
   fromBottom?: boolean;
   /** teleport (movement): where to. Chosen: a nearby / adjacent location or any site; fixed: this card's location ("here"),
    *  the caster's, one step toward / away from this card, a random site or void, or the location of the chosen unit ("to") */
-  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to';
+  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid';
   /** movement kind (Codex "Forced Movement"): teleport and drag move anyone; a step is the unit's own and Immobile stops it */
   move?: 'teleport' | 'drag' | 'step';
   /** only units with less power than this card ("target weaker minion") */
@@ -249,7 +254,7 @@ export interface Unit {
   /** power/defense changes and granted keywords from abilities; `turn` = expires at the end of that turn */
   mods?: Mod[];
 }
-export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; from: string }
+export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; /** ends when the unit leaves the void (Planar Gate) */ void?: boolean; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; /** artifact: its square; aura: the top-left square of its 2×2 area */ c: number; kind: 'artifact' | 'aura'; /** "Lasts N of your turns": end-of-turn counters so far */ turns?: number; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }

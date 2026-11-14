@@ -361,3 +361,44 @@ describe('split power', () => {
     expect(powerValue(s, s.units[u])).toBe(4);   // compares as 4
   });
 });
+
+describe('Beta Air sites', () => {
+  it('Cloud City: needs (A)(A)(A), then flies to a nearby void with everything on it (p18, p28)', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0);
+    const city = T('Test City', 'Site', { thresholds: { air: 1, earth: 0, fire: 0, water: 0 }, effects: effectsFromText('Site', '(A)(A)(A) — Once on your turn, this site may fly to a nearby void.', 'Test City') });
+    site(s, 0, cell(2, 3), 'Cinder Field');
+    const k = '0tcity'; s.inst[k] = city; s.sites[cell(2, 2)] = { inst: k, owner: 0 };
+    const rider = unit(s, 0, cell(2, 2), id('Kiln Brute'));
+    const fx = s.cards[city].effects.findIndex((e) => e.op === 'moveSite');
+    const ch: { cell?: number }[] = []; ch[fx] = { cell: cell(2, 1) };
+    expect(check(s, { t: 'ability', src: { site: cell(2, 2) }, fx, choices: ch }).ok).toBe(false); // 1 air, needs 3
+    for (const c of [cell(1, 3), cell(3, 3)]) { const kk = '0tc' + c; s.inst[kk] = city; s.sites[c] = { inst: kk, owner: 0 }; }
+    s = apply(s, { t: 'ability', src: { site: cell(2, 2) }, fx, choices: ch });
+    expect(s.sites[cell(2, 2)]).toBe(null);
+    expect(s.sites[cell(2, 1)]?.inst).toBe(k);
+    expect(s.units[rider].c).toBe(cell(2, 1));
+  });
+  it('Updraft Ridge: an Airborne minion\'s step away from it is free (p34 "Moves Freely")', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const { reach } = await import('../src/engine/rules');
+    const s = start(0);
+    const ridge = T('Test Ridge', 'Site', { effects: effectsFromText('Site', 'Airborne minions atop Test Ridge move freely away.', 'Test Ridge') });
+    for (const c of [cell(2, 3), cell(2, 2), cell(2, 1)]) site(s, 0, c);
+    const k = '0tridge'; s.inst[k] = ridge; s.sites[cell(2, 3)] = { inst: k, owner: 0 };
+    const flyer = unit(s, 0, cell(2, 3), id('Wind Sprite'));             // 1 step
+    expect(reach(s, s.units[flyer]).has(cell(2, 1) + 's')).toBe(true);   // the first step was free
+  });
+  it('Mountain Pass: no ground entry while a minion is already atop', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const s = start(0);
+    const pass = T('Test Pass', 'Site', { effects: effectsFromText('Site', "Minions can't enter this site on the ground if there's already a minion atop.", 'Test Pass') });
+    site(s, 0, cell(2, 3)); const k = '0tpass'; s.inst[k] = pass; s.sites[cell(2, 2)] = { inst: k, owner: 0 };
+    const walker = unit(s, 0, cell(2, 3), id('Kiln Brute'));
+    expect(check(s, { t: 'move', unit: walker, path: [{ c: cell(2, 2), r: 'surface' }] }).ok).toBe(true);
+    unit(s, 1, cell(2, 2), id('Ember Runner'));
+    expect(check(s, { t: 'move', unit: walker, path: [{ c: cell(2, 2), r: 'surface' }] }).ok).toBe(false);
+    const flyer = unit(s, 0, cell(2, 3), id('Wind Sprite'));
+    expect(check(s, { t: 'move', unit: flyer, path: [{ c: cell(2, 2), r: 'surface' }] }).ok).toBe(true); // Airborne is not ground movement
+  });
+});

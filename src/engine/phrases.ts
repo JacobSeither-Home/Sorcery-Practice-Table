@@ -9,7 +9,7 @@
 // on 2026-11-12 (1,100 cards), and the Codex at https://sorcerytcg.com/codex for what the words mean
 // (nearby, adjacent, here, heal, Ward, projectile …). `node tests/coverage.mjs cards.json` reports what
 // is still by hand.
-import type { CardDef, CardFilter, CardType, Cond, Effect, Element, EventFilter, Trigger, Who, Zone, ZonePick } from './types';
+import type { CardDef, CardFilter, CardType, Cond, Effect, Element, EventFilter, Thresholds, Trigger, Who, Zone, ZonePick } from './types';
 
 export const KEYWORDS = ['Airborne', 'Burrowing', 'Charge', 'Deathrite', 'Disabled', 'Flood', 'Genesis', 'Immobile', 'Lance', 'Landbound', 'Lethal', 'Movement', 'Ranged', 'Spellcaster', 'Stealth', 'Submerge', 'Voidwalk', 'Ward', 'Waterbound'];
 const EL_WORD = '(?:air|earth|fire|water)';
@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  moveSite: 'Movement & position',
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
   draw: 'Cards', discard: 'Cards', mana: 'Mana', buff: 'Power boosts', grant: 'Keyword grants', tap: 'Tap / untap', untap: 'Tap / untap', manual: 'Other',
   prevent: 'Protection & restrictions', control: 'Movement & position', moveAura: 'Movement & position', castRule: 'Costs & mana rules', lasts: 'Other', pick: 'Search & reveal', unward: 'Protection & restrictions', raise: 'Summons & tokens', destroySite: 'Sites & threshold', choose: 'Other', rubble: 'Sites & threshold', replaceRubble: 'Sites & threshold', flood: 'Sites & threshold', noUntap: 'Tap / untap', provide: 'Mana', summon: 'Summons & tokens', shoot: 'Damage', strike: 'Damage', mill: 'Cards', scry: 'Search & reveal', sink: 'Movement & position', teleport: 'Movement & position',
@@ -438,8 +439,16 @@ export const RULES: Rule[] = [
   { id: 'first-strike-attacking', label: 'Strikes first while attacking', re: /^(?:this )?strikes first while attacking\.$/i, build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Strikes first while attacking', until: 'permanent' }] : null) },
   { id: 'site-controller-life', label: "The controller of this's site heals / loses N life", re: /^the controller of (?:this'?s?|its) site (heals|loses) (\d+)(?: life)?\.$/i,
     build: (m) => [{ op: /heal/i.test(m[1]) ? 'heal' : 'loseLife', n: +m[2], who: 'siteController' }] },
-  { id: 'no-enter', label: "… can't enter this site", re: /^(units with (\d+) or more power|allies|enemies|enemy units|minions) can'?t (?:enter|move to) (?:this site|here)( on the ground)?\.$/i,
-    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'No entry', until: 'permanent', noEnter: { ...(m[2] ? { minPower: +m[2] } : {}), ...(/^allies/i.test(m[1]) ? { side: 'ally' as const } : /^enem/i.test(m[1]) ? { side: 'enemy' as const } : {}), ...(m[3] ? { ground: true } : {}) } }] : null) },
+  // rulebook p34 "Moves Freely": a step whose start and end meet the condition costs no step
+  // rulebook p28 "When Sites Move": everything atop and under it moves with it
+  { id: 'site-fly', label: 'This site flies to a nearby void', re: /^(?:this site )?(?:may )?fly to a nearby void\.$/i,
+    build: (_m, on) => (on !== 'static' ? [{ op: 'moveSite', who: 'siteHere', dest: 'nearbyVoid' }] : null) },
+  { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
+  { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'Moves freely away', until: 'permanent', ...(m[1] ? { kw: 'Airborne' } : {}) }] : null) },
+  { id: 'no-enter', label: "… can't enter this site", re: /^(units with (\d+) or more power|allies|enemies|enemy units|minions) can'?t (?:enter|move to) (?:this site|here)( on the ground)?( if there'?s already a minion atop)?\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'siteHere', keyword: 'No entry', until: 'permanent', noEnter: { ...(m[2] ? { minPower: +m[2] } : {}), ...(/^allies/i.test(m[1]) ? { side: 'ally' as const } : /^enem/i.test(m[1]) ? { side: 'enemy' as const } : {}), ...(m[4] ? { occupied: true } : {}), ...(m[3] ? { ground: true } : {}) } }] : null) },
   { id: 'gain-control', label: 'Gain control of …', re: /^gain control of (.+?)( this turn)?( and untap it)?\.$/i,
     build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); if (!v) return null; const fx: Omit<Effect, 'on'>[] = [{ op: 'control', ...v, until: m[2] ? 'turn' : 'permanent' }]; if (m[3]) fx.push({ op: 'untap', who: 'target', ref: true }); return fx; } },
   { id: 'summon-token-each', label: 'Summon a token to each … site', re: new RegExp(`^summon ${NUM} (foot soldier|skeleton|frog)(?: tokens?)? (?:token )?to (each other adjacent site|each adjacent location|each (?:site you control|allied site) that borders an enemy site|each site near your avatar|an allied site|an allied minion)\\.$`, 'i'),
@@ -629,8 +638,12 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
   const out: Reading = { effects: [], lines: [], manual: [] };
   const lines = strip(rules).split('\n').map((l) => l.trim()).filter(Boolean);
   const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const needs = new Map<number, Partial<Thresholds>>();
   lines.forEach((raw0, lineNo) => {
     let raw = raw0;
+    // "(A)(A)(A) — …": the ability needs that threshold (rulebook p18: symbols to the left of abilities)
+    const sym = raw.match(/^((?:\([AEFW]\))+)\s*[—–-]\s*/);
+    if (sym) { const t: Partial<Thresholds> = {}; for (const ch of sym[1].match(/[AEFW]/g)!) { const el = ({ A: 'air', E: 'earth', F: 'fire', W: 'water' } as const)[ch as 'A']; t[el] = (t[el] ?? 0) + 1; } needs.set(lineNo, t); }
     // the card's own name means "this" — unless the name is a word used as a verb ("Teleport an ally …")
     raw = raw.replace(/^(?:\([AEFW]\))+\s*[—–-]\s*/, '');
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
@@ -725,6 +738,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     if (both) rl.effects.push(...rl.effects.map((e) => ({ ...e, on: 'deathrite' as const })));
     out.lines.push(rl); out.effects.push(...rl.effects); out.manual.push(...rl.manual);
   });
+  if (needs.size) out.effects = out.effects.map((e) => (e.line !== undefined && needs.has(e.line) ? { ...e, need: needs.get(e.line) } : e));
   return out;
 }
 
