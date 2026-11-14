@@ -25,6 +25,8 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** leave an ongoing effect (`fx`, read like static text) at the ability's location until the controller's next turn */
+  | 'ongoing'
   /** "Any number of times, you may spend ② to additionally target a new unit nearby the previous one": the earlier
    *  damage again on each unit of Choice.chain, each nearby the one before and paid for with `pay` mana */
   | 'chain'
@@ -117,6 +119,8 @@ export interface Effect {
   /** occupied: only while a minion is already atop ("if there's already a minion atop") */
   /** the ability needs this threshold ("(A)(A)(A) — …", rulebook p18) */
   need?: Partial<Thresholds>;
+  /** op ongoing: what applies meanwhile */
+  fx?: Omit<Effect, 'on'>[];
   /** buff: extra range for Ranged units it reaches */
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
@@ -351,6 +355,8 @@ export interface GameState {
   pending: Pending | null;
   /** triggered abilities that need a decision, first one first */
   queue?: Queued[];
+  /** effects abilities left behind for a while (Codex "Ongoing Effect"): applied like static text from `loc`, ending at the start of `next`'s turn */
+  ongoing?: { id: string; p: PlayerId; from: string; loc: Loc; fx: Omit<Effect, 'on'>[]; next: PlayerId }[];
   /** activated abilities used this turn: `${source}:${effect index}` -> turn */
   used?: Record<string, number>;
   nextId: number;

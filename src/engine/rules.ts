@@ -87,6 +87,8 @@ export const manaIncome = (s: GameState, p: PlayerId) => sitesOf(s, p).length + 
 const staticCache = new WeakMap<object, Set<string>>();
 /** The index of cards with static abilities is kept per card table; call this after changing a table in place. */
 export function forgetStatics(cards: Record<string, CardDef>) { staticCache.delete(cards); provideCache.delete(cards); preventCache.delete(cards); }
+/** Is any always-on effect around (static card text, or an ongoing effect from an ability)? */
+const anyStatic = (s: GameState) => staticCards(s).size > 0 || !!s.ongoing?.length;
 function staticCards(s: GameState): Set<string> {
   let set = staticCache.get(s.cards);
   if (!set) { set = new Set(Object.values(s.cards).filter((d) => d.effects.some((e) => e.on === 'static' && (e.op === 'buff' || e.op === 'grant'))).map((d) => d.id)); staticCache.set(s.cards, set); }
@@ -211,6 +213,10 @@ export function bonus(s: GameState, u: Unit): Bonus {
   const b: Bonus = { atk: 0, def: 0, kws: [], range: 0 };
   const fixed = !!unmodifiable(unitCard(s, u));
   if (!fixed) for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
+  // Codex "Ongoing Effect": effects an ability left behind for a while ("Until your next turn, units are Immobile …")
+  if (!fixed) for (const o of s.ongoing ?? []) for (const e of o.fx) if (staticReaches(s, { ...e, on: 'static' } as Effect, o.p, o.loc, u)) {
+    if (e.op === 'buff') { b.atk += e.atk ?? 0; b.def += e.def ?? 0; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
+  }
   const set = staticCards(s); if (!set.size) return b;
   const add = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
     if (fixed && self !== u.id) return; // only its own text applies to it
@@ -240,7 +246,7 @@ export function casterKinds(s: GameState, u: Unit): string[] {
   own.forEach((k) => out.add(k));
   if (d.keywords.includes('Spellcaster') && !own.length) out.add('Spellcaster'); // the API lists a limited spellcaster's keyword as plain "Spellcaster"
   for (const m of u.mods ?? []) if (m.kw?.startsWith('Spellcaster')) out.add(m.kw);
-  const b = staticCards(s).size > 0 ? bonus(s, u).kws : [];
+  const b = anyStatic(s) ? bonus(s, u).kws : [];
   if (b.includes('Loses Spellcaster')) return [];
   for (const k of b) if (k === 'Spellcaster' || k.startsWith('Spellcaster (')) out.add(k);
   return [...out];
@@ -255,7 +261,7 @@ export function kindAllows(kind: string, d: CardDef): boolean {
 export function has(s: GameState, u: Unit, kw: string): boolean {
   if (kw === 'Spellcaster') return casterKinds(s, u).length > 0;
   if (isDisabled(s, u)) return false;
-  const b = staticCards(s).size > 0 ? bonus(s, u).kws : null;
+  const b = anyStatic(s) ? bonus(s, u).kws : null;
   if (b?.includes('Loses ' + kw)) return false; // "All other minions lose Airborne"
   if (unitCard(s, u).keywords.includes(kw) || u.mods?.some((m) => m.kw === kw)) return true;
   return !!b?.includes(kw);
@@ -264,7 +270,7 @@ export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u,
 /** Ranged X: printed, or given ("Bearer has Ranged 3"). 0 = not ranged. */
 export function rangedOf(s: GameState, u: Unit): number {
   const base = !has(s, u, 'Ranged') && !unitCard(s, u).ranged ? givenNumber(s, u, 'Ranged') : Math.max(unitCard(s, u).ranged, givenNumber(s, u, 'Ranged'), has(s, u, 'Ranged') ? 1 : 0);
-  return base > 0 && staticCards(s).size ? base + bonus(s, u).range : base;
+  return base > 0 && anyStatic(s) ? base + bonus(s, u).range : base;
 }
 /** The number on a keyword given by a static ability (Ranged 3, Movement +7). */
 function givenNumber(s: GameState, u: Unit, kw: string): number {
@@ -278,7 +284,7 @@ function givenNumber(s: GameState, u: Unit, kw: string): number {
 const allows = (d: CardDef, what: string) => d.effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === what);
 export const summoningSick = (s: GameState, u: Unit) => !u.avatar && u.enteredTurn === s.turn && !has(s, u, 'Charge');
 export function unitsAt(s: GameState, l: Loc): Unit[] { return Object.values(s.units).filter((u) => u.c === l.c && u.r === l.r); }
-export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || staticCards(s).size ? bonus(s, u).atk : 0)); }
+export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || anyStatic(s) ? bonus(s, u).atk : 0)); }
 /** Extra steps: Movement +X on the card plus any given this turn. */
 export const moveOf = (s: GameState, u: Unit) => unitCard(s, u).movement + (u.mods ?? []).reduce((n, m) => n + (m.move ?? 0), 0) + givenNumber(s, u, 'Movement');
 /** The power used when an effect compares or checks power ("weaker", "with 3 or less power", "3 or more power"):
@@ -288,7 +294,7 @@ export function powerValue(s: GameState, u: Unit): number {
   const d = unitCard(s, u); const a = power(s, u);
   return d.attack === d.defense ? a : Math.floor((a + defenseOf(s, u)) / 2);
 }
-export function defenseOf(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.defense + (u.mods?.length || staticCards(s).size ? bonus(s, u).def : 0)); }
+export function defenseOf(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.defense + (u.mods?.length || anyStatic(s) ? bonus(s, u).def : 0)); }
 
 function rand(s: GameState): number {
   let t = (s.rng += 0x6d2b79f5);
@@ -319,6 +325,7 @@ export function clone(s: GameState): GameState {
     log: s.log.slice(),
     ...(s.queue ? { queue: s.queue.map((q) => ({ ...q, fx: q.fx.slice() })) } : {}),
     ...(s.used ? { used: { ...s.used } } : {}),
+    ...(s.ongoing ? { ongoing: s.ongoing.slice() } : {}),
   };
 }
 
@@ -361,6 +368,7 @@ function startTurn(s: GameState, p: PlayerId) {
   for (const u of Object.values(s.units)) if (u.owner === p) { if (u.tapped && has(s, u, "Can't untap")) { log(s, `${unitCard(s, u).name} can't untap.`, p); continue; } if (u.noUntap) { delete u.noUntap; log(s, `${unitCard(s, u).name} does not untap this time.`, p); } else u.tapped = false; }
   for (const m of s.perms) if (m.owner === p) m.tapped = false;
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
+  if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.next !== p); if (!s.ongoing.length) delete s.ongoing; } // rulebook p16 Start Phase: "Until next turn" effects end
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
   s.players[p].mana = s.players[p].income = manaIncome(s, p);
   if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); fireAll(s, p, 'startTurn'); return; }
@@ -878,6 +886,12 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
       } break;
+      case 'ongoing': {
+        if (!loc || !e.fx?.length) break;
+        (s.ongoing ??= []).push({ id: `o${s.nextId++}`, p, from: d.name, loc: { ...loc, ...(src && 'site' in src ? { site: true } : {}) }, fx: e.fx, next: p });
+        log(s, `${d.name}: ${e.text ?? 'an effect'} (until ${pname(p)}'s next turn).`, p);
+        break;
+      }
       case 'chain': {
         const k = chainBase(d, idx, i); if (k === undefined) break;
         const dmg = d.effects[k].n ?? 1; const hit = [ch[k]?.target];
@@ -1156,6 +1170,8 @@ function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
   const [x1, y1] = xy(from.c), [x2, y2] = xy(to.c);
   const dx = Math.abs(x1 - x2), dy = Math.abs(y1 - y2);
   if (dx > 1 || dy > 1) return false;
+  // Codex "Forward": away from your starting edge, relative to the controller (Dalcean Phalanx)
+  if (has(s, u, 'Moves only forward') && !(x1 === x2 && y2 - y1 === (u.owner === 0 ? -1 : 1))) return false;
   if (dx + dy === 2 && !(rf === 'surface' && rt === 'surface' && has(s, u, 'Airborne'))) return false;
   if (rf === 'void' || rt === 'void') return !u.avatar && has(s, u, 'Voidwalk') && canOperate(s, u, rt);
   if (rf !== rt) return false;

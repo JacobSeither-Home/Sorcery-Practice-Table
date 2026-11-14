@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  ongoing: 'Keyword grants',
   chain: 'Damage',
   moveSite: 'Movement & position',
   damage: 'Damage', destroy: 'Removal', banish: 'Removal', bounce: 'Removal', heal: 'Life', loseLife: 'Life',
@@ -458,6 +459,17 @@ export const RULES: Rule[] = [
     build: (_m, on, type) => (on === 'static' && type === 'Site' ? [{ op: 'grant', who: 'siteHere', keyword: "Can't be moved, destroyed, or modified", until: 'permanent' }] : null) },
   { id: 'range-plus', label: 'Ranged units atop this site have +N range', re: /^ranged units (?:atop this site|here) have \+(\d+) range\.$/i,
     build: (m, on) => (on === 'static' ? [{ op: 'buff', who: 'unitsHere', surface: true, kw: 'Ranged', atk: 0, def: 0, rangePlus: +m[1], until: 'permanent' }] : null) },
+  { id: 'forward-only', label: 'Can only move themselves forward', re: /^(?:this )?can only move (?:themselves|itself) forward\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Moves only forward', until: 'permanent' }] : null) },
+  // Codex "Ongoing Effect": "Until your next turn, units are Immobile while they occupy nearby sites."
+  { id: 'until-next-ongoing', label: 'Until your next turn, … (an ongoing effect)', re: /^until your next turn, (.+)\.$/i,
+    build: (m, on, type) => {
+      if (on === 'static') return null;
+      // "units are Immobile while they occupy nearby sites" → "units nearby are Immobile"
+      const body = cap(m[1].replace(/^(.+?) (are|is) (.+?) while they occupy (nearby sites|this site|here)$/i, (_x, who, verb, what, w) => `${who} ${/nearby/i.test(w) ? 'nearby' : 'here'} ${verb} ${what}`)) + '.';
+      const r = matchSentence(body, 'static', type, false);
+      return r && r.got.every((e) => (e.op === 'grant' || e.op === 'buff') && e.who !== 'target' && e.who !== 'self') ? [{ op: 'ongoing', who: 'controller', fx: r.got }] : null;
+    } },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,

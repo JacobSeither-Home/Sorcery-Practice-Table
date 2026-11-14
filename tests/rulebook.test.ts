@@ -7,6 +7,7 @@ import type { CardDef, GameState, PlayerId, Unit } from '../src/engine/types';
 import { makeCard } from '../src/engine/cards';
 import { apply, check, createGame, legalActions, targetsFor, cell, regionOf, forgetStatics } from '../src/engine/rules';
 
+const AVATAR_START_0 = cell(2, 3);
 const cards: Record<string, CardDef> = Object.fromEntries(PRACTICE_CARDS.map((c) => [c.id, c]));
 const id = (name: string) => PRACTICE_CARDS.find((c) => c.name === name)!.id;
 const T = (name: string, type: CardDef['type'], extra: Partial<CardDef> = {}) => {
@@ -469,6 +470,21 @@ describe('Beta Earth', () => {
     const quake = T('Quake2', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'destroySite', who: 'atTarget', range: 'any' }] });
     s = apply(s, { t: 'cast', inst: give(s, 0, quake), choices: [{ cell: cell(2, 0) }] });
     expect(s.sites[cell(2, 0)]?.inst).toBe(kr);
+  });
+  it('Quagmire: until your next turn, units on nearby sites are Immobile (Codex "Ongoing Effect")', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const { has } = await import('../src/engine/rules');
+    let s = start(0);
+    const quag = T('Test Quag', 'Site', { effects: effectsFromText('Site', 'Genesis → Until your next turn, units are Immobile while they occupy nearby sites.', 'Test Quag') });
+    site(s, 0, AVATAR_START_0); site(s, 1, cell(2, 1), 'Mill Pond');
+    const foe = unit(s, 1, cell(2, 1), id('Kiln Brute'));
+    s.units[s.players[0].avatar].tapped = false;
+    s = apply(s, { t: 'playSite', inst: give(s, 0, quag), c: cell(2, 2) });
+    expect(has(s, s.units[foe], 'Immobile')).toBe(true);
+    s = apply(s, { t: 'endTurn' });
+    expect(has(s, s.units[foe], 'Immobile')).toBe(true);         // still on the opponent's turn
+    s = apply(apply(s, { t: 'draw', deck: 'spellbook' }), { t: 'endTurn' });
+    expect(has(s, s.units[foe], 'Immobile')).toBe(false);        // ended at the start of our next turn
   });
   it('Monks of Kobalsa: can\'t be modified, except by Wards', async () => {
     const { effectsFromText } = await import('../src/engine/cards');
