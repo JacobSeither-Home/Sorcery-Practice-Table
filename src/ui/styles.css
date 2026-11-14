@@ -669,3 +669,7 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .pick-bar { pointer-events: auto; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; max-width: min(720px, 100%); margin-top: 8px; padding: 10px 14px; border-radius: 12px;
   background: color-mix(in srgb, var(--panel, #14121f) 92%, transparent); border: 1px solid var(--sp); box-shadow: 0 0 24px color-mix(in srgb, var(--sp) 35%, transparent); }
 .pick-bar span { flex: 1 1 260px; }
+
+/* a card named in the log: point at it to see the card */
+.log .cardlink { color: inherit; text-decoration: underline dotted color-mix(in srgb, currentColor 60%, transparent); text-underline-offset: 2px; cursor: help; border-radius: 3px; }
+.log .cardlink:hover, .log .cardlink:focus-visible { color: var(--brass, #d9b46a); text-decoration-style: solid; outline: none; }

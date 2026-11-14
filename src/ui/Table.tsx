@@ -669,7 +669,21 @@ function PlayerStrip({ g, p, manual, onLog, near }: { g: Game; p: PlayerId; manu
 function LogPanel({ s, g, id = 'log' }: { s: GameState; g: Game; id?: string }) {
   const rows = s.log.slice(-60);
   useEffect(() => { const el = document.getElementById(id); if (el) el.scrollTop = el.scrollHeight; }, [s.log.length, id]);
-  return <div id={id} className="log" aria-live="polite">{rows.map((l, i) => <p key={s.log.length - rows.length + i} className={`${l.p === null ? 'sys' : 'p' + l.p} ${l.manual ? 'man' : ''}`}>{names(g, l.text)}</p>)}</div>;
+  // card names in the log become links: point at one to see the card, right-click (or hold) to read it
+  const finder = useMemo(() => {
+    const byName = new Map<string, CardDef>(); for (const cid of new Set(Object.values(s.inst))) { const c = s.cards[cid]; if (c && c.name.length > 2) byName.set(c.name, c); }
+    if (!byName.size) return null;
+    const esc = [...byName.keys()].sort((a, b) => b.length - a.length).map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    return { re: new RegExp(`(?<![\\w'])(${esc.join('|')})(?![\\w])`, 'g'), byName };
+  }, [s.cards, Object.keys(s.inst).length]);
+  const linked = (text: string) => {
+    if (!finder) return text;
+    const out: React.ReactNode[] = []; let last = 0;
+    for (const m of text.matchAll(finder.re)) { const c = finder.byName.get(m[0])!; if (m.index! > last) out.push(text.slice(last, m.index)); out.push(<span key={m.index} className="cardlink" tabIndex={0} {...hoverProps(c)}>{m[0]}</span>); last = m.index! + m[0].length; }
+    if (last < text.length) out.push(text.slice(last));
+    return out;
+  };
+  return <div id={id} className="log" aria-live="polite">{rows.map((l, i) => <p key={s.log.length - rows.length + i} className={`${l.p === null ? 'sys' : 'p' + l.p} ${l.manual ? 'man' : ''}`}>{linked(names(g, l.text))}</p>)}</div>;
 }
 const names = (g: Game, text: string) => text.replace(/\bP([12])\b/g, (_, n) => g.names[Number(n) - 1]);
 
