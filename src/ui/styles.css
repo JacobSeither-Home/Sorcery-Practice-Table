@@ -673,3 +673,5 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 /* a card named in the log: point at it to see the card */
 .log .cardlink { color: inherit; text-decoration: underline dotted color-mix(in srgb, currentColor 60%, transparent); text-underline-offset: 2px; cursor: help; border-radius: 3px; }
 .log .cardlink:hover, .log .cardlink:focus-visible { color: var(--brass, #d9b46a); text-decoration-style: solid; outline: none; }
+
+.cancel-act kbd { font: inherit; font-size: .75em; opacity: .7; margin-left: 4px; padding: 0 4px; border: 1px solid currentColor; border-radius: 4px; }

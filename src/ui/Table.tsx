@@ -50,6 +50,20 @@ export function Table() {
   const [cast, setCast] = useState<CastReq | null>(null);
   const [focusUnit, setFocusUnit] = useState<string | null>(null);
   const [abilOpen, setAbilOpen] = useState(false);
+  // Esc steps back out of whatever is half done: choosing a square for a pop-up, the pop-up, the abilities list, a square's menu, a selection
+  const escRef = useRef<() => boolean>(() => false);
+  escRef.current = () => {
+    const bp = useBoardPick.getState(); if (bp.cells) { bp.cancel?.(); return true; }
+    if (cast && cast.k !== 'trigger') { setCast(null); setFocusUnit(null); return true; }
+    if (abilOpen) { setAbilOpen(false); return true; }
+    if (menu) { setMenu(null); return true; }
+    if (sel) { setSel(null); return true; }
+    return false;
+  };
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key !== 'Escape' || useInspect.getState().card) return; const t = e.target as HTMLElement | null; if (t?.closest('input, textarea, select')) return; if (escRef.current()) e.preventDefault(); };
+    addEventListener('keydown', k); return () => removeEventListener('keydown', k);
+  }, []);
   const settings = useStore((st) => st.settings);
   const setSettings = useStore((st) => st.setSettings);
   const aiWaiting = useStore((st) => st.aiWaiting);
@@ -397,6 +411,7 @@ export function Table() {
             {(abilities.length > 0 || me.cemetery.some((i) => cardOf(s, i).effects.some((e) => e.op === 'castRule' && e.fromCemetery))) && <button className="ability" onClick={() => setAbilOpen(true)} data-tip="Abilities of your units, sites and artifacts that you use when you choose">✦ Abilities ({abilities.filter((x) => x.ok).length})</button>}
             <button disabled={s.units[me.avatar].tapped || !me.atlas.length} onClick={() => act({ t: 'drawSite' })} data-tip="Avatar ability: tap to draw a site instead of playing one">Tap Avatar: draw a site</button>
             {g.mode === 'ai' && <button disabled={!canUndo} onClick={undo} data-tip={canUndo ? 'Take back your last move' : 'Nothing to take back. Moves that draw a card, pass the turn, or that the opponent has answered cannot be undone.'}>Undo</button>}
+            {(sel || menu) && <button className="cancel-act" onClick={() => escRef.current()} data-tip="Stop what you started: put the selected card or unit back (Esc does the same)">✕ Cancel <kbd>Esc</kbd></button>}
             <button className="end" onClick={() => act({ t: 'endTurn' })} data-tip="Damage on your minions clears and unspent mana is lost">End turn</button>
           </>)}
           {manual && selUnit && (<span className="manualbar">
