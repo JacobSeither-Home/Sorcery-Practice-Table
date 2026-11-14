@@ -10,11 +10,12 @@ import {
   type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, chainBase, chainNext, orthAdjacent, cell, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
-import { CardFace, hoverProps, mainElement } from './CardFace';
+import { CardFace, clearZoom, hoverProps, mainElement } from './CardFace';
 import { TRIGGER_SHORT, describe } from './abilityText';
 import { usePace } from './pace';
 import { HowItWorks } from './Explain';
 import { GRIDS, gridSquares } from '../data/grids';
+import { useBoardPick } from './boardPick';
 
 export type CastReq =
   /** at / unit: where a magic was dropped on the realm: preselects that location and that unit as its choices */
@@ -25,6 +26,18 @@ export type CastReq =
   | { k: 'hand'; inst: string; lines: string[]; title: string };
 
 const sq = (c: number) => `${'ABCDE'[xy(c)[0]]}${4 - xy(c)[1]}`;
+
+/** The squares a line lets the player choose on the board, or null when the line does not choose a square there. */
+function locCells(s: GameState, pl: Plan, i: number, c?: Choice): number[] | null {
+  const e = pl.d.effects[i];
+  if (c?.skip) return null;
+  if (e.who === 'atTarget' && !e.refCell) return cellsFor(s, pl.d, i, pl.origins);
+  if (e.op === 'moveSite' && pl.origins[0]) return siteMoveCells(s, pl.origins[0].c);
+  if (e.op === 'teleport' && (c?.target || e.who === 'self') && (!e.dest || ['nearby', 'site', 'adjacent', 'toward', 'away', 'closestEvil'].includes(e.dest))) {
+    const mover = c?.target ? s.units[c.target] : pl.self ? s.units[pl.self] : undefined; return teleportCells(s, e, mover, pl.origins[0]);
+  }
+  return null;
+}
 
 interface Plan { d: CardDef; p: PlayerId; on: Trigger; idx: number[]; origins: Loc[]; self?: string; verb: string; title: string }
 function plan(s: GameState, req: CastReq): Plan | null {
@@ -58,6 +71,8 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
   const [choices, setChoices] = useState<Choice[]>([]);
   const [phase, setPhase] = useState<'choose' | 'casting'>('choose');
   const [why, setWhy] = useState(''); const [whyKw, setWhyKw] = useState<string | undefined>();
+  // choosing a square on the board: the pop-up steps aside while the squares glow
+  const [picking, setPicking] = useState<number | null>(null); const [declined, setDeclined] = useState<number[]>([]); const [ready, setReady] = useState(false);
   useEffect(() => { if (!pl) close(); }, [pl]);
   // pick the only possible target and sensible defaults straight away
   useEffect(() => {
@@ -72,8 +87,24 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
       if (e.x) c[i] = { ...(c[i] ?? {}), n: 1 };
       if (e.op === 'draw' && !e.deck) c[i] = { ...(c[i] ?? {}), deck: 'spellbook' };
     }
-    setChoices(c);
+    for (const i of pl.idx) { const cl = locCells(s, pl, i, c[i]); if (cl?.length === 1 && c[i]?.cell === undefined) c[i] = { ...(c[i] ?? {}), cell: cl[0] }; }
+    setChoices(c); setReady(true);
   }, [pl]);
+  const mine0 = req.k === 'hand' || g.mode === 'hotseat' || actor(s) === g.local;
+  // the next line that still needs a square goes straight to the board
+  useEffect(() => {
+    if (!pl || !ready || !mine0 || req.k === 'hand' || phase !== 'choose' || picking !== null) return;
+    const next = pl.idx.find((i) => { if (declined.includes(i) || choices[i]?.cell !== undefined) return false; const e = pl.d.effects[i]; if (e.alt && (choices[e.alt.at]?.alt ?? 0) !== e.alt.opt) return false; const cl = locCells(s, pl, i, choices[i]); return !!cl && cl.length > 1; });
+    if (next !== undefined) setPicking(next);
+  }, [ready, choices, declined, picking, phase]);
+  useEffect(() => {
+    if (picking === null || !pl) { useBoardPick.getState().clear(); return; }
+    const i = picking; const cl = locCells(s, pl, i, choices[i]) ?? []; clearZoom();
+    useBoardPick.getState().start(cl, `${pl.d.name}: ${describe(pl.d.effects[i])}`,
+      (c) => { setChoices((cs) => { const n = cs.slice(); n[i] = { ...(n[i] ?? {}), cell: c }; return n; }); setPicking(null); },
+      () => { setDeclined((d) => [...d, i]); setPicking(null); });
+  }, [picking]);
+  useEffect(() => () => useBoardPick.getState().clear(), []);
   if (!pl) return null;
   const { d } = pl; const el = mainElement(d);
   const set = (i: number, p: Partial<Choice>) => setChoices((c) => { const n = c.slice(); n[i] = { ...(n[i] ?? {}), ...p }; return n; });
@@ -100,8 +131,13 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
   const mine = req.k === 'hand' || g.mode === 'hotseat' || actor(s) === g.local;
 
   return (
-    <motion.div className={`spell-veil el-${el} ${phase}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 * pace }}
+    <motion.div className={`spell-veil el-${el} ${phase} ${picking !== null ? 'picking' : ''}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 * pace }}
       onClick={() => req.k !== 'trigger' && phase === 'choose' && close()} style={{ '--sp': `var(--${el}, var(--brass))` } as React.CSSProperties}>
+      {picking !== null && <div className="pick-bar" role="status" onClick={(e) => e.stopPropagation()}>
+        <span><b>Choose a square on the board.</b> {pl.d.name}: {describe(d.effects[picking])}</span>
+        <button onClick={() => { setDeclined((x) => [...x, picking]); setPicking(null); }}>Back to the card</button>
+        <button onClick={() => { setPicking(null); close(); }}>Cancel</button>
+      </div>}
       <div className="spell-sigil" aria-hidden><Sigil /></div>
       <motion.div className="spell-card" role="dialog" aria-label={pl.title} onClick={(e) => e.stopPropagation()}
         initial={{ y: 30, scale: 0.94, opacity: 0 }} animate={phase === 'casting' ? { y: -40, scale: 1.04, opacity: 0 } : { y: 0, scale: 1, opacity: 1 }}
@@ -116,7 +152,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
             return <button key={u.id} className={`chip p${u.owner} ${caster === u.id ? 'on' : ''}`} aria-pressed={on} onClick={() => setCaster(caster === u.id ? undefined : u.id)} onPointerEnter={() => focus(u.id)} onPointerLeave={() => focus(null)} data-tip={d.type === 'Magic' ? 'The spell happens where this spellcaster stands: range and targets count from there' : 'Who casts it (casting ends that unit\'s Stealth)'}>{unitCard(s, u).name}{u.avatar ? ' (Avatar)' : ''}</button>; })}
             {!caster && <small> — or leave it: the table uses your Avatar, or the first spellcaster that can reach your choices</small>}</div>}
           {req.k !== 'hand' && <ol className="incant">
-            {pl.idx.map((i) => <Line key={i} s={s} pl={pl} i={i} e={d.effects[i]} c={choices[i]} all={choices} set={(p) => set(i, p)} focus={focus} />)}
+            {pl.idx.map((i) => <Line key={i} s={s} pl={pl} i={i} e={d.effects[i]} c={choices[i]} all={choices} set={(p) => set(i, p)} focus={focus} pickOnBoard={mine ? () => setPicking(i) : undefined} />)}
           </ol>}
           {others.length > 0 && <div className="spell-other"><b>Its other abilities</b>{others.map((e, i) => <p key={i}><span className="trig">{TRIGGER_SHORT[e.on]}</span> {describe(e)}{e.op === 'manual' ? <em> (by hand)</em> : ''}</p>)}</div>}
           {manualLines.length > 0 && req.k === 'hand' && <HandTools g={g} lines={manualLines} p={pl.p} />}
@@ -138,7 +174,9 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
 }
 
 /** One ability line, with whatever choice it needs. */
-function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: number; e: Effect; c?: Choice; all: Choice[]; set: (p: Partial<Choice>) => void; focus: (u: string | null) => void }) {
+function Line({ s, pl, i, e, c, all, set, focus, pickOnBoard }: { s: GameState; pl: Plan; i: number; e: Effect; c?: Choice; all: Choice[]; set: (p: Partial<Choice>) => void; focus: (u: string | null) => void; pickOnBoard?: () => void }) {
+  const loc = locCells(s, pl, i, c);
+  const locName = (cl: number) => { const here = Object.values(s.units).filter((u) => u.c === cl); return here.length ? here.map((u) => unitCard(s, u).name).join(', ') : s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : s.sites[cl] ? 'Rubble' : 'void'; };
   const targets = e.who === 'target' && !e.ref ? targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self) : [];
   const cells = e.who === 'atTarget' && !e.refCell ? cellsFor(s, pl.d, i, pl.origins) : [];
   const dirs = e.op === 'shoot' ? shotDirs(s, pl.p, pl.origins[0] ?? { c: 0, r: 'surface' }) : [];
@@ -153,10 +191,11 @@ function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: 
         {e.alt && (all[e.alt.at]?.alt ?? 0) !== e.alt.opt && <small className="none"> — not chosen</small>}
         {e.optional && <button className={`maybe ${c?.skip ? '' : 'on'}`} onClick={() => set({ skip: !c?.skip })} aria-pressed={!c?.skip} data-tip="The card says you may: choose whether this part happens">{c?.skip ? 'Skipped — do it' : 'You may: skip it'}</button>}
         {e.op === 'manual' && <small> — not automated: the hand tools open after it resolves</small>}
-        {e.who === 'atTarget' && !e.refCell && (cells.length ? <div className="chips targets">{cells.map((cl) => {
-          const here = Object.values(s.units).filter((u) => u.c === cl); const on = c?.cell === cl;
-          return <button key={cl} className={`chip ${on ? 'on' : ''}`} aria-pressed={on} onClick={() => set({ cell: cl })} onPointerEnter={() => here[0] && focus(here[0].id)} onPointerLeave={() => focus(null)}>{sq(cl)}<small> {here.length ? here.map((u) => unitCard(s, u).name).join(', ') : s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'empty'}</small></button>;
-        })}</div> : <small className="none"> — no location in range</small>)}
+        {loc && (loc.length ? <div className="chips targets loc-pick">{c?.cell !== undefined ? <span className="chip on">{sq(c.cell)}<small> {locName(c.cell)}</small></span> : <small>No square chosen yet.</small>}
+          {pickOnBoard && loc.length > 1 && <button className="chip" onClick={pickOnBoard}>{c?.cell !== undefined ? 'Change it on the board' : 'Choose it on the board'}</button>}</div>
+          : <small className="none"> — {e.op === 'moveSite' ? 'no void nearby' : e.op === 'teleport' ? 'nowhere to go' : 'no location in range'}</small>)}
+        {e.op === 'raise' && (() => { const dead = ([0, 1] as PlayerId[]).flatMap((q) => s.players[q].cemetery.map((x) => ({ q, x }))).filter((o) => cardOf(s, o.x).type === 'Minion');
+          return dead.length ? <div className="lookrow many"><small>One of these comes back at random:</small><div className="look-cards">{dead.map((o) => <div key={o.x} className="look-card" {...hoverProps(cardOf(s, o.x))}><CardFace card={cardOf(s, o.x)} size="sm" /><span className="from">{o.q === pl.p ? 'your' : 'their'} cemetery</span></div>)}</div></div> : <small className="none"> — no dead minion in either cemetery</small>; })()}
         {e.op === 'pick' && e.pick && (() => {
           const opts = pickOptions(s, pl.p, pl.d, e); const pk = e.pick!; const chosen = c?.cards ?? [];
           const max = pk.take === 'all' ? opts.length : pk.take;
@@ -190,7 +229,8 @@ function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: 
         })()}
         {e.op === 'discard' && !e.random && e.who === 'controller' && (() => {
           const hand = s.players[pl.p].hand.filter((x) => (pl.d && x !== (pl as { inst?: string }).inst) && (e.deck === 'atlas' ? cardOf(s, x).type === 'Site' : e.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true));
-          return hand.length ? <div className="chips targets"><small>Discard:</small>{hand.map((x) => <button key={x} className={`chip ${c?.card === x ? 'on' : ''}`} onClick={() => set({ card: x })}>{cardOf(s, x).name}</button>)}</div> : <small className="none"> — nothing to discard</small>;
+          return hand.length ? <div className={`lookrow ${hand.length > 8 ? 'many' : ''}`}><small>Discard:</small><div className="look-cards">{hand.map((x) => { const on = c?.card === x;
+            return <button key={x} className={`look-card ${on ? 'on' : ''}`} aria-pressed={on} {...hoverProps(cardOf(s, x))} onClick={() => set({ card: x })}><CardFace card={cardOf(s, x)} size={hand.length > 8 ? 'sm' : 'md'} /></button>; })}</div></div> : <small className="none"> — nothing to discard</small>;
         })()}
         {e.op === 'scry' && (() => { const top = s.players[pl.p][e.deck ?? 'spellbook'][0]; return top ? <div className="lookrow"><small>Only you see this. It is the top card of your {e.deck ?? 'spellbook'}.</small>
           <div className="look-cards"><div className="look-card" {...hoverProps(cardOf(s, top))}><CardFace card={cardOf(s, top)} size="md" /></div>
@@ -233,10 +273,8 @@ function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: 
           </div>;
         })()}
         {e.op === 'roll' && <span className="xpick">{([[0, -1], [0, 1], [-1, 0], [1, 0]] as [number, number][]).map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
-        {e.op === 'moveSite' && pl.origins[0] && (() => { const cl = siteMoveCells(s, pl.origins[0].c); return cl.length ? <div className="chips targets"><small>Fly to:</small>{cl.map((x) => <button key={x} className={`chip ${c?.cell === x ? 'on' : ''}`} onClick={() => set({ cell: x })}>{sq(x)}<small> void</small></button>)}</div> : <small className="none"> — no void nearby</small>; })()}
         {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);
           return <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })} data-tip={`The joint between ${a.map(sq).join(', ')}`}>{sq(a[0])}–{sq(a[3])}<small> {a.map(sq).join(' ')}</small></button>; })}</div>}
-        {e.op === 'teleport' && (c?.target || e.who === 'self') && (!e.dest || ['nearby', 'site', 'adjacent', 'toward', 'away', 'closestEvil'].includes(e.dest)) && (() => { const mover = c?.target ? s.units[c.target] : pl.self ? s.units[pl.self] : undefined; const tc = teleportCells(s, e, mover, pl.origins[0]); return tc.length ? <div className="chips targets"><small>Where to:</small>{tc.map((cl) => <button key={cl} className={`chip ${c?.cell === cl ? 'on' : ''}`} onClick={() => set({ cell: cl })}>{sq(cl)}<small> {s.sites[cl]?.inst ? cardOf(s, s.sites[cl]!.inst!).name : 'void'}</small></button>)}</div> : <small className="none"> — nowhere to go</small>; })()}
         {e.op === 'shoot' && (dirs.length ? <span className="xpick">{dirs.map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv, hit: undefined })}>{DIR[dv.join()]}</button>)}</span> : <small className="none"> — nothing in a straight line to hit</small>)}
         {e.op === 'shoot' && !e.pierce && c?.dir && pl.origins[0] && (() => { const there = projectileCandidates(s, pl.p, pl.origins[0], c.dir[0], c.dir[1], 9, pl.self); return there.length > 1 ? <div className="chips targets"><small>It lands where {there.length} units are — you choose which it hits:</small>{there.map((u) => {
           const on = (c.hit ?? there[0].id) === u.id;

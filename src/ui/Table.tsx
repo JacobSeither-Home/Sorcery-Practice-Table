@@ -8,6 +8,7 @@ import {
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
 import { PACES } from '../store';
+import { useBoardPick } from './boardPick';
 import { CardFace, Pips, STATUSES, clearZoom, hoverProps, mainElement, useStatusPop, useHover, useInspect } from './CardFace';
 import { spring, usePace } from './pace';
 import { type CastReq, CastModal, abilityList } from './CastModal';
@@ -98,8 +99,10 @@ export function Table() {
   const selCard = sel?.k === 'hand' ? cardOf(s, sel.inst) : undefined;
 
   // ---- legal-move highlights (teaching aid) ----
+  const boardPick = useBoardPick((b) => b.cells);
   const { cells: hiCells, units: hiUnits } = useMemo(() => {
     const cells = new Map<number, 'go' | 'hit' | 'place'>(); const units = new Set<string>();
+    if (boardPick) { for (const c of boardPick) cells.set(c, 'place'); return { cells, units }; } // an open pop-up is waiting for a location
     if (!myInput || s.pending) return { cells, units };
     if (selCard && sel?.k === 'hand') {
       const needs = selCard.effects.some((e) => e.who === 'target' && e.on === (selCard.type === 'Magic' ? 'cast' : 'genesis'));
@@ -123,7 +126,7 @@ export function Table() {
       }
     }
     return { cells, units };
-  }, [s, sel, myInput]);
+  }, [s, sel, myInput, boardPick]);
 
   const explain = (a: Action) => { const r = check(s, a); if (!r.ok) toast(r.reason, 'error', r.keyword); return r.ok; };
 
@@ -161,6 +164,7 @@ export function Table() {
   }
 
   function clickCell(c: number) {
+    { const bp = useBoardPick.getState(); if (bp.cells) { if (bp.cells.includes(c)) bp.pick?.(c); else toast('Choose one of the glowing squares, or Cancel at the top.'); return; } }
     if (!myInput || s.pending) return;
     setMenu(null);
     if (sel?.k === 'hand' && selCard) {
@@ -185,6 +189,7 @@ export function Table() {
   }
   function clickUnit(u: Unit, e: React.MouseEvent) {
     e.stopPropagation();
+    if (useBoardPick.getState().cells) { clickCell(u.c); return; }
     if (manual) { setMenu(null); setSel({ k: 'unit', id: u.id }); return; }
     if (!myInput || s.pending) return;
     if (sel?.k === 'hand' && selCard?.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst: sel.inst, at: u.c, unit: u.id }); return; }
