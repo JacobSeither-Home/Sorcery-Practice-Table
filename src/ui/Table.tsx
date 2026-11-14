@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
-  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded, followUps,
+  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded, followUps, castersFor, cellsFor, siteMoveCells, type Choice,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
@@ -16,7 +16,8 @@ declare const __APP_VERSION__: string;
 import { submit as submitFeedback, recentErrors } from '../feedback/feedback';
 import { feedbackRemote, useAuth } from '../cloud/cloud';
 
-type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string };
+/** site: one of your sites whose ability moves it (Cloud City), waiting for the void to go to */
+type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string } | { k: 'site'; c: number; fx: number };
 interface Opt { label: string; hint?: string; action: Action }
 
 const PNAME = (g: Game, p: PlayerId) => g.names[p];
@@ -103,10 +104,16 @@ export function Table() {
     if (selCard && sel?.k === 'hand') {
       const needs = selCard.effects.some((e) => e.who === 'target' && e.on === (selCard.type === 'Magic' ? 'cast' : 'genesis'));
       if (selCard.type === 'Site') { if (!s.units[me.avatar].tapped) for (const c of playableSiteCells(s, who)) cells.set(c, 'place'); }
-      else if (selCard.type === 'Magic') { if (needs) for (const id of validTargets(s, who, selCard)) units.add(id); }
+      else if (selCard.type === 'Magic') {
+        if (needs) for (const id of validTargets(s, who, selCard)) units.add(id);
+        // spells that act "at target location": the squares it may be dropped on
+        const origins = castersFor(s, who, selCard).map((u) => ({ c: u.c, r: u.r }));
+        selCard.effects.forEach((e, i) => { if (e.on === 'cast' && e.who === 'atTarget' && !e.refCell) for (const c of cellsFor(s, selCard, i, origins, who)) cells.set(c, 'place'); });
+      }
       else if (selCard.type === 'Aura') { /* auras go on a joint between four squares: the joint markers are drawn over the realm instead */ }
       else for (const c of summonCells(s, who, selCard)) cells.set(c, 'place');
     }
+    if (sel?.k === 'site') for (const c of siteMoveCells(s, sel.c)) cells.set(c, 'go');
     if (selUnit) {
       for (const f of followUps(s, selUnit)) { if (f.t === 'step') cells.set(f.to.c, 'go'); if (f.t === 'shoot' && f.hit) cells.set(s.units[f.hit].c, 'hit'); }
       for (const path of reach(s, selUnit).values()) {
@@ -134,7 +141,9 @@ export function Table() {
       const verb = path.length ? (end.c === u.c ? (end.r === 'under' ? `Go${where}` : 'Surface') : `Move here${where}`) : '';
       for (const t of attackTargets(s, u, end)) {
         const name = t.site ? 'the site' : unitCard(s, s.units[t.unit!]).name;
-        opts.push({ label: `${path.length ? (end.c === u.c ? verb + ', attack ' : `Move${where}, attack `) : 'Attack '}${name}`, hint: t.site ? `${PNAME(g, other(u.owner))} loses ${unitCard(s, u).attack} life if nobody defends` : 'Both units strike at once', action: { t: 'move', unit: u.id, path, attack: t } });
+        const tu = t.unit ? s.units[t.unit] : undefined;
+        const stats = tu ? `${unitCard(s, tu).name}: power ${power(s, tu)}${tu.avatar ? `, ${s.players[tu.owner].life} life` : `, ${Math.max(0, defenseOf(s, tu) - tu.damage)} more damage kills it`}${tu.tapped ? ', tapped' : ''}${isDisabled(s, tu) ? ', disabled' : ''}${warded(s, tu) ? ', Ward' : ''}` : '';
+        opts.push({ label: `${path.length ? (end.c === u.c ? verb + ', attack ' : `Move${where}, attack `) : 'Attack '}${name}`, hint: t.site ? `${PNAME(g, other(u.owner))} loses ${power(s, u)} life if nobody defends` : `${stats}. Both strike at once`, action: { t: 'move', unit: u.id, path, attack: t } });
       }
       if (path.length) opts.push({ label: verb, action: { t: 'move', unit: u.id, path } });
     }
@@ -156,23 +165,33 @@ export function Table() {
     setMenu(null);
     if (sel?.k === 'hand' && selCard) {
       if (selCard.type === 'Site') { if (explain({ t: 'playSite', inst: sel.inst, c })) act({ t: 'playSite', inst: sel.inst, c }); return; }
-      if (selCard.type === 'Magic') { play(sel.inst); return; }
+      if (selCard.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst: sel.inst, at: c }); return; } // that square is its target location
       if (selCard.type === 'Aura') return; // an aura is placed on a joint, not a square
       if (!summonCells(s, who, selCard).includes(c)) { explain({ t: 'cast', inst: sel.inst, c }); return; }
       play(sel.inst, c);
       return;
     }
+    // a site that can fly (Cloud City): choose the void, the ability opens with it chosen
+    if (sel?.k === 'site') { const st = s.sites[sel.c]; const d = st?.inst ? cardOf(s, st.trap ?? st.inst) : null; setSel(null);
+      if (d && siteMoveCells(s, sel.c).includes(c)) { const ch: Choice[] = []; ch[sel.fx] = { cell: c }; const a: Action = { t: 'ability', src: { site: sel.c }, fx: sel.fx, choices: ch }; if (explain(a)) act(a); }
+      return; }
+    if (!sel && s.sites[c]?.owner === who && s.phase === 'main') {
+      const st = s.sites[c]!; const d = cardOf(s, st.trap ?? st.inst!); const fx = d.effects.findIndex((e) => e.op === 'moveSite');
+      if (fx >= 0) { const r = check(s, { t: 'ability', src: { site: c }, fx, choices: (() => { const ch: Choice[] = []; ch[fx] = { cell: siteMoveCells(s, c)[0] }; return ch; })() });
+        if (r.ok) { setSel({ k: 'site', c, fx }); toast(`${d.name} may fly: choose a glowing void next to it.`); return; } }
+    }
     if (selUnit) {
       const opts = unitOptions(selUnit, c);
       if (!opts.length) { explain({ t: 'move', unit: selUnit.id, path: [{ c, r: selUnit.r }] }); return; }
-      if (opts.length === 1) act(opts[0].action); else setMenu({ c, opts });
+      // one option elsewhere is taken straight away; on its own square the choice is always shown (attack the site or a unit there)
+      if (opts.length === 1 && c !== selUnit.c) act(opts[0].action); else setMenu({ c, opts });
     }
   }
   function clickUnit(u: Unit, e: React.MouseEvent) {
     e.stopPropagation();
     if (manual) { setMenu(null); setSel({ k: 'unit', id: u.id }); return; }
     if (!myInput || s.pending) return;
-    if (sel?.k === 'hand' && selCard?.type === 'Magic') { play(sel.inst); return; }
+    if (sel?.k === 'hand' && selCard?.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst: sel.inst, at: u.c, unit: u.id }); return; }
     if (sel?.k === 'hand' && selCard?.type === 'Artifact' && u.owner === who && s.sites[u.c]?.owner === who && !selCard.effects.some((e) => e.who === 'target' && e.on === 'genesis')) {
       play(sel.inst, u.c, u.id); return; // hand the artifact to this unit
     }
@@ -228,7 +247,7 @@ export function Table() {
     if (c === null) { setSel(null); return; } // let go outside the realm: back to hand
     const d = cardOf(s, inst);
     if (d.type === 'Site') { const a: Action = { t: 'playSite', inst, c }; if (explain(a)) act(a); else setSel(null); return; }
-    if (d.type === 'Magic') { play(inst); return; }
+    if (d.type === 'Magic') { setSel(null); setCast({ k: 'cast', inst, at: c, ...(unit ? { unit } : {}) }); return; } // the square it was dropped on is the target location
     if (d.type === 'Artifact' && unit && s.units[unit]?.owner === who && s.sites[c]?.owner === who && !d.effects.some((e) => e.who === 'target' && e.on === 'genesis')) { play(inst, c, unit); return; } // dropped on one of your units: it carries the artifact
     if (!summonCells(s, who, d).includes(c)) { explain({ t: 'cast', inst, c }); setSel(null); return; }
     play(inst, c);
@@ -308,7 +327,7 @@ export function Table() {
                       {(unitsByCell.get(c) ?? []).filter((u) => u.owner === p).map((u) => <UnitToken key={u.id} s={s} u={u} pace={pace} selected={selUnit?.id === u.id} target={hiUnits.has(u.id) || focusUnit === u.id} dropping={drag?.unit === u.id && hiUnits.has(u.id)} onClick={(e) => clickUnit(u, e)} />)}
                     </div>
                   ))}
-                  {drag?.c === c && hi === 'place' && <span className="drop-label">Release to play here</span>}
+                  {drag?.c === c && hi === 'place' && <span className="drop-label">{selCard?.type === 'Magic' ? 'Release to cast it here' : 'Release to play here'}</span>}
                   {menu?.c === c && !narrow && (
                     <motion.div className="cellmenu" initial={{ opacity: 0, scale: 0.94 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.18 * pace }} onClick={(e) => e.stopPropagation()}>
                       {menu.opts.map((o, i) => <button key={i} onClick={() => act(o.action)}>{o.label}{o.hint && <small>{o.hint}</small>}</button>)}

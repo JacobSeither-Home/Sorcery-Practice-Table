@@ -16,7 +16,8 @@ import { usePace } from './pace';
 import { HowItWorks } from './Explain';
 
 export type CastReq =
-  | { k: 'cast'; inst: string; c?: number; bearer?: string }
+  /** at / unit: where a magic was dropped on the realm: preselects that location and that unit as its choices */
+  | { k: 'cast'; inst: string; c?: number; bearer?: string; at?: number; unit?: string }
   | { k: 'ability'; src: Source; fx: number }
   | { k: 'trigger'; id: string }
   /** after an action: only the hand tools for the sentences that were not automated */
@@ -63,7 +64,9 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
     const c: Choice[] = [];
     for (const i of pl.idx) {
       const e = pl.d.effects[i];
-      if (e.who === 'target' && !e.ref) { const t = targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self); if (t.length === 1) c[i] = { target: t[0] }; }
+      if (e.who === 'target' && !e.ref) { const t = targetsFor(s, pl.p, pl.d, i, pl.origins, pl.self); if (t.length === 1) c[i] = { target: t[0] }; else if (req.k === 'cast' && req.unit && t.includes(req.unit)) c[i] = { target: req.unit }; }
+      // dropped on a square: that is the target location (and its unit, when the spell picks one there)
+      if (req.k === 'cast' && req.at !== undefined && e.who === 'atTarget' && !e.refCell && cellsFor(s, pl.d, i, pl.origins, pl.p).includes(req.at)) c[i] = { ...(c[i] ?? {}), cell: req.at };
       if (e.op === 'shoot') { const dirs = shotDirs(s, pl.p, pl.origins[0] ?? { c: 0, r: 'surface' }); if (dirs.length === 1) c[i] = { ...(c[i] ?? {}), dir: dirs[0] }; }
       if (e.x) c[i] = { ...(c[i] ?? {}), n: 1 };
       if (e.op === 'draw' && !e.deck) c[i] = { ...(c[i] ?? {}), deck: 'spellbook' };

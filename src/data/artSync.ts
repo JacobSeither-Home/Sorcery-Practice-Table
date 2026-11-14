@@ -2,7 +2,7 @@
 // Nothing is uploaded and nothing is fetched from Erik's Curiosa's CDN.
 // The official image folder does not document its file naming, so matching is by normalized
 // filename against printing slugs, card slugs, and card names, in that order.
-import { Unzip, UnzipInflate } from 'fflate';
+import { Unzip, UnzipInflate, inflateSync } from 'fflate';
 import { slugify } from '../engine/cards';
 import type { CardDef } from '../engine/types';
 import { artDb, db } from './db';
@@ -54,7 +54,45 @@ export async function rememberedZips(): Promise<{ names: string[]; read: () => P
     return Promise.all(handles.map((h) => h.getFile()));
   } };
 }
+/** Read a zip through its central directory (random access with File.slice): each image is read and inflated on its
+ *  own, so a multi-gigabyte zip never has to fit in memory, and zips whose entries carry their sizes only in the
+ *  central directory (Google Drive's downloads, zip64) read correctly. Returns null when there is no central directory. */
+export async function zipEntriesIndexed(zip: File): Promise<Entry[] | null> {
+  const tail = new DataView(await zip.slice(Math.max(0, zip.size - 65557)).arrayBuffer());
+  let eocd = -1; for (let i = tail.byteLength - 22; i >= 0; i--) if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) return null;
+  let count = tail.getUint16(eocd + 10, true); let size = tail.getUint32(eocd + 12, true); let offset = tail.getUint32(eocd + 16, true);
+  if (offset === 0xffffffff || count === 0xffff || size === 0xffffffff) { // zip64: the zip64 end-of-directory record says where things are
+    const loc = eocd - 20; if (loc < 0 || tail.getUint32(loc, true) !== 0x07064b50) return null;
+    const rec = Number(tail.getBigUint64(loc + 8, true));
+    const z = new DataView(await zip.slice(rec, rec + 56).arrayBuffer()); if (z.getUint32(0, true) !== 0x06064b50) return null;
+    count = Number(z.getBigUint64(32, true)); size = Number(z.getBigUint64(40, true)); offset = Number(z.getBigUint64(48, true));
+  }
+  const cd = new DataView(await zip.slice(offset, offset + size).arrayBuffer()); const dec = new TextDecoder();
+  const out: Entry[] = []; let p = 0;
+  for (let k = 0; k < count && p + 46 <= cd.byteLength; k++) {
+    if (cd.getUint32(p, true) !== 0x02014b50) break;
+    const method = cd.getUint16(p + 10, true); let csize = cd.getUint32(p + 20, true); let usize = cd.getUint32(p + 24, true);
+    const nlen = cd.getUint16(p + 28, true), xlen = cd.getUint16(p + 30, true), clen = cd.getUint16(p + 32, true); let lho = cd.getUint32(p + 42, true);
+    const name = dec.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, nlen));
+    // zip64 extra field: the 64-bit sizes / offset, in this order, for the fields set to 0xffffffff
+    for (let x = p + 46 + nlen; x < p + 46 + nlen + xlen - 4;) { const id = cd.getUint16(x, true), len = cd.getUint16(x + 2, true);
+      if (id === 0x0001) { let q = x + 4; if (usize === 0xffffffff) { usize = Number(cd.getBigUint64(q, true)); q += 8; } if (csize === 0xffffffff) { csize = Number(cd.getBigUint64(q, true)); q += 8; } if (lho === 0xffffffff) { lho = Number(cd.getBigUint64(q, true)); } }
+      x += 4 + len; }
+    p += 46 + nlen + xlen + clen;
+    if (!IMG.test(name) || name.includes('__MACOSX') || (method !== 0 && method !== 8)) continue;
+    const at = lho, cs = csize, m = method;
+    out.push({ name, blob: async () => {
+      const lh = new DataView(await zip.slice(at, at + 30).arrayBuffer());
+      const start = at + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
+      const raw = new Uint8Array(await zip.slice(start, start + cs).arrayBuffer());
+      return new Blob([(m === 0 ? raw : inflateSync(raw)) as BlobPart]);
+    } });
+  }
+  return out;
+}
 async function* zipEntries(zip: File): AsyncGenerator<Entry> {
+  try { const idx = await zipEntriesIndexed(zip); if (idx) { yield* idx; return; } } catch { /* fall back to streaming below */ }
   const queue: Entry[] = []; let failed: Error | null = null;
   const un = new Unzip((f) => {
     if (!IMG.test(f.name) || f.name.includes('__MACOSX')) return; // not started = skipped
