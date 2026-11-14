@@ -162,6 +162,7 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   if (kind === 'avatar') { if (near) who = 'nearbyAvatars'; else if (side === 'enemy') who = 'enemyAvatar'; else if (side === 'ally') who = 'ownAvatar'; else who = 'allAvatars'; return { who }; }
   if (here) who = side === 'enemy' ? 'enemiesHere' : side === 'ally' ? 'alliesHere' : 'unitsHere';
   else if (near) who = side === 'enemy' ? 'enemiesNearby' : side === 'ally' ? 'alliesNearby' : 'unitsNearby';
+  else if (kind === 'unit' && side && !subs.length) return { who: side === 'enemy' ? 'enemyUnits' : 'allyUnits', ...filters }; // "each ally": Avatar included (rulebook p32 "Ally")
   else who = side === 'enemy' ? 'enemyMinions' : side === 'ally' ? 'allyMinions' : 'allMinions';
   if (!range && kind === 'unit' && !subs.length && side === '') return null; // "each unit" anywhere: Avatars too, not modelled
   return { who, ...(kind === 'minion' || (!range && kind === 'unit') ? { only: 'minion' as const } : {}), ...filters };
@@ -348,6 +349,11 @@ export const RULES: Rule[] = [
       if (on === 'static' && m[4]) return null;
       return [{ op: 'buff', ...v, atk: num(m[2]), def: m[3] ? num(m[3]) : num(m[2]), until: until(m[4], on) }];
     } },
+  // rulebook p12 "Bodies of Water & Land"
+  { id: 'allies-in-body', label: 'Other allies occupying this body of water have +N power', re: /^(other )?allies (?:occupying|in) this(?:'s)? (body of water|span of land) have \+(\d+) power\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'buff', who: 'alliesInBody', ...(m[1] ? { other: true } : {}), atk: +m[3], def: +m[3], until: 'permanent' }] : null) },
+  { id: 'heal-body', label: 'Each ally heals the number of sites in its body of water', re: /^each ally heals an amount equal to the number of sites in its body of water\.$/i,
+    build: (_m, on) => (on !== 'static' ? [{ op: 'heal', who: 'allyUnits', amount: 'victimBody' }] : null) },
   { id: 'power-per', label: '… has +N power for each …', re: /^(.+?) (?:has|have) \+(\d+) power for each (.+?)\.$/i,
     build: (m, on) => {
       if (on !== 'static') return null;
@@ -360,6 +366,7 @@ export const RULES: Rule[] = [
       else if ((mm = w.match(/^of your dead (\w+)$/))) { const sb = subOf(mm[1]); per = sb ? { kind: 'deadSub', sub: sb } : /^minions$/.test(mm[1]) ? { kind: 'deadSub' } : null; }
       else if (/^this in your cemetery$/.test(w)) per = { kind: 'sameInCemetery' };
       else if (/^void in (?:their|its|this's) row$/.test(w)) per = { kind: 'voidsInRow' };
+      else if ((mm = w.match(/^site in (?:her|his|their|its|this's) (body of water|span of land)$/))) per = { kind: 'bodySites', body: mm[1] === 'body of water' ? 'water' : 'land' }; // rulebook p12
       return per ? [{ op: 'buff', ...v, atk: +m[2], def: +m[2], until: 'permanent', per }] : null;
     } },
   { id: 'has-list', label: '… has +N power, a keyword, and …', re: /^(.+?) (?:has|have|gains?|gets?) ((?:[^,]+, )*[^,]+?,? and [^,]+?)( this turn| until your next turn)?\.$/i,

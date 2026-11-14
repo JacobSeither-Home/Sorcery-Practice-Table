@@ -35,6 +35,16 @@ export function nearby(c: number): number[] {
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const n = cell(x + dx, y + dy); if (n >= 0) out.push(n); }
   return out;
 }
+/** Rulebook p12 "Bodies of Water & Land": the contiguous cluster of sites sharing borders (not corners) with the
+ *  site at c that are of its kind (water or land; rubble is land). Empty for a void. Codex "Body of Water", "Span of Land". */
+export function bodyOf(s: GameState, c: number): number[] {
+  if (!s.sites[c]) return [];
+  const water = isWater(s, c); const out = [c]; const seen = new Set(out);
+  for (let i = 0; i < out.length; i++) for (const n of orthAdjacent(out[i])) if (!seen.has(n) && s.sites[n] && isWater(s, n) === water) { seen.add(n); out.push(n); }
+  return out;
+}
+/** The body of the given kind the square is part of ("her body of water" is empty while she is on land). */
+export const bodyOfKind = (s: GameState, c: number, kind: 'water' | 'land') => (s.sites[c] && isWater(s, c) === (kind === 'water') ? bodyOf(s, c) : []);
 export function isWater(s: GameState, c: number): boolean {
   const site = s.sites[c];
   if (!site || !site.inst) return false;
@@ -146,6 +156,9 @@ function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, s
     case 'unitsNearby': return near;
     case 'allyMinions': return !u.avatar && u.owner === p;
     case 'enemyMinions': return !u.avatar && u.owner !== p;
+    case 'allyUnits': return u.owner === p;
+    case 'enemyUnits': return u.owner !== p;
+    case 'alliesInBody': return u.owner === p && bodyOfKind(s, at.c, isWater(s, at.c) ? 'water' : 'land').includes(u.c) && regionOf(s, u) !== 'void';
     case 'allMinions': return !u.avatar;
     default: return false;
   }
@@ -161,6 +174,7 @@ function countFor(s: GameState, per: NonNullable<Effect['per']>, d: CardDef, p: 
     case 'deadSub': return s.players[p].cemetery.filter((i) => cardOf(s, i).type === 'Minion' && (!per.sub || cardOf(s, i).subtypes.includes(per.sub))).length;
     case 'sameInCemetery': return s.players[p].cemetery.filter((i) => cardOf(s, i).name === d.name).length;
     case 'voidsInRow': return [0, 1, 2, 3, 4].filter((cx) => !s.sites[cell(cx, y)]).length + 0 * x;
+    case 'bodySites': return bodyOfKind(s, at.c, per.body ?? 'water').length;
   }
 }
 export function bonus(s: GameState, u: Unit): Bonus {
@@ -235,6 +249,13 @@ export function unitsAt(s: GameState, l: Loc): Unit[] { return Object.values(s.u
 export function power(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.attack + (u.mods?.length || staticCards(s).size ? bonus(s, u).atk : 0)); }
 /** Extra steps: Movement +X on the card plus any given this turn. */
 export const moveOf = (s: GameState, u: Unit) => unitCard(s, u).movement + (u.mods ?? []).reduce((n, m) => n + (m.move ?? 0), 0) + givenNumber(s, u, 'Movement');
+/** The power used when an effect compares or checks power ("weaker", "with 3 or less power", "3 or more power"):
+ *  for a split-power minion the average of its attack and defense power, rounded down (Codex "Split Power";
+ *  rulebook p35 "Stronger … Weaker"). Strikes still use attack power and dying still uses defense power (p23). */
+export function powerValue(s: GameState, u: Unit): number {
+  const d = unitCard(s, u); const a = power(s, u);
+  return d.attack === d.defense ? a : Math.floor((a + defenseOf(s, u)) / 2);
+}
 export function defenseOf(s: GameState, u: Unit): number { const d = unitCard(s, u); return Math.max(0, d.defense + (u.mods?.length || staticCards(s).size ? bonus(s, u).def : 0)); }
 
 function rand(s: GameState): number {
@@ -387,7 +408,7 @@ function afterPrevention(s: GameState, u: Unit, n: number, from?: DmgFrom): numb
   if (!set.size) return n;
   const srcCard = from?.unit ? unitCard(s, from.unit) : from?.card;
   const applies = (e: Effect) => {
-    if (e.fromMinPower !== undefined && !(from?.unit && power(s, from.unit) >= e.fromMinPower)) return false;
+    if (e.fromMinPower !== undefined && !(from?.unit && powerValue(s, from.unit) >= e.fromMinPower)) return false;
     if (e.fromSub?.length && !(srcCard && e.fromSub.some((x) => srcCard.subtypes.some((y) => y.toLowerCase() === x.toLowerCase())))) return false;
     if (e.fromMagic && !(from?.card && !from.unit && from.card.type === 'Magic')) return false;
     if (e.fromElement && !(srcCard && srcCard.thresholds[e.fromElement as keyof Thresholds] > 0)) return false;
@@ -454,9 +475,9 @@ function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: numbe
   if (e.kw && !has(s, u, e.kw)) return false;
   if (e.wounded && !(u.avatar ? s.players[u.owner].life < maxLife(s, u.owner) : u.damage > 0)) return false;
   if (e.surface && u.r !== 'surface') return false;
-  if (e.maxPower !== undefined && power(s, u) > e.maxPower) return false;
-  if (e.weaker) { const mine = self && s.units[self] ? power(s, s.units[self]) : selfPower; if (mine !== undefined && !(power(s, u) < mine)) return false; } // Codex "Stronger, Weaker": strictly less power
-  if (e.minPower !== undefined && power(s, u) < e.minPower) return false;
+  if (e.maxPower !== undefined && powerValue(s, u) > e.maxPower) return false;
+  if (e.weaker) { const mine = self && s.units[self] ? powerValue(s, s.units[self]) : selfPower; if (mine !== undefined && !(powerValue(s, u) < mine)) return false; } // Codex "Stronger, Weaker": strictly less power
+  if (e.minPower !== undefined && powerValue(s, u) < e.minPower) return false;
   return true;
 }
 /** Squares effect `i` may choose for "at target location" (only squares that have a site or a unit). */
@@ -540,7 +561,7 @@ export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, ori
       case 'allyMinion': if (u.avatar || u.owner !== p) return false; break;
     }
     if (e.other && u.id === self) return false;
-    if (!fits(s, e, u, self, d.attack)) return false;
+    if (!fits(s, e, u, self, Math.floor((d.attack + d.defense) / 2))) return false;
     return origins.some((o) => inRange(s, o, u, e.range, targeted));
   }).map((u) => u.id);
 }
@@ -648,7 +669,7 @@ function entryBlocked(s: GameState, u: Unit, c: number, ground = true): boolean 
   const st = s.sites[c]; if (!st?.inst) return false;
   // a site's own rule, or one from a minion standing on it ("Allies can't enter this site")
   const holders = [cardOf(s, st.inst), ...Object.values(s.units).filter((x) => x.c === c && x.id !== u.id).map((x) => unitCard(s, x))];
-  return holders.some((hd) => hd.effects.some((e) => e.on === 'static' && e.noEnter && (!e.noEnter.ground || (ground && !has(s, u, 'Airborne'))) && (e.noEnter.minPower === undefined || power(s, u) >= e.noEnter.minPower)
+  return holders.some((hd) => hd.effects.some((e) => e.on === 'static' && e.noEnter && (!e.noEnter.ground || (ground && !has(s, u, 'Airborne'))) && (e.noEnter.minPower === undefined || powerValue(s, u) >= e.noEnter.minPower)
     && (!e.noEnter.side || (e.noEnter.side === 'ally' ? u.owner === st.owner : u.owner !== st.owner))));
 }
 
@@ -704,6 +725,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'allMinions': victims = all.filter((u) => !u.avatar); break;
       case 'enemyMinions': victims = all.filter((u) => !u.avatar && u.owner !== p); break;
       case 'allyMinions': victims = all.filter((u) => !u.avatar && u.owner === p); break;
+      case 'allyUnits': victims = all.filter((u) => u.owner === p); break;
+      case 'enemyUnits': victims = all.filter((u) => u.owner !== p); break;
       case 'atTarget': victims = c2?.cell === undefined ? [] : all.filter((u) => u.c === c2.cell && (u.r === 'surface' || !loc || u.r === loc.r)); break;
     }
     if (e.who !== 'target') {
@@ -784,7 +807,10 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'heal':
         if (e.who === 'siteController') { const sc = loc ? s.sites[loc.c]?.owner : undefined; if (sc != null) gainLife(s, sc, n); }
         else if (e.who === 'controller' || e.who === 'opponent') for (const q of players) gainLife(s, q, n);
-        else for (const v of victims) if (v.avatar) gainLife(s, v.owner, n); else { v.damage = Math.max(0, v.damage - n); log(s, `${nm(v)} heals ${n}.`, p); }
+        else for (const v of victims) {
+          const k = e.amount === 'victimBody' ? bodyOfKind(s, v.c, 'water').length : n; if (!k) continue;
+          if (v.avatar) gainLife(s, v.owner, k); else { v.damage = Math.max(0, v.damage - k); log(s, `${nm(v)} heals ${k}.`, p); }
+        }
         break;
       case 'loseLife': {
         const sc = e.who === 'siteController' && loc ? s.sites[loc.c]?.owner : undefined;

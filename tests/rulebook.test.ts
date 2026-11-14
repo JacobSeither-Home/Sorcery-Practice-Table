@@ -319,3 +319,40 @@ describe('deathrite timing', () => {
     expect(s.players[0].cemetery).toContain(inst);
   });
 });
+
+describe('bodies of water and spans of land', () => {
+  it('a body of water is the cluster of water sites sharing borders, not corners (p12)', async () => {
+    const { bodyOf } = await import('../src/engine/rules');
+    const s = start(0);
+    for (const c of [cell(0, 0), cell(1, 0), cell(1, 1), cell(3, 1)]) site(s, 1, c, 'Mill Pond');
+    site(s, 0, cell(2, 0), 'Cinder Field'); site(s, 0, cell(2, 2), 'Mill Pond'); // (2,2) only touches (1,1) at a corner
+    expect(bodyOf(s, cell(0, 0)).sort()).toEqual([cell(0, 0), cell(1, 0), cell(1, 1)].sort());
+    expect(bodyOf(s, cell(2, 2))).toEqual([cell(2, 2)]);
+    expect(bodyOf(s, cell(2, 0))).toEqual([cell(2, 0)]);
+  });
+  it('"+1 power for each site in her body of water" counts the cluster she is in', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const s = start(0);
+    for (const c of [cell(0, 3), cell(1, 3), cell(2, 3)]) site(s, 0, c, 'Mill Pond');
+    const und = T('Test Undine', 'Minion', { attack: 1, effects: effectsFromText('Minion', 'Test Undine has +1 power for each site in her body of water.', 'Test Undine') });
+    const u = unit(s, 0, cell(1, 3), und);
+    const { forgetStatics } = await import('../src/engine/rules'); forgetStatics(s.cards);
+    expect(power(s, s.units[u])).toBe(4);
+  });
+  it('"each ally" includes your Avatar (p32 "Ally")', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    expect(effectsFromText('Magic', 'Each ally heals an amount equal to the number of sites in its body of water.', 'Font')[0].who).toBe('allyUnits');
+  });
+});
+
+describe('split power', () => {
+  it('compares a split-power minion by the average of its two numbers, rounded down (Codex "Split Power")', async () => {
+    const { powerValue } = await import('../src/engine/rules');
+    const s = start(0); site(s, 0, cell(2, 3));
+    const knight = T('Test Knight', 'Minion', { attack: 3, defense: 6 });
+    const u = unit(s, 0, cell(2, 3), knight);
+    expect(power(s, s.units[u])).toBe(3);        // strikes for 3
+    expect(defenseOf(s, s.units[u])).toBe(6);    // dies at 6
+    expect(powerValue(s, s.units[u])).toBe(4);   // compares as 4
+  });
+});

@@ -73,6 +73,10 @@ export type Who =
   | 'target' | 'enemyAvatar' | 'ownAvatar' | 'enemiesHere' | 'controller' | 'nearbyAvatars'
   | 'opponent' | 'self' | 'alliesHere' | 'unitsHere' | 'minionsHere' | 'enemiesNearby' | 'alliesNearby' | 'unitsNearby'
   | 'allMinions' | 'enemyMinions' | 'allyMinions' | 'allAvatars' | 'bearer'
+  /** every ally / enemy unit, Avatars included (rulebook p32 "Ally": a unit you control, including your Avatar) */
+  | 'allyUnits' | 'enemyUnits'
+  /** allies occupying the body of water / span of land the card is in (rulebook p12) */
+  | 'alliesInBody'
   /** units at a location the player chooses (Choice.cell), within `range` */
   | 'atTarget'
   /** the site this card is at: damage to it costs its controller life */
@@ -137,11 +141,12 @@ export interface Effect {
   /** atTarget: only land or water sites ("target land site") */
   siteKind?: 'land' | 'water';
   /** buff: multiply by a count ("+1 power for each adjacent site") */
-  per?: { kind: 'sameNearby' | 'adjacentSites' | 'wards' | 'deadSub' | 'sameInCemetery' | 'voidsInRow' | 'nearbySites'; sub?: string; el?: Element };
+  per?: { kind: 'sameNearby' | 'adjacentSites' | 'wards' | 'deadSub' | 'sameInCemetery' | 'voidsInRow' | 'nearbySites' | 'bodySites'; sub?: string; el?: Element; /** bodySites: which kind of body */ body?: 'water' | 'land' };
   /** prevent: damage removed (undefined = all of it), and which sources it applies to */
   less?: number; fromMinPower?: number; fromSub?: string[]; fromMagic?: boolean; fromElement?: string; fromSite?: string[];
   /** the number comes from the game: the (A) on spells you cast this turn, or the (F) on dead minions banished for the cost */
-  amount?: 'airCastThisTurn' | 'banishedElement';
+  /** victimBody: each victim's own body of water's site count ("heals an amount equal to the number of sites in its body of water") */
+  amount?: 'airCastThisTurn' | 'banishedElement' | 'victimBody';
   /** use the location chosen by the previous effect on the line ("… there") */
   refCell?: boolean;
   /** leave out units with this keyword ("minions without Submerge") */

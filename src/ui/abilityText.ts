@@ -22,7 +22,7 @@ export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
   opponent: 'your opponent', self: 'this unit', alliesHere: 'each ally here', unitsHere: 'each unit here', minionsHere: 'each minion here', enemiesNearby: 'each enemy nearby',
   alliesNearby: 'each ally nearby', unitsNearby: 'each unit nearby', allMinions: 'every minion', enemyMinions: 'every enemy minion', allyMinions: 'every allied minion',
-  allAvatars: 'both Avatars', bearer: 'the bearer', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
+  allAvatars: 'both Avatars', bearer: 'the bearer', allyUnits: 'every ally (your Avatar too)', enemyUnits: 'every enemy (their Avatar too)', alliesInBody: 'each ally in its body of water or span of land', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
 };
 /** Which "applies to" choices make sense for an op. */
 export function whoFor(op: Op): Who[] {
@@ -54,7 +54,7 @@ export function describe(e: Effect): string {
     case 'bounce': return `Return ${who} to its owner's hand`;
     case 'tap': return `Tap ${who}`;
     case 'untap': return `Untap ${who}`;
-    case 'buff': if (e.per) return `${who[0].toUpperCase() + who.slice(1)}: +${e.atk ?? 0} power for each ${({ sameNearby: 'other copy nearby', adjacentSites: 'adjacent site', nearbySites: `nearby ${e.per.el ? e.per.el + ' ' : ''}site`, wards: 'Ward in the realm', deadSub: `dead ${e.per.sub ?? 'minion'} of yours`, sameInCemetery: 'copy in your cemetery', voidsInRow: 'void in its row' } as Record<string, string>)[e.per.kind]}`;
+    case 'buff': if (e.per) return `${who[0].toUpperCase() + who.slice(1)}: +${e.atk ?? 0} power for each ${({ sameNearby: 'other copy nearby', adjacentSites: 'adjacent site', nearbySites: `nearby ${e.per.el ? e.per.el + ' ' : ''}site`, wards: 'Ward in the realm', deadSub: `dead ${e.per.sub ?? 'minion'} of yours`, sameInCemetery: 'copy in your cemetery', voidsInRow: 'void in its row', bodySites: `site in its ${e.per.body === 'land' ? 'span of land' : 'body of water'}` } as Record<string, string>)[e.per.kind]}`;
       return `${who[0].toUpperCase() + who.slice(1)}: ${(e.atk ?? 0) >= 0 ? '+' : ''}${e.atk ?? 0} power${e.until === 'turn' ? ' this turn' : ''}`;
     case 'grant': if (e.keyword === 'Movement') return `${who[0].toUpperCase() + who.slice(1)} gets Movement +${e.n ?? 1}${e.until === 'turn' ? ' this turn' : ''}`;
       if (e.until === 'hurt') return `${who[0].toUpperCase() + who.slice(1)} falls asleep: disabled until it takes damage`;
