@@ -175,11 +175,7 @@ export function Table() {
     if (sel?.k === 'site') { const st = s.sites[sel.c]; const d = st?.inst ? cardOf(s, st.trap ?? st.inst) : null; setSel(null);
       if (d && siteMoveCells(s, sel.c).includes(c)) { const ch: Choice[] = []; ch[sel.fx] = { cell: c }; const a: Action = { t: 'ability', src: { site: sel.c }, fx: sel.fx, choices: ch }; if (explain(a)) act(a); }
       return; }
-    if (!sel && s.sites[c]?.owner === who && s.phase === 'main') {
-      const st = s.sites[c]!; const d = cardOf(s, st.trap ?? st.inst!); const fx = d.effects.findIndex((e) => e.op === 'moveSite');
-      if (fx >= 0) { const r = check(s, { t: 'ability', src: { site: c }, fx, choices: (() => { const ch: Choice[] = []; ch[fx] = { cell: siteMoveCells(s, c)[0] }; return ch; })() });
-        if (r.ok) { setSel({ k: 'site', c, fx }); toast(`${d.name} may fly: choose a glowing void next to it.`); return; } }
-    }
+    if (!sel) { const fx = flyFx(c); if (fx >= 0) { setSel({ k: 'site', c, fx }); toast(`${cardOf(s, s.sites[c]!.inst!).name} may fly: choose a glowing void next to it, or drag the site there.`); return; } }
     if (selUnit) {
       const opts = unitOptions(selUnit, c);
       if (!opts.length) { explain({ t: 'move', unit: selUnit.id, path: [{ c, r: selUnit.r }] }); return; }
@@ -226,6 +222,26 @@ export function Table() {
     return { c, unit };
   };
   const canDrag = myInput && !s.pending && s.phase === 'main';
+  /** A site of yours that may fly now (Cloud City): the index of its moveSite ability, else -1. */
+  function flyFx(c: number): number {
+    if (!myInput || s.pending || s.phase !== 'main' || s.sites[c]?.owner !== who || !s.sites[c]?.inst) return -1;
+    const st = s.sites[c]!; const fx = cardOf(s, st.trap ?? st.inst!).effects.findIndex((e) => e.op === 'moveSite'); if (fx < 0) return -1;
+    const to = siteMoveCells(s, c)[0]; if (to === undefined) return -1;
+    const ch: Choice[] = []; ch[fx] = { cell: to }; return check(s, { t: 'ability', src: { site: c }, fx, choices: ch }).ok ? fx : -1;
+  }
+  /** Drag a flying site (Cloud City) onto a void next to it. */
+  function siteDown(c: number, e: React.PointerEvent) {
+    if (e.button !== 0 || sel || manual) return; const fx = flyFx(c); if (fx < 0) return;
+    let moved = false;
+    const mv = (ev: PointerEvent) => { const t = under(ev.clientX, ev.clientY).c; if (!moved && t !== null && t !== c) { moved = true; dragged.current = true; setSel({ k: 'site', c, fx }); } };
+    const up = (ev: PointerEvent) => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up); if (!moved) return;
+      setTimeout(() => { dragged.current = false; }, 0); setSel(null);
+      const t = under(ev.clientX, ev.clientY).c;
+      if (t !== null && t !== c) { const ch: Choice[] = []; ch[fx] = { cell: t }; const a: Action = { t: 'ability', src: { site: c }, fx, choices: ch }; if (explain(a)) act(a); }
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  }
   function startDrag(inst: string) { dragged.current = true; setMenu(null); setSel({ k: 'hand', inst }); setDrag({ inst, c: null, unit: null }); }
   /** The joint (where four squares meet) nearest a point over the realm, as the engine's top-left square of that 2×2 area. */
   const jointAt = (x: number, y: number): number | null => {
@@ -309,7 +325,7 @@ export function Table() {
               const [x, y] = xy(c); const mark = herald?.marks.get(c);
               return (
                 <div key={c} className={`cell ${site ? (site.inst ? 'site' : 'rubble') : 'void'} ${site?.owner != null ? 'own' + site.owner : ''} ${hi ? 'hi-' + hi : ''} ${d ? 'el-' + mainElement(d) : ''} ${mark ? `mark-${mark} mp${herald!.p}` : ''} ${drag?.c === c ? (hi || (selCard?.type === 'Magic' && !hiUnits.size) ? 'drop-ok' : 'drop-no') : ''} ${menu?.c === c ? 'menu-open' : ''}`}
-                  onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d ?? rub)} data-cell={c}>
+                  onClick={(e) => { e.stopPropagation(); clickCell(c); }} {...hoverProps(d ?? rub)} onPointerDown={(e) => { hoverProps(d ?? rub).onPointerDown(e); siteDown(c, e); }} data-cell={c}>
                   {d && <SiteArt id={d.id} />}
                   {rub && <SiteArt id={rub.id} upright={rub.type !== 'Site'} />}
                   {d && <span className="site-flash" key={site!.inst} />}
