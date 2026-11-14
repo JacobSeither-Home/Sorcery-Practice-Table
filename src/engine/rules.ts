@@ -1136,6 +1136,17 @@ function removeUnit(s: GameState, u: Unit, to: 'banish' | 'hand', why: string) {
   else log(s, `${unitCard(s, u).name} is banished (${why}).`, null);
 }
 
+/** Codex "Ongoing Effect" (its example is King of the Realm): "You control all Mortals" gives the King's controller
+ *  every unit of that kind while the King is in the realm and not disabled; they go back when it leaves. */
+function followControl(s: GameState) {
+  const kings = Object.values(s.units).filter((k) => !isDisabled(s, k) && unitCard(s, k).effects.some((e) => e.on === 'static' && e.keyword?.startsWith('Controls all ')));
+  for (const u of Object.values(s.units)) {
+    if (u.avatar) continue;
+    const k = kings.find((x) => x.id !== u.id && unitCard(s, x).effects.some((e) => e.on === 'static' && e.keyword?.startsWith('Controls all ') && unitCard(s, u).subtypes.some((t) => t.toLowerCase() === e.keyword!.slice(13).toLowerCase())));
+    if (k && u.owner !== k.owner) { u.ctrl = { was: u.ctrl?.was ?? u.owner, by: k.id }; u.owner = k.owner; log(s, `${unitCard(s, k).name}: ${pname(k.owner)} now controls ${unitCard(s, u).name}.`, k.owner); }
+    else if (!k && u.ctrl?.by) { const was = u.ctrl.was; delete u.ctrl; if (u.owner !== was) { u.owner = was; log(s, `${unitCard(s, u).name} returns to ${pname(was)}'s control.`, null); } }
+  }
+}
 /** Codex "Mana" (current; the Oct 2024 rulebook p17 said the opposite for a lost site): mana sources you gain or
  *  lose during your turn change your available mana at once. Available = sources you control now + mana you gained
  *  − mana you spent, so it can sit below zero after a source is lost (shown as 0) until a new source covers it. */
@@ -1726,6 +1737,7 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'manual': manual(s, a); break;
   }
+  followControl(s);
   followMana(s);
   // carried artifacts go where their bearer goes; if the bearer is gone they stay where it fell
   for (const m of s.perms) if (m.carrier) { const b = s.units[m.carrier]; if (b) m.c = b.c; else delete m.carrier; }

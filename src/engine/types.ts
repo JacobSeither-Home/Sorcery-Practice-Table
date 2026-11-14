@@ -258,7 +258,9 @@ export interface Unit {
   follow?: { turn: number; kind: 'step' | 'shot'; from?: Loc[] };
   lance: boolean;
   /** control taken by an effect: who controlled it before, and until when ("this turn") */
-  ctrl?: { was: PlayerId; turn?: number };
+  /** control changed: `was` the controller before; `turn` set for "this turn"; `by` = the id of the unit whose ongoing
+   *  "You control all X" holds it (King of the Realm), handed back when that unit leaves */
+  ctrl?: { was: PlayerId; turn?: number; by?: string };
   /** skips its next untap */
   noUntap?: boolean;
   /** turn on which a "the first time … would take damage each turn, prevent it" shield was used */

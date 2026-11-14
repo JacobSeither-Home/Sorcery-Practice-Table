@@ -486,6 +486,18 @@ describe('Beta Earth', () => {
     s = apply(apply(s, { t: 'draw', deck: 'spellbook' }), { t: 'endTurn' });
     expect(has(s, s.units[foe], 'Immobile')).toBe(false);        // ended at the start of our next turn
   });
+  it('King of the Realm: you control all Mortals while it is in the realm', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 1, cell(2, 0));
+    const king = T('Test King', 'Minion', { attack: 4, subtypes: ['Mortal'], effects: effectsFromText('Minion', 'Other Mortals have +1 power.\n\nYou control all Mortals.', 'Test King') });
+    const peasant = T('Test Peasant', 'Minion', { attack: 1, subtypes: ['Mortal'] });
+    const theirs = unit(s, 1, cell(2, 0), peasant);
+    const k = unit(s, 0, cell(2, 3), king);
+    s = apply(s, { t: 'manual', op: 'note', text: 'tick' });
+    expect(s.units[theirs].owner).toBe(0);
+    s = apply(s, { t: 'manual', op: 'destroy', unit: k });
+    expect(s.units[theirs].owner).toBe(1);
+  });
   it('Monks of Kobalsa: can\'t be modified, except by Wards', async () => {
     const { effectsFromText } = await import('../src/engine/cards');
     let s = start(0); site(s, 0, cell(2, 3));

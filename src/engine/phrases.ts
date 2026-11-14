@@ -470,6 +470,8 @@ export const RULES: Rule[] = [
       const r = matchSentence(body, 'static', type, false);
       return r && r.got.every((e) => (e.op === 'grant' || e.op === 'buff') && e.who !== 'target' && e.who !== 'self') ? [{ op: 'ongoing', who: 'controller', fx: r.got }] : null;
     } },
+  { id: 'control-all', label: 'You control all <subtype>', re: /^you control all (\w+)\.$/i,
+    build: (m, on) => { const sb = subOf(m[1]); return on === 'static' && sb ? [{ op: 'grant', who: 'self', keyword: `Controls all ${sb}`, until: 'permanent' }] : null; } },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
