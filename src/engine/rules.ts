@@ -1402,6 +1402,7 @@ export function check(s: GameState, a: Action): Check {
       } else if (!e.repeat && s.used?.[`${srcKey(a.src)}:${e.line ?? a.fx}`] === s.turn) return no(`${d.name}'s ability can be used once per turn.`, 'Activated ability');
       const cost = e.cost ?? 0;
       if (cost > pl.mana) return no(`That ability costs ${cost} mana and you have ${pl.mana}.`, 'Mana');
+      for (const i of effectsOn(d, e.on, a.fx)) { const ce = d.effects[i]; if (ce.isCost && ce.op === 'discard' && !pl.hand.some((x) => (ce.deck === 'atlas' ? cardOf(s, x).type === 'Site' : ce.deck === 'spellbook' ? cardOf(s, x).type !== 'Site' : true))) return no(`That ability's cost is to discard a ${ce.deck === 'atlas' ? 'site' : ce.deck === 'spellbook' ? 'spell' : 'card'}, and you have none in hand.`, 'Discard'); }
       if (!needMet(s, p, e)) return no(`That ability needs ${ELEMENTS.filter((el) => e.need![el]).map((el) => `${e.need![el]} ${el}`).join(' and ')} threshold, from the element symbols on sites you control.`, 'Threshold');
       if (e.banishDead && !pl.cemetery.some((i) => cardOf(s, i).type === 'Minion' && cardOf(s, i).thresholds[e.banishDead!] > 0)) return no(`You have no dead ${e.banishDead} minions to banish.`);
       const idx = effectsOn(d, e.on, a.fx);

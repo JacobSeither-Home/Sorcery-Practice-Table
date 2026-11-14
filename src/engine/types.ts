@@ -114,6 +114,8 @@ export interface Effect {
   /** occupied: only while a minion is already atop ("if there's already a minion atop") */
   /** the ability needs this threshold ("(A)(A)(A) — …", rulebook p18) */
   need?: Partial<Thresholds>;
+  /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
+  isCost?: boolean;
   noEnter?: { minPower?: number; side?: 'ally' | 'enemy'; ground?: boolean; occupied?: boolean };
   /** castRule: mana off the cost; may be cast from the cemetery (and is banished afterwards); may be cast by any ally (of these subtypes) */
   less2?: number; fromCemetery?: boolean; banishAfter?: boolean; byAlly?: boolean; bySub?: string[];

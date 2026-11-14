@@ -402,3 +402,19 @@ describe('Beta Air sites', () => {
     expect(check(s, { t: 'move', unit: flyer, path: [{ c: cell(2, 2), r: 'surface' }] }).ok).toBe(true); // Airborne is not ground movement
   });
 });
+
+describe('Beta Air minions and spells', () => {
+  it('Nimbus Jinn: "Discard a spell →" is a cost; the damage hits another random unit here', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); site(s, 0, cell(1, 3));
+    const jinn = T('Test Jinn', 'Minion', { attack: 3, effects: effectsFromText('Minion', 'Airborne\n\nDiscard a spell → Deal 3 damage to another random unit here.', 'Test Jinn') });
+    const j = unit(s, 0, cell(1, 3), jinn); const foe = unit(s, 1, cell(1, 3), id('Kiln Brute'));
+    s.players[0].hand = s.players[0].hand.filter((x) => cards[s.inst[x]].type === 'Site');
+    expect(check(s, { t: 'ability', src: { unit: j }, fx: 0 }).ok).toBe(false);          // no spell to discard
+    const spell = give(s, 0, id('Firebolt'));
+    s = apply(s, { t: 'ability', src: { unit: j }, fx: 0, choices: [{ card: spell }] });
+    expect(s.players[0].cemetery).toContain(spell);
+    expect(s.units[foe].damage).toBe(3);                                                  // the only other unit here
+    expect(s.units[j].tapped).toBe(false);                                                // no tap: it can be used again
+  });
+});
