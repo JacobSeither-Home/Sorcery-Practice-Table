@@ -5,15 +5,15 @@ export const TRIGGER_LABEL: Record<Trigger, string> = {
   cast: 'When cast', genesis: 'When it enters (Genesis)', deathrite: 'When it dies (Deathrite)', tap: 'Tap → (use any time on your turn)',
   activated: 'Ability (use on your turn)', startTurn: 'At the start of your turn', endTurn: 'At the end of your turn', static: 'Always (while in the realm)',
   dies: 'Whenever a unit dies', damaged: 'Whenever this takes damage', attacks: 'Whenever this attacks', enters: 'Whenever a unit enters here',
-  kills: 'Whenever this kills', casts: 'Whenever a spell is cast',
+  kills: 'Whenever this kills', casts: 'Whenever a spell is cast', stops: 'Whenever it (or its bearer) stops moving',
 };
 export const TRIGGER_SHORT: Record<Trigger, string> = {
   cast: 'Cast', genesis: 'Genesis', deathrite: 'Deathrite', tap: 'Tap', activated: 'Ability', startTurn: 'Start of turn', endTurn: 'End of turn', static: 'Always',
   dies: 'When a unit dies', damaged: 'When damaged', attacks: 'When it attacks', enters: 'When a unit enters',
-  kills: 'When it kills', casts: 'When a spell is cast',
+  kills: 'When it kills', casts: 'When a spell is cast', stops: 'When it stops',
 };
 export const OP_LABEL: Record<Op, string> = {
-  swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
+  wardBoost: 'Break Wards for more damage', slide: 'Slide units', dealOut: 'Deal out spells to your back row', swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
   control: 'Gain control', castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
@@ -90,6 +90,9 @@ export function describe(e: Effect): string {
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
     case 'moveAura': return 'Move this aura one step, to a neighbouring joint';
+    case 'wardBoost': return 'Break any number of your Wards: +1 damage each';
+    case 'slide': return 'Slide every unit at land sites in this column one step left or right (you choose)';
+    case 'dealOut': return 'Deal your top spells to the sites in your back row: minions are summoned there, the rest go to the bottom';
     case 'swallow': return 'It swallows another minion here: carried and disabled until it leaves the realm';
     case 'surface': return 'It comes up to the surface';
     case 'pull': return e.dest === 'body' ? 'Each minion in its body of water moves one step toward it' : 'A water site you choose pulls in an aboveground unit next to it';

@@ -669,3 +669,59 @@ describe('Brobdingnag Bullfrog', () => {
     expect(isDisabled(s, s.units[foe])).toBe(false);
   });
 });
+
+describe('Gothic Savior', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  it('Revered Revenant has 0 power unless adjacent to an allied Ward', async () => {
+    const s = start(0); site(s, 0, cell(1, 3)); site(s, 0, cell(2, 3));
+    const rev = await read('Minion', 'Test Revenant', 'Has 0 power unless adjacent to an allied Ward.', { attack: 3 });
+    const u = unit(s, 0, cell(1, 3), rev);
+    expect(power(s, s.units[u])).toBe(0);
+    unit(s, 0, cell(2, 3), id('Kiln Brute'), { ward: true });
+    expect(power(s, s.units[u])).toBe(3);
+  });
+  it('Smite: strike an adjacent enemy, but an Evil one is banished instead; cast by any ally', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2));
+    const smite = await read('Magic', 'Test Smite', "May be cast by any ally.\n\nStrike target adjacent enemy. If it's Evil, banish it instead.", { cost: 0 });
+    const ghoul = T('Test Ghoul', 'Minion', { attack: 1, subtypes: ['Undead'] });
+    const g = unit(s, 1, cell(2, 2), ghoul);
+    const ch: { target?: string }[] = []; ch[s.cards[smite].effects.findIndex((e) => e.op === 'strike')] = { target: g };
+    s = apply(s, { t: 'cast', inst: give(s, 0, smite), choices: ch });
+    expect(s.units[g]).toBeUndefined(); expect(s.players[1].cemetery).not.toContain(Object.keys(s.inst).find((k) => s.inst[k] === ghoul));
+  });
+  it('Consecrated Ground: Evil has no power here', async () => {
+    const s = start(0);
+    const cg = await read('Site', 'Test Ground', 'Evil has no power here.');
+    const k = '0tcg'; s.inst[k] = cg; s.sites[cell(2, 2)] = { inst: k, owner: 0 };
+    const demon = T('Test Demon', 'Minion', { attack: 5, subtypes: ['Demon'] });
+    const u = unit(s, 1, cell(2, 2), demon); const b = unit(s, 1, cell(2, 2), id('Kiln Brute'));
+    expect(power(s, s.units[u])).toBe(0); expect(power(s, s.units[b])).toBe(4);
+  });
+  it('Divine Lance: break allied Wards for +1 damage each', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 1, cell(2, 1));
+    const dl = await read('Magic', 'Test Lance2', 'Deal 1 damage to each minion at target site. You may break any number of allied Wards to increase the damage by 1 for each.', { cost: 0 });
+    const w1 = unit(s, 0, cell(2, 3), id('Kiln Brute'), { ward: true }), w2 = unit(s, 0, cell(2, 3), id('Kiln Brute'), { ward: true });
+    const foe = unit(s, 1, cell(2, 1), id('Hill Giant'));
+    const d = s.cards[dl]; const ch: { cell?: number; chain?: string[] }[] = []; ch[0] = { cell: cell(2, 1) }; ch[d.effects.findIndex((e) => e.op === 'wardBoost')] = { chain: [w1, w2] };
+    s = apply(s, { t: 'cast', inst: give(s, 0, dl), choices: ch });
+    expect(s.units[foe].damage).toBe(3); expect(s.units[w1].ward).toBe(false);
+  });
+  it('Order of the White Wing banishes minions summoned nearby that were not cast from hand', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2));
+    const ww = await read('Minion', 'Test Wing', "Ward\n\nIf a minion would be summoned nearby and it wasn't cast from hand, banish it.", { attack: 3, keywords: ['Ward'] });
+    unit(s, 1, cell(2, 2), ww);
+    const tokens = T('Token Call', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'summon', who: 'controller', n: 1, token: 'Kiln Brute' }] });
+    const before = Object.keys(s.units).length;
+    s = apply(s, { t: 'cast', inst: give(s, 0, tokens) });
+    expect(Object.keys(s.units).length).toBe(before);
+  });
+  it('Enduring Faith: the warded ally takes damage for its nearby allies until your next turn', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2));
+    const ef = await read('Magic', 'Test Faith', 'Ward an allied minion. Until your next turn, it takes damage for its nearby allies instead.', { cost: 0 });
+    const g = unit(s, 0, cell(2, 2), id('Hill Giant')); const a = unit(s, 0, cell(2, 3), id('Ember Runner'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, ef), choices: [{ target: g }] });
+    s = apply(s, { t: 'manual', op: 'damage', unit: a, n: 2 });
+    expect(s.units[a].damage).toBe(0);
+    expect(s.units[g].ward).toBe(false);   // its Ward took the first hit
+  });
+});

@@ -18,13 +18,21 @@ export interface Loc { c: number; r: Region; /** an aura's location: its 2×2 ar
  *  static    — always on while the card is in the realm (stat changes and granted keywords) */
 export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | 'startTurn' | 'endTurn' | 'static'
   /** reactions ("Whenever …"): a unit dies, this takes damage, this attacks, a unit enters here; `ev` narrows which */
-  | 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts';
-export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts'];
+  | 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts'
+  /** the unit (or the bearer) ends a move: "Whenever the flame stops at a new site" */
+  | 'stops';
+export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts', 'stops'];
 /** Which events a reaction listens to, relative to the card that has it. */
-export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** enters: a water site in the aura's area */ affectedWater?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
+export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** enters: a water site in the aura's area */ affectedWater?: boolean; /** stops: at a site this artifact has not stopped at before */ newSite?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** break any number of allied Wards (Choice.chain) to add 1 damage each to the damage before it (Divine Lance) */
+  | 'wardBoost'
+  /** slide all units at land sites in this column one step left or right (Choice.dir) */
+  | 'slide'
+  /** deal out your top spells, one to each site in your back row: summon minions there, the rest to the bottom (Golden Dawn) */
+  | 'dealOut'
   /** this unit swallows the target: carries it disabled until it leaves the realm */
   | 'swallow'
   /** the unit (self) comes up from the subsurface to the surface of its site */
@@ -139,6 +147,16 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** target filter: a minion that was summoned this turn */
+  fresh?: boolean;
+  /** strike: an Evil victim is banished instead ("If it's Evil, banish it instead") */
+  evilBanish?: boolean;
+  /** buff: the units it reaches have 0 power ("Has 0 power unless …", "Evil has no power here") */
+  zeroPower?: boolean;
+  /** static: only Evil minions (Codex "Evil") */
+  evil?: boolean;
+  /** summon restriction: "Must be cast to an allied site occupied by an enemy" */
+  onEnemyOccupied?: boolean;
   /** shoot (piercing): damage at each of the first locations along the path, up to one unit at each (Ice Lance: 3, 2, 1) */
   falloff?: number[];
   /** teleport/step: stays within the body of water of the card's site (Undertow) */
@@ -304,7 +322,7 @@ export interface Unit {
 export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; /** ends when the unit leaves the void (Planar Gate) */ void?: boolean; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
-export interface Permanent { id: string; inst: string; owner: PlayerId; /** artifact: its square; aura: the top-left square of its 2×2 area */ c: number; kind: 'artifact' | 'aura'; /** "Lasts N of your turns": end-of-turn counters so far */ turns?: number; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
+export interface Permanent { id: string; inst: string; owner: PlayerId; /** sites it has stopped at (Flame of the First Ones) */ visited?: number[]; /** artifact: its square; aura: the top-left square of its 2×2 area */ c: number; kind: 'artifact' | 'aura'; /** "Lasts N of your turns": end-of-turn counters so far */ turns?: number; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
 
 export interface PlayerState {
   life: number;
@@ -448,7 +466,7 @@ export interface DeckList { name: string; avatar: string; spellbook: string[]; a
 
 /** A condition on an ability ("while …", "if …", "unless …", "during …"), measured from the card that has it. */
 export interface Cond {
-  k: 'moreLife' | 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere';
+  k: 'moreLife' | 'backRow' | 'warded' | 'deathsDoor' | 'control' | 'lostLife' | 'dead' | 'atop' | 'yourTurn' | 'enemyTurn' | 'inVoid' | 'adjacentAlly' | 'noEnemiesHere' | 'adjacentWard' | 'noEnemiesNearby';
   sub?: string; name?: string; other?: boolean; not?: boolean;
 }
 
