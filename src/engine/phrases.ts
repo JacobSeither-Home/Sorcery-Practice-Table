@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  glory: 'Damage', becomeIfPicked: 'Power boosts',
   wardBoost: 'Damage', slide: 'Movement & position', dealOut: 'Cards',
   swallow: 'Removal',
   surface: 'Movement & position', pull: 'Movement & position',
@@ -145,8 +146,10 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   const words = t.split(' ');
   const noun = words.pop()!.toLowerCase();
   const subs: string[] = []; let kw: string | undefined;
+  const rar: string[] = [];
   for (const w of words) {
     if (/^(or|and)$/i.test(w)) continue;
+    const rr = RARITIES.find((x) => x.toLowerCase() === w.replace(/,$/, '').toLowerCase()); if (rr) { rar.push(rr); continue; }
     const sb = subOf(w.replace(/,$/, '')); if (sb) { subs.push(sb); continue; }
     const k = KEYWORDS.find((x) => x.toLowerCase() === w.toLowerCase()); if (k) { kw = k; continue; }
     return null; // a word we do not understand (Unique, Elite, Ordinary …): leave the sentence for the hand tools
@@ -159,7 +162,7 @@ function nounPhrase0(np: string, mode: 'unit' | 'minion'): Sel | null {
   else if (/^enem(y|ies)$/.test(noun)) { kind = 'unit'; side = 'enemy'; }
   else { const sb = subOf(noun); if (!sb) return null; subs.push(sb); kind = 'minion'; }
   if (mode === 'minion' && kind === 'unit') kind = 'minion';
-  const filters = { ...(weaker ? { weaker: true } : {}), ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
+  const filters = { ...(rar.length ? { rarity: rar } : {}), ...(weaker ? { weaker: true } : {}), ...(subs.length ? { sub: subs } : {}), ...(kw ? { kw } : {}), ...(wounded ? { wounded: true } : {}), ...(other ? { other: true } : {}) };
   const only: Effect['only'] = kind === 'avatar' ? 'avatar' : kind === 'minion' ? (side === 'enemy' ? 'enemyMinion' : side === 'ally' ? 'allyMinion' : 'minion') : side === 'enemy' ? 'enemy' : side === 'ally' ? 'ally' : undefined;
   if (aff) return { who: 'affected', ...(only ? { only } : {}), ...filters };
   if (atTarget) return { who: 'atTarget', range: range ?? 'any', targets: /target/i.test(np), ...(only ? { only } : {}), ...filters };
@@ -550,6 +553,33 @@ export const RULES: Rule[] = [
     build: (_m, on) => (on === 'static' ? [] : null) }, // carried out by the Barricade rule above
   { id: 'heal-and-drain', label: 'You heal N and your opponent loses M life', re: /^you heal (\d+) and your opponent loses (\d+) life\.$/i,
     build: (m) => [{ op: 'heal', who: 'controller', n: +m[1] }, { op: 'loseLife', who: 'opponent', n: +m[2] }] },
+  { id: 'shoot-deals', label: 'Shoot a projectile that deals N damage', re: /^shoot a projectile that deals (\d+) damage\.$/i,
+    build: (m) => [{ op: 'shoot', who: 'controller', n: +m[1] }] },
+  { id: 'step-closest-evil', label: 'Step toward the closest Evil', re: /^(?:this )?(?:may )?step toward the closest evil\.$/i,
+    build: () => [{ op: 'teleport', who: 'self', dest: 'closestEvil', move: 'step' }] },
+  { id: 'brand', label: 'Brand an enemy so your cards treat them as Evil this turn', re: /^brand an enemy so your cards treat (?:them|it) as evil this turn\.$/i,
+    build: () => [{ op: 'grant', who: 'target', only: 'enemy', range: 'any', targets: true, keyword: 'Branded', until: 'turn' }] },
+  { id: 'lethal-to-evil', label: 'Lethal to Evil', re: /^(?:this is )?lethal to evil\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Lethal to Evil', until: 'permanent' }] : null) },
+  { id: 'they-gain', label: 'They gain <keyword> this turn (the units just brought in)', re: new RegExp(`^they gain (${KEYWORDS.join('|')}) this turn\\.$`, 'i'),
+    build: (m) => [{ op: 'grant', who: 'summoned', keyword: KEYWORDS.find((k) => k.toLowerCase() === m[1].toLowerCase())!, until: 'turn' }] },
+  { id: 'tap-and-ward', label: 'Tap and Ward …', re: /^tap and ward (.+)\.$/i,
+    build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v && v.who === 'target' ? [{ op: 'tap', ...v }, { op: 'grant', who: 'target', ref: true, keyword: 'Ward', until: 'permanent' }] : null; } },
+  { id: 'its-controller-loses', label: 'Its controller loses N life', re: /^its controller loses (\d+) life\.$/i,
+    build: (m) => [{ op: 'loseLife', who: 'subjectController', n: +m[1] }] },
+  { id: 'release-disable', label: 'Disable … until an adjacent Spellcaster taps to release it', re: /^disable (.+?) until an adjacent spellcaster taps to release (?:it|him|her|them)\.$/i,
+    build: (m) => { const v = minionOnly(nounPhrase(m[1], 'minion')); return v ? [{ op: 'grant', ...v, keyword: 'Disabled', until: 'release' }] : null; } },
+  { id: 'shackled', label: 'Disabled until an adjacent Spellcaster taps to release it', re: /^disabled until an adjacent spellcaster taps to release (?:it|him|her|them)\.$/i,
+    build: (_m, on) => (on === 'static' ? [] : null) }, // the printed Disabled keyword; the table offers the release (rules.ts shackled)
+  { id: 'glory', label: 'An ally fights each enemy near it, one at a time', re: /^an ally fights each enemy near it, one at a time\.$/i,
+    build: () => [{ op: 'glory', who: 'target', only: 'ally', range: 'any', targets: false }] },
+  { id: 'glory-undying', label: "It doesn't die until it's done", re: /^it doesn'?t die until it'?s done\.$/i, build: () => [] }, // part of glory
+  { id: 'become-if-picked', label: 'If any are <subtype>, this becomes one and gains +N power permanently', re: /^if any are (\w+), this becomes one and gains \+(\d+) power permanently\.$/i,
+    build: (m) => { const sb = subOf(m[1]); return sb ? [{ op: 'becomeIfPicked', who: 'self', sub: [sb], atk: +m[2], def: +m[2] }] : null; } },
+  { id: 'banish-from-cemeteries', label: 'Banish up to N cards from cemeteries', re: /^banish up to (\w+) cards? from (?:any |all )?cemeteries\.$/i,
+    build: (m) => [{ op: 'pick', who: 'controller', pick: { zones: ['anyCemetery'], take: WORDNUM[m[1].toLowerCase()] ?? +m[1], to: 'banish' } }] },
+  { id: 'arbalest', label: 'Bearer has Ranged and its strikes deal 1 more damage for each of: Evil, artifact bearers, …', re: /^bearer has ranged and its strikes deal 1 more damage to units for each of the following they are: evil, artifact bearers, spellcasters, voidwalkers, submergers, burrowers, and frogs\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'bearer', keyword: 'Ranged', until: 'permanent' }, { op: 'grant', who: 'self', keyword: 'Arbalest strikes', until: 'permanent' }] : null) },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -681,7 +711,7 @@ function matchSentence(sentence: string, on: Trigger, type: CardType, top = true
   // a sentence with no subject is about the card itself: "Has Airborne." "Gains +1 power this turn."
   if (/^can'?t (be |untap|attack|defend)|^is immune/i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
   if (/^(has|have|gains|takes) /i.test(sentence) && type !== 'Magic') return matchSentence('This ' + sentence.charAt(0).toLowerCase() + sentence.slice(1), on, type, top);
-  if (/^gain [+\-−]\d+ power/i.test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
+  if (/^gain [+\-−]\d+ power/i.test(sentence) || new RegExp(`^gain (?:${KEYWORDS.join('|')}) this turn\\.$`, 'i').test(sentence)) return matchSentence('This gains ' + sentence.slice(5), on, type, top);
   // ", if it's a minion": only a minion bearer gets it, an Avatar bearer does not (rulebook p5: Avatars never leave the surface)
   if (/, if it'?s a minion\.$/i.test(sentence)) { const r = matchSentence(sentence.replace(/, if it'?s a minion\.$/i, '.'), on, type, top); return r ? { got: r.got.map((e) => ({ ...e, only: 'minion' as const })), rule: r.rule + '+minion' } : null; }
   // "You may X." / "May X." / "This may X.": X is optional for the player
@@ -743,6 +773,7 @@ function eventFilter(q: string, np: string, where?: string): EventFilter | null 
   return f;
 }
 /** Read a card's whole rules text into effects. Unread sentences become `manual` effects. */
+let altGroup = 0;
 export function readRules(type: CardType, rules: string, name = ''): Reading {
   const out: Reading = { effects: [], lines: [], manual: [] };
   const lines = strip(rules).split('\n').map((l) => l.trim()).filter(Boolean);
@@ -772,7 +803,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       const fx = parts.map((x) => x.trim().match(LIMITED_SC)).filter(Boolean).map((mm) => ({ on: 'static' as const, op: 'grant' as const, who: 'self' as const, keyword: limitedSpellcaster(mm![1])!, until: 'permanent' as const, line: lineNo, text: mm![0], rule: 'limited-spellcaster', auto: true }));
       out.lines.push({ text: raw, on: fx.length ? 'static' : 'keywords', effects: fx, manual: [] }); out.effects.push(...fx); return;
     }
-    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false; let discardCost = ''; let tapBearer = false; let tapAlly: '' | 'other' | 'any' = ''; let roll = 0;
+    let on: Trigger; let body = line; let cost = 0; let repeat = false; let m: RegExpMatchArray | null; let ev: EventFilter | null = null; let sac = false; let banishDead: Element | undefined; let both = false; let eachTurn = false; let discardCost = ''; let tapBearer = false; let tapAlly: '' | 'other' | 'any' = ''; let roll = 0; let holyWater = false; let thorns: number[] | null = null;
     if ((m = line.match(/^Genesis\s*&\s*Deathrite\s*→\s*(.+)$/i))) { on = 'genesis'; body = m[1]; both = true; }
     else if ((m = line.match(/^(Genesis|Deathrite)\s*→\s*(.+)$/i))) { on = m[1].toLowerCase() as Trigger; body = m[2]; }
     else if ((m = line.match(/^(?:([①-⑳]|\(\d+\)|\d+)\s*,\s*)?Tap\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; cost = m[1] ? manaOf(m[1]) : 0; }
@@ -785,6 +816,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
     else if ((m = line.match(/^Tap bearer and another ally here(, discard an? (?:spell|site|card))?\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; tapBearer = true; tapAlly = 'other'; if (m[1]) discardCost = m[1].match(/(spell|site|card)/i)![1].toLowerCase(); }
     else if ((m = line.match(/^Units here have [“"]Tap → Give (?:this|.+?) a push\. It rolls as far as possible and deals (\d+) damage to each other unit along its path\.?[”"]\.?$/i))) { on = 'activated'; body = ''; tapAlly = 'any'; repeat = true; roll = +m[1]; }
+    else if ((m = line.match(/^Bearer has [“"]Tap, Sacrifice this(?: \w+)* → Throw a projectile\. If it hits a minion, banish it if Evil, Ward it if not\.?[”"]\.?$/i))) { on = 'tap'; body = ''; tapBearer = true; sac = true; holyWater = true; }
+    else if ((m = line.match(/^Bearer has \+(\d+) power, but it can'?t drop this \w+ and its controller loses (\d+) life at the end of their turn\.$/i))) { on = 'static'; body = ''; thorns = [+m[1], +m[2]]; }
     else if ((m = line.match(/^Whenever the (?:flame|this) stops at a new site,\s*(.+)$/i))) { on = 'stops'; ev = { self: true, newSite: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever a minion enters an affected water site,\s*(.+)$/i))) { on = 'enters'; ev = { minion: true, affectedWater: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever this enters each corner of the realm for the first time,\s*(.+)$/i))) { on = 'enters'; ev = { self: true, corner: true }; body = cap(m[1]); }
@@ -863,6 +896,15 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
         k++; continue;
       }
       let hit = matchSentence(sentence, on, type);
+      // "A, or B." / "X gains or loses N power": the player chooses one (both must read on their own)
+      if (!hit) {
+        const gl = sentence.match(/^(.+?) gains or loses (\d+) power( this turn)?\.$/i);
+        const pair = gl ? [`${gl[1]} gains +${gl[2]} power${gl[3] ?? ''}.`, `${gl[1]} gains -${gl[2]} power${gl[3] ?? ''}.`] : sentence.match(/^(.+), or (.+)\.$/) ? [sentence.match(/^(.+), or (.+)\.$/)![1] + '.', cap(sentence.match(/^(.+), or (.+)\.$/)![2]) + '.'] : null;
+        const a = pair && matchSentence(pair[0], on, type), b0 = pair && matchSentence(cap(pair[1]), on, type);
+        // in "gains or loses", the second half is about the same target as the first
+        const b = gl && a && b0 ? { got: b0.got.map((e) => (e.who === 'target' && !e.ref ? { ...e, ref: true } : e)), rule: b0.rule } : b0;
+        if (a && b && on !== 'static') { const g = --altGroup; hit = { got: [...a.got.map((e) => ({ ...e, alt: { at: g, opt: 0 } })), ...b.got.map((e) => ({ ...e, alt: { at: g, opt: 1 } }))], rule: `either(${a.rule}|${b.rule})` }; }
+      }
       // in a reaction about the card itself ("When this is struck, destroy it"), "it" is the card
       if (hit && on === 'static' && hit.got.some((e) => e.ref)) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined, targets: undefined } : e)) };
       if (hit && ev?.self) hit = { ...hit, got: hit.got.map((e) => (e.ref ? { ...e, who: 'self' as const, ref: undefined, only: undefined, range: undefined } : e)) };
@@ -871,6 +913,10 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       if (hit) rl.effects.push(...hit.got.map((e) => ({ ...e, on, line: lineNo, text: e.op === 'manual' && e.text ? e.text : sentence, rule: hit!.rule, auto: true, ...(cost ? { cost } : {}), ...(on === 'activated' && repeat ? { repeat } : {}), ...(ev ? { ev } : {}), ...(sac ? { sacrifice: true } : {}), ...(banishDead ? { banishDead } : {}), ...(eachTurn ? { eachTurn: true } : {}) })));
       else { sentence = ss[k]; rl.manual.push(sentence); rl.effects.push({ on, op: 'manual', who: 'controller', line: lineNo, text: sentence, auto: true, ...(cost ? { cost } : {}), ...(ev ? { ev } : {}) }); }
     }
+    if (holyWater) rl.effects.push({ on, op: 'shoot', who: 'controller', n: 0, onHit: 'holyWater', sacrifice: true, line: lineNo, text: 'Throw a projectile: an Evil minion it hits is banished, any other minion is warded', rule: 'holy-water', auto: true });
+    if (thorns) rl.effects.push({ on: 'static', op: 'buff', who: 'bearer', atk: thorns[0], def: thorns[0], until: 'permanent', line: lineNo, text: `Bearer has +${thorns[0]} power`, rule: 'thorns', auto: true },
+      { on: 'static', op: 'grant', who: 'bearer', keyword: "Can't drop", until: 'permanent', line: lineNo, text: "It can't drop this", rule: 'thorns', auto: true },
+      { on: 'endTurn', op: 'loseLife', who: 'controller', n: thorns[1], line: lineNo, text: `Its controller loses ${thorns[1]} life at the end of their turn`, rule: 'thorns', auto: true });
     if (roll) rl.effects.push({ on, op: 'roll', who: 'controller', n: roll, repeat: true, line: lineNo, text: `Push it: it rolls as far as possible, ${roll} damage to each other unit along its path`, rule: 'roll', auto: true });
     // "Tap bearer and another ally here →" / "Units here have 'Tap → …'": tapping an ally here is part of the cost
     if (tapAlly) rl.effects.unshift({ on, op: 'tap', who: 'target', only: 'ally', range: 'here', targets: false, isCost: true, ...(tapAlly === 'other' ? { other: true } : {}), ...(repeat ? { repeat: true } : {}), line: lineNo, text: tapAlly === 'other' ? 'Tap another ally here' : 'Tap a unit here', rule: 'tap-cost', auto: true });
@@ -880,6 +926,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     if (both) rl.effects.push(...rl.effects.map((e) => ({ ...e, on: 'deathrite' as const })));
     out.lines.push(rl); out.effects.push(...rl.effects); out.manual.push(...rl.manual);
   });
+  // either/or groups: point each option at the index of the group's first effect
+  out.effects = out.effects.map((e, i, all) => (e.alt && e.alt.at < 0 ? { ...e, alt: { at: all.findIndex((x) => x.alt?.at === e.alt!.at), opt: e.alt.opt } } : e));
   if (needs.size) out.effects = out.effects.map((e) => (e.line !== undefined && needs.has(e.line) ? { ...e, need: needs.get(e.line) } : e));
   return out;
 }

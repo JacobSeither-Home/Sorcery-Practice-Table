@@ -407,7 +407,7 @@ describe('rules text and damage split', () => {
     // sentences with more to them are not guessed at
     // "it" points back at the chosen target
     expect(auto(effectsFromText('Magic', 'Deal 1 damage to target nearby minion and untap it.'))).toMatchObject([{ op: 'damage', who: 'target' }, { op: 'untap', who: 'target', ref: true }]);
-    expect(auto(effectsFromText('Minion', 'Genesis → Kill target adjacent Unique or Elite minion.'))).toEqual([]);
+    expect(auto(effectsFromText('Minion', 'Genesis → Kill target adjacent Unique or Elite minion.'))).toMatchObject([{ op: 'destroy', rarity: ['Unique', 'Elite'] }]);
     // "Once on your turn, bearer may …" is an activated ability
     expect(effectsFromText('Artifact', 'Once on your turn, bearer may deal 1 damage to target adjacent minion.')).toMatchObject([{ on: 'activated', op: 'damage', n: 1, range: 'adjacent', only: 'minion' }]);
     expect(effectsFromText('Minion', 'Airborne\nMovement +1')).toEqual([]);

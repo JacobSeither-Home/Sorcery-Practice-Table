@@ -27,6 +27,10 @@ export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?:
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** an ally fights each enemy near it, one at a time, and doesn't die until it's done (Blaze of Glory) */
+  | 'glory'
+  /** "If any are Demons, this becomes one and gains +2 power permanently" (after a pick) */
+  | 'becomeIfPicked'
   /** break any number of allied Wards (Choice.chain) to add 1 damage each to the damage before it (Divine Lance) */
   | 'wardBoost'
   /** slide all units at land sites in this column one step left or right (Choice.dir) */
@@ -106,6 +110,10 @@ export type Who =
   | 'alliesInBody'
   /** other minions at rest here or one step in front of this (Hillock Basilisk) */
   | 'restHereFront'
+  /** the units the effect before it brought into the realm ("They gain Charge this turn") */
+  | 'summoned'
+  /** the controller of the unit the reaction is about ("its controller loses 1 life") */
+  | 'subjectController'
   /** units at a location the player chooses (Choice.cell), within `range` */
   | 'atTarget'
   /** the site this card is at: damage to it costs its controller life */
@@ -147,8 +155,14 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** shoot: what happens to the unit it hits instead of damage (Holy Water: banish if Evil, else Ward) */
+  onHit?: 'holyWater';
   /** target filter: a minion that was summoned this turn */
   fresh?: boolean;
+  /** target filter: these rarities ("Unique or Elite minion") */
+  rarity?: string[];
+  /** "A, or B": this effect belongs to option `opt` of the either/or that starts at effect `at` (the player picks with Choice.alt there) */
+  alt?: { at: number; opt: number };
   /** strike: an Evil victim is banished instead ("If it's Evil, banish it instead") */
   evilBanish?: boolean;
   /** buff: the units it reaches have 0 power ("Has 0 power unless …", "Evil has no power here") */
@@ -222,7 +236,7 @@ export interface Effect {
   fromBottom?: boolean;
   /** teleport (movement): where to. Chosen: a nearby / adjacent location or any site; fixed: this card's location ("here"),
    *  the caster's, one step toward / away from this card, a random site or void, or the location of the chosen unit ("to") */
-  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid' | 'body';
+  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid' | 'body' | 'closestEvil';
   /** movement kind (Codex "Forced Movement"): teleport and drag move anyone; a step is the unit's own and Immobile stops it */
   move?: 'teleport' | 'drag' | 'step';
   /** only units with less power than this card ("target weaker minion") */
@@ -240,7 +254,7 @@ export interface Effect {
   /** grant: the keyword given */
   keyword?: string;
   /** buff/grant: how long it lasts (static abilities last while the card is in the realm) */
-  until?: 'turn' | 'next' | 'permanent' | 'hurt';
+  until?: 'turn' | 'next' | 'permanent' | 'hurt' | 'release';
   /** activated abilities: the card itself is sacrificed as part of the cost */
   sacrifice?: boolean;
   /** activated abilities: mana paid on use */
@@ -256,7 +270,7 @@ export interface Effect {
 }
 
 /** One choice made in the cast pop-up for the effect at the same index. */
-export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string; /** op chain: the extra targets, in order */ chain?: string[] }
+export interface Choice { /** cards chosen from a zone: instance ids, or "card:<id>" for a named card from the collection */ cards?: string[]; /** a card in hand (discard by choice) */ card?: string; target?: string; n?: number; deck?: 'spellbook' | 'atlas'; skip?: boolean; /** scry: put the card on the bottom */ bottom?: boolean; /** "put them back in any order": instance ids of the looked-at cards that go back, nearest the top first */ order?: string[]; /** a chosen square (who: 'atTarget') */ cell?: number; /** a projectile's direction */ dir?: [number, number]; /** which unit the projectile hits when several are where it lands (rulebook p34) */ hit?: string; /** op chain: the extra targets, in order */ chain?: string[]; /** either/or: which option (0 or 1) */ alt?: number }
 
 /** Normalized card definition the engine plays with. Built from CardAPIDTO, the practice set, or custom entries. */
 export interface CardDef {
@@ -302,6 +316,10 @@ export interface Unit {
   corners?: number[];
   /** swallowed: carried, disabled, by this unit until it leaves the realm (Brobdingnag Bullfrog) */
   belly?: string;
+  /** doesn't die until an effect is done (Blaze of Glory) */
+  undying?: boolean;
+  /** a Disabled that lasts until an adjacent Spellcaster taps to release it (Shackled Demon, Bind Evil); true when released */
+  released?: boolean;
   /** a follow-up it may take straight away: a step after a ranged strike (Kite Archer), or a ranged strike from a
    *  location it passed while moving (Skirmishers of Mu). Ends when its controller does anything else. */
   follow?: { turn: number; kind: 'step' | 'shot'; from?: Loc[] };
@@ -319,7 +337,7 @@ export interface Unit {
   /** power/defense changes and granted keywords from abilities; `turn` = expires at the end of that turn */
   mods?: Mod[];
 }
-export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; /** ends when the unit leaves the void (Planar Gate) */ void?: boolean; from: string }
+export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; /** ends when the unit leaves the void (Planar Gate) */ void?: boolean; /** ends when an adjacent Spellcaster taps to release it */ release?: boolean; from: string }
 
 export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; /** sites it has stopped at (Flame of the First Ones) */ visited?: number[]; /** artifact: its square; aura: the top-left square of its 2×2 area */ c: number; kind: 'artifact' | 'aura'; /** "Lasts N of your turns": end-of-turn counters so far */ turns?: number; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
@@ -406,6 +424,8 @@ export interface GameState {
   pending: Pending | null;
   /** triggered abilities that need a decision, first one first */
   queue?: Queued[];
+  /** controllers of units that left the realm this turn, by unit id ("its controller" after it died) */
+  gone?: Record<string, PlayerId>;
   /** sites flooded "this turn" (they stop being flooded when the turn ends) */
   floods?: { c: number; turn: number }[];
   /** units not "at rest" while the current action resolves: the mover and its defenders (Codex "At Rest") */
@@ -454,6 +474,8 @@ export type Action =
   | { t: 'shoot'; unit: string; dx: number; dy: number; hit?: string; /** a follow-up shot: from this location of the move it just made */ from?: number }
   /** a follow-up step ("may take a step" right after something) */
   | { t: 'step'; unit: string; to: Loc }
+  /** an adjacent Spellcaster taps to release a unit disabled "until an adjacent Spellcaster taps to release it" */
+  | { t: 'release'; unit: string; by: string }
   | { t: 'respond'; units: string[]; removeOriginal?: boolean }
   /** split the attacker's strike among the enemies in a fight: damage per enemy unit id, adding up to its strike */
   | { t: 'allocate'; split: Record<string, number> }

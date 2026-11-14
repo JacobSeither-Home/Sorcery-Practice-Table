@@ -725,3 +725,43 @@ describe('Gothic Savior', () => {
     expect(s.units[g].ward).toBe(false);   // its Ward took the first hit
   });
 });
+
+describe('Gothic Persecutor', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  it('either/or: Kissers of Wounds wards a wounded minion nearby, or you heal 2', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2));
+    const kis = await read('Minion', 'Test Kissers', 'Genesis → Ward a wounded minion nearby, or you heal 2.', { attack: 1, cost: 0 });
+    s.players[0].life = 15;
+    const inst = give(s, 0, kis);
+    s = apply(s, { t: 'cast', inst, c: cell(2, 2), choices: [{ alt: 1 }] });
+    if (s.queue?.length) s = apply(s, { t: 'trigger', choices: [{ alt: 1 }] });
+    expect(s.players[0].life).toBe(17);
+  });
+  it('Shackled Demon stays disabled until an adjacent Spellcaster of yours taps to release it', async () => {
+    const { isDisabled } = await import('../src/engine/rules');
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2));
+    const dem = await read('Minion', 'Test Shackled', 'Disabled until an adjacent Spellcaster taps to release him.', { attack: 6, keywords: ['Disabled'], subtypes: ['Demon'] });
+    const u = unit(s, 0, cell(2, 2), dem);
+    expect(isDisabled(s, s.units[u])).toBe(true);
+    s = apply(s, { t: 'release', unit: u, by: s.players[0].avatar });
+    expect(isDisabled(s, s.units[u])).toBe(false); expect(s.units[s.players[0].avatar].tapped).toBe(true);
+  });
+  it('Intrepid Hero is Lethal to Evil; Angry Mob kills an adjacent Unique or Elite minion', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 1, cell(2, 2));
+    const hero = await read('Minion', 'Test Hero', 'Lethal to Evil.', { attack: 1 });
+    const h = unit(s, 0, cell(2, 3), hero); const big = unit(s, 1, cell(2, 2), T('Big Demon', 'Minion', { attack: 9, subtypes: ['Demon'] }), { tapped: true });
+    s = apply(s, { t: 'move', unit: h, path: [{ c: cell(2, 2), r: 'surface' }], attack: { unit: big } });
+    expect(s.units[big]).toBeUndefined();
+    const mob = await read('Minion', 'Test Mob', 'Genesis → Kill target adjacent Unique or Elite minion.', { attack: 2 });
+    expect(s.cards[mob].effects[0].rarity).toEqual(['Unique', 'Elite']);
+  });
+  it('Purgatory: whenever an Evil minion dies nearby, its controller loses 1 life', async () => {
+    let s = start(0);
+    const pur = await read('Site', 'Test Purgatory', 'Whenever an Evil minion dies nearby, its controller loses 1 life.');
+    const k = '0tpur'; s.inst[k] = pur; s.sites[cell(2, 2)] = { inst: k, owner: 0 };
+    const g = unit(s, 1, cell(2, 2), T('Test Ghoul2', 'Minion', { attack: 1, subtypes: ['Undead'] }));
+    const life = s.players[1].life;
+    s = apply(s, { t: 'manual', op: 'destroy', unit: g });
+    expect(s.players[1].life).toBe(life - 1);
+  });
+});
