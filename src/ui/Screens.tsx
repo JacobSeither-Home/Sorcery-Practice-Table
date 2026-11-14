@@ -10,7 +10,7 @@ import { type ArtReport, OFFICIAL_ART_FOLDER, orderVariants, variantBlob, varian
 import { artDb } from '../data/db';
 import { COLLECTION_MAX, RARITIES, RARITY_LIMIT, constructedLegal, copiesOf, copyLimit, deckChecks, parseDeckText, playable } from '../data/decks';
 import { type FeedbackItem, CLOSED, STATUSES as FB_STATUSES, editItem, exportJson, loadLocal, pushPending, recentErrors, submit } from '../feedback/feedback';
-import { CardFace, STATUS_CARDS, hoverProps } from './CardFace';
+import { CardFace, STATUS_CARDS, hoverProps, useInspect } from './CardFace';
 import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, uploadCatalog, useAuth } from '../cloud/cloud';
 import { Preview, TableOptions } from './Table';
 
@@ -165,7 +165,7 @@ export function Decks() {
       <div className="row"><button className="primary" onClick={() => { setCur({ name: 'New deck', avatar: '', spellbook: [], atlas: [] }); setOrig(undefined); }}>New deck</button></div>
       <section className="panel">
         <h2>Import a list</h2>
-        <p><a className="btnlink" href="https://curiosa.io/precons" target="_blank" rel="noreferrer">Official precon deck lists</a><a className="btnlink quiet" href="https://curiosa.io/decks" target="_blank" rel="noreferrer">Browse decks on Curiosa</a> Both open Curiosa.io, Erik's Curiosa's deck site, in a new tab. Copy a deck's card list there and paste it below.</p>
+        <p><a className="btnlink" href="https://curiosa.io/precons" target="_blank" rel="noreferrer">Official precon deck lists</a><a className="btnlink quiet" href="https://curiosa.io/decks" target="_blank" rel="noreferrer">Browse decks on Curiosa</a><a className="btnlink quiet" href="https://sorcerytcg.com/decks" target="_blank" rel="noreferrer">Decks on sorcerytcg.com</a> Each opens in a new tab. Search there, copy a deck's card list and paste it below.</p>
         <p className="note">Paste one card per line, like "4 Card Name". Names must match cards in your pool. This app does not fetch from Curiosa itself.</p>
         <textarea rows={6} value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={'1 Avatar Name\n4 Card Name\n3 Another Card'} />
         <div className="row"><button disabled={!paste.trim()} onClick={() => { const r = parseDeckText(paste, pool, 'Imported deck'); setCur(r.deck); setOrig(undefined); if (r.unknown.length) toast(`Not in your card pool: ${r.unknown.slice(0, 8).join(', ')}${r.unknown.length > 8 ? '…' : ''}`, 'error'); }}>Import</button></div>
@@ -233,7 +233,7 @@ export function Library() {
   const setFx = (fx: Effect[]) => card && setOverlay(card.id, fx);
   const num = (v: string) => Math.max(0, parseInt(v || '0', 10) || 0);
   return (
-    <div className="page builder">
+    <div className={`page builder ${draft || card ? '' : 'noside'}`}>
       <div className="builder-main">
         <div className="row head"><h1>Card library</h1><span className="count">{Object.values(pool).filter((c) => c.source === 'api').length.toLocaleString()} synced, {Object.values(pool).filter((c) => c.source === 'custom').length} custom</span><button className="primary" onClick={() => { setDraft(blank()); setId(null); }}>Add a card</button></div>
         {bar}
@@ -263,8 +263,7 @@ export function Library() {
             <div className="row"><button type="button" onClick={() => setDraft(null)}>Cancel</button><button className="primary" type="submit">Save card</button></div>
           </form>
         ) : card ? (<>
-          <Preview card={card} />
-          <div className="row"><b>{card.name}</b>{card.source === 'custom' && <><button onClick={() => setDraft(card)}>Edit</button><button onClick={() => { if (confirm(`Delete ${card.name}?`)) { deleteCustom(card.id); setId(null); } }}>Delete</button></>}</div>
+          <div className="row"><b>{card.name}</b><button className="ghost" onClick={() => useInspect.getState().open(card)}>Read card</button><button className="ghost" onClick={() => setId(null)} aria-label="Close panel">✕</button>{card.source === 'custom' && <><button onClick={() => setDraft(card)}>Edit</button><button onClick={() => { if (confirm(`Delete ${card.name}?`)) { deleteCustom(card.id); setId(null); } }}>Delete</button></>}</div>
           <ArtChooser card={card} />
           <h3>Automated effects</h3>
           <p className="note">Keywords run on their own. Each sentence of the card text the reader knows becomes an effect below; sentences it does not know are marked “by hand” and the cast pop-up offers the hand tools for them. Changes here apply to every copy of this card.</p>
@@ -294,7 +293,7 @@ export function Library() {
               <button className="ghost" onClick={() => setFx(effectsFromText(card.type, card.rules, card.name))} data-tip="Throw away hand-made changes and read the card text again">Read from card text</button>
             </div>
           </>)}
-        </>) : <><p className="note">Select a card to see it and set up automated effects, or add a card of your own.</p></>}
+        </>) : null}
       </aside>
     </div>
   );

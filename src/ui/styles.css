@@ -354,6 +354,7 @@ button.danger { border-color: #a14a3c; color: #ffb4a4; }
 /* decks, library, settings */
 .decklist { max-width: 980px; } .deckrow { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 16px; margin-bottom: 8px; } .deckrow b { font: 600 16px var(--serif); display: block; }
 .builder { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; padding-bottom: 0; overflow: hidden; }
+.builder.noside { grid-template-columns: minmax(0, 1fr); } .builder.noside .builder-side { display: none; }
 .builder-main, .builder-side { overflow: auto; min-height: 0; padding-bottom: 40px; } .builder-side { border-left: 1px solid var(--line-soft); padding-left: 20px; }
 .head { margin-bottom: 12px; } .head h1 { flex: 1; margin: 0; } input.title { flex: 1; font: 600 22px var(--serif); }
 .searchbar { display: grid; grid-template-columns: 1fr 150px auto auto; gap: 8px; align-items: center; margin-bottom: 14px; } .count { color: var(--muted); font-size: 12px; }
