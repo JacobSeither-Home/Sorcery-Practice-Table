@@ -77,7 +77,34 @@ const GOTHIC_DECKS: OfficialDeck[] = [
     collection: [[1, 'Eltham Townsfolk'], [1, 'Serava Townsfolk'], [1, 'Penitent Knight']] },
 ];
 
-export const OFFICIAL_DECKS: OfficialDeck[] = [...BETA_DECKS, ...GOTHIC_DECKS];
+// Frost Mage vs Lavamancer (60 spells, 30 sites, plus the product's collection cards). Transcribed on 2026-11-14 from
+// screenshots of the two official deck pages, supplied by Jacob; the app never reads sorcerytcg.com. Each section total
+// was reconciled against the header counts in the screenshots. The pages also list a maybeboard (4 Valley and 4 Wasteland;
+// 4 Spire and 4 Stream), which is not part of the deck and is left out.
+const FVL = 'Frost Mage vs Lavamancer';
+const FVL_SRC = 'Official deck pages on sorcerytcg.com (screenshots supplied by Jacob, 2026-11-14)';
+const FVL_DECKS: OfficialDeck[] = [
+  { name: 'Frost Mage vs Lavamancer: Lavamancer', product: FVL, source: FVL_SRC, avatar: 'Lavamancer',
+    spellbook: [[1, 'Rite of Eruption'], [1, 'None Survive the Sun'], [2, 'Toolbox'], [2, 'Iron Man Talus'],
+      [2, 'Emberleaf Dryad'], [2, 'Flametongue Newt'], [2, 'Namira Cheetah'], [2, 'Sinterfee'], [1, 'Snapjaw Raptor'], [1, 'Dust Devil'], [1, 'Flat Realm Society'],
+      [2, 'Gnarled Laborers'], [3, 'Reed Cord Measurer'], [2, 'Slumbering Giantess'], [2, 'Sunspear Tribe'], [2, 'Flayer'], [3, 'Lava Elemental'], [1, 'Pass-plug Serpent'],
+      [2, 'Slag Slug'], [2, 'Southpaw Dyrodor'], [2, 'Stiff-pitch Witch'], [2, "Tusslin' Trolls"], [1, 'Myrmidons'], [1, 'King Krakalak'],
+      [1, 'Terraform'], [2, 'Ash of Effort'], [2, 'Chart'], [2, 'Blaze'], [2, 'Landmass'], [3, 'Fireball'], [3, 'Ground Slam'], [1, 'Earthquake'], [1, 'Lava Flow'], [1, 'Flame Wave']],
+    atlas: [[2, 'Active Volcano'], [1, 'Bouldermaw'], [2, 'Combusting Busts'], [2, 'Fertile Earth'], [2, 'Humming Hummocks'], [3, 'Landslide'], [2, 'Molten Maar'], [2, 'Scoria'],
+      [1, 'Sinkhole'], [2, 'Smoldering Hollow'], [2, 'Spike Trap'], [2, 'Steppe'], [2, 'Sulfur Vents'], [1, 'Supervolcano'], [2, "Trapper's Rest"], [2, 'Volcanic Eruption']],
+    collection: [[1, 'Dispel'], [1, 'Gift of the Serpent'], [1, 'Boil'], [1, 'Bury'], [1, "Hamlet's Ablaze!"], [1, 'Heat Ray'], [2, 'Hellhounds'], [1, 'Rolling Boulder'], [1, 'Amazon Warriors']] },
+  { name: 'Frost Mage vs Lavamancer: Frost Mage', product: FVL, source: FVL_SRC, avatar: 'Frost Mage',
+    spellbook: [[1, 'Man-made Ice Age'], [2, 'Toolbox'],
+      [1, 'Arctic Fox'], [3, 'Highgate Guide'], [2, 'Jussi Puffins'], [3, 'Runeling'], [2, 'Sissi Marksmen'], [1, 'The White Death'], [2, 'Aria Wraith'], [1, 'A Yeti So Shy'],
+      [2, 'Coy Nixie'], [1, 'Fey Changeling'], [1, 'Lone Wolf'], [4, 'Polar Bears'], [1, 'Failed Mutation'], [3, 'Frost Elemental'], [2, 'Hailstriker'], [2, 'Stomping Mammoth'],
+      [1, 'Swealand Longship'], [2, 'Bearserker'], [2, 'Frozen Horror'], [1, 'Hibernal Legion'], [1, 'Nanurluk'], [1, 'Full-tilt Goliaths'], [1, 'Jormungand'],
+      [3, 'Shatter'], [2, 'Slide'], [3, 'Frostbolt'], [1, 'Polar Shift'], [2, 'Research'], [2, 'Frost Breath'], [2, 'Snowball'], [1, 'When the Peaks Fell'], [1, 'Call of the Sea']],
+    atlas: [[2, 'Ancient Thaw'], [1, 'Avalanche'], [2, 'Deep Sea'], [2, 'Deep Snow'], [2, 'Icicle Dome'], [2, 'Lighthouse'], [2, 'Mountain Pass'], [2, 'Mountain Peaks'],
+      [2, 'Permafrost'], [1, 'River Rapids'], [2, 'Springstem Meadow'], [3, 'Thin Ice'], [2, 'Tundra'], [4, 'Winter River'], [1, 'Wuthering Heights']],
+    collection: [[1, 'Blizzard'], [1, 'Disenchant'], [1, 'Displace'], [1, 'Lightning Bolt'], [1, 'Drown'], [1, 'Ice Shards'], [1, 'Plumed Pegasus'], [1, 'Tufted Turtles'], [1, 'Arc Lightning'], [1, 'Highland Clansmen']] },
+];
+
+export const OFFICIAL_DECKS: OfficialDeck[] = [...BETA_DECKS, ...GOTHIC_DECKS, ...FVL_DECKS];
 
 export interface ResolvedDeck { deck: DeckList; product: string; missing: string[] }
 const norm = (s: string) => s.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
