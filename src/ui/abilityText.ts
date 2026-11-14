@@ -5,12 +5,12 @@ export const TRIGGER_LABEL: Record<Trigger, string> = {
   cast: 'When cast', genesis: 'When it enters (Genesis)', deathrite: 'When it dies (Deathrite)', tap: 'Tap → (use any time on your turn)',
   activated: 'Ability (use on your turn)', startTurn: 'At the start of your turn', endTurn: 'At the end of your turn', static: 'Always (while in the realm)',
   dies: 'Whenever a unit dies', damaged: 'Whenever this takes damage', attacks: 'Whenever this attacks', enters: 'Whenever a unit enters here',
-  kills: 'Whenever this kills', casts: 'Whenever a spell is cast', stops: 'Whenever it (or its bearer) stops moving',
+  kills: 'Whenever this kills', casts: 'Whenever a spell is cast', stops: 'Whenever it (or its bearer) stops moving', trap: 'Trap (pay to spring it, face down only)',
 };
 export const TRIGGER_SHORT: Record<Trigger, string> = {
   cast: 'Cast', genesis: 'Genesis', deathrite: 'Deathrite', tap: 'Tap', activated: 'Ability', startTurn: 'Start of turn', endTurn: 'End of turn', static: 'Always',
   dies: 'When a unit dies', damaged: 'When damaged', attacks: 'When it attacks', enters: 'When a unit enters',
-  kills: 'When it kills', casts: 'When a spell is cast', stops: 'When it stops',
+  kills: 'When it kills', casts: 'When a spell is cast', stops: 'When it stops', trap: 'Trap',
 };
 export const OP_LABEL: Record<Op, string> = {
   swap: 'Swap two units', gather: 'Call minions into the water', transform: 'Transform', discountHere: 'Cheaper Evil here', glory: 'Fight each enemy near it', becomeIfPicked: 'Become one of them', wardBoost: 'Break Wards for more damage', slide: 'Slide units', dealOut: 'Deal out spells to your back row', swallow: 'Swallow a minion', surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',

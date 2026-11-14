@@ -296,6 +296,7 @@ export function Table() {
                   {d && <span className="site-flash" key={site!.inst} />}
                   {d && <div className="site-label"><span>{d.name}</span><Pips t={d.thresholds} /></div>}
                   {site && !site.inst && <div className="site-label"><span>Rubble</span></div>}
+                  {site?.trap && site.owner === viewer && <span className="trap-mark" data-tip={`Your face-down trap: ${cardOf(s, site.trap).name}. Your opponent sees ${d?.name ?? 'an Ordinary site'}.`}>⚠ {cardOf(s, site.trap).name}</span>}
                   <span className="coord">{'ABCDE'[x]}{4 - y}</span>
                   {([0, 1] as PlayerId[]).filter((q) => s.players[q].portals?.includes(c)).map((q) => <span key={q} className={`portal p${q}`} data-tip={`${PNAME(g, q)}'s Harbinger square: once on their turn they may cast a minion here for 1 less`}>✧</span>)}
                   {([other(bottomPlayer), bottomPlayer] as PlayerId[]).map((p) => (

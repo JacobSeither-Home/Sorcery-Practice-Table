@@ -604,6 +604,10 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'transform', who: 'target', only: 'allyMinion', range: 'any', targets: false, ...(m[1] ? { kw: KEYWORDS.find((k) => k.toLowerCase() === m[1].toLowerCase()) } : {}) }] },
   { id: 'token-where-died', label: 'Summon a <token> where it died', re: /^summon an? (skeleton|foot soldier|frog) token where it died\.$/i,
     build: (m) => [{ op: 'summon', who: 'controller', n: 1, token: m[1].replace(/\b\w/g, (c) => c.toUpperCase()), places: 'whereDied' }] },
+  { id: 'another-adjacent-location', label: 'Deal N damage to each unit at another target adjacent location', re: /^deal (\d+) damage to each (unit|minion) at another target adjacent location\.$/i,
+    build: (m) => [{ op: 'damage', who: 'atTarget', range: 'adjacent', targets: true, notHere: true, n: +m[1], ...(m[2].toLowerCase() === 'minion' ? { only: 'minion' as const } : {}) }] },
+  { id: 'tap-adjacent-site', label: 'Tap minions at one adjacent site', re: /^tap (minions|units) at one adjacent site\.$/i,
+    build: (m) => [{ op: 'tap', who: 'atTarget', range: 'adjacent', siteKind: undefined, ...(m[1].toLowerCase() === 'minions' ? { only: 'minion' as const } : {}) }] },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -806,10 +810,10 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
   lines.forEach((raw0, lineNo) => {
     let raw = raw0;
     // "(A)(A)(A) — …": the ability needs that threshold (rulebook p18: symbols to the left of abilities)
-    const sym = raw.match(/^((?:\([AEFW]\))+)\s*[—–-]\s*/);
+    const sym = raw.match(/^((?:\([AEFW]\))+)\s*(?:[—–]|-{1,2})\s*/);
     if (sym) { const t: Partial<Thresholds> = {}; for (const ch of sym[1].match(/[AEFW]/g)!) { const el = ({ A: 'air', E: 'earth', F: 'fire', W: 'water' } as const)[ch as 'A']; t[el] = (t[el] ?? 0) + 1; } needs.set(lineNo, t); }
     // the card's own name means "this" — unless the name is a word used as a verb ("Teleport an ally …")
-    raw = raw.replace(/^(?:\([AEFW]\))+\s*[—–-]\s*/, '');
+    raw = raw.replace(/^(?:\([AEFW]\))+\s*(?:[—–]|-{1,2})\s*/, '');
     const line = (name ? raw.replace(new RegExp(`\\b${esc}\\b(?! (?:an?|the|target|all|each|any|your|up)\\b)`, 'g'), 'this') : raw).replace(/(^|[.!→]\s+)this\b/g, (_, a) => a + 'This');
     const parts = line.replace(/\.$/, '').split(/,\s*/);
     const PASSIVE: Record<string, string> = { "can't defend": "Can't defend", "can't intercept": "Can't intercept", "can't attack sites": "Can't attack sites", "can't move to defend": "Can't move to defend", "can't attack or defend": "Can't attack", "immune to fire damage": 'Immune to fire damage' };
@@ -848,6 +852,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Whenever the (?:flame|this) stops at a new site,\s*(.+)$/i))) { on = 'stops'; ev = { self: true, newSite: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever a minion enters an affected water site,\s*(.+)$/i))) { on = 'enters'; ev = { minion: true, affectedWater: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever this enters each corner of the realm for the first time,\s*(.+)$/i))) { on = 'enters'; ev = { self: true, corner: true }; body = cap(m[1]); }
+    else if ((m = line.match(/^Trap \((\d+)\)\s*→\s*(.+)$/i))) { on = 'trap'; cost = +m[1]; body = m[2]; } // Codex "Trap"
     else if ((m = line.match(/^Discard an? (spell|site|card)\s*→\s*(.+)$/i))) { on = 'activated'; body = m[2]; repeat = true; discardCost = m[1].toLowerCase(); }
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }
@@ -901,8 +906,8 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
       const pk = readPick(ss, k, name);
       if (pk) { rl.effects.push({ ...pk.fx, on, line: lineNo, text: ss.slice(k, k + pk.used).join(' '), rule: 'pick', auto: true, ...(cost ? { cost } : {}), ...(sac ? { sacrifice: true } : {}) }); k += pk.used - 1; continue; }
       if (/^They don'?t untap the next time they would\.$/i.test(sentence)) {
-        const prev = [...rl.effects].reverse().find((e) => e.op === 'tap' && e.refCell);
-        if (prev) { rl.effects.push({ ...prev, op: 'noUntap', text: sentence, rule: 'no-untap' }); continue; }
+        const prev = [...rl.effects].reverse().find((e) => e.op === 'tap' && (e.refCell || e.who === 'atTarget'));
+        if (prev) { rl.effects.push({ ...prev, op: 'noUntap', refCell: true, text: sentence, rule: 'no-untap' }); continue; }
       }
       const sum = ss[k + 1]?.match(/^It deals damage equal to (?:to )?the sum of their \(([AEFW])\)\.$/i);
       if (/^shoot a projectile\.$/i.test(sentence) && sum && banishDead) {

@@ -20,8 +20,10 @@ export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | '
   /** reactions ("Whenever …"): a unit dies, this takes damage, this attacks, a unit enters here; `ev` narrows which */
   | 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts'
   /** the unit (or the bearer) ends a move: "Whenever the flame stops at a new site" */
-  | 'stops';
-export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts', 'stops'];
+  | 'stops'
+  /** Trap (X) → …: a face-down trap site is flipped, paying X, and this resolves (Codex "Trap") */
+  | 'trap';
+export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts', 'stops', 'trap'];
 /** Which events a reaction listens to, relative to the card that has it. */
 export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** enters: a water site in the aura's area */ affectedWater?: boolean; /** stops: at a site this artifact has not stopped at before */ newSite?: boolean; /** enters: only the first unit ever to do so (Dark Alley) */ first?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
@@ -163,6 +165,10 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** atTarget: not the card's own square ("another target adjacent location") */
+  notHere?: boolean;
+  /** static: these two elements of your threshold are each the higher of the two (Tundra, Scoria) */
+  equalize?: [Element, Element];
   /** shoot: the projectile travels at most this many steps ("melts before the third step" = 2) */
   steps?: number;
   /** several shots, each aimed on its own (Choice.dirs) */
@@ -357,7 +363,7 @@ export interface Unit {
 }
 export interface Mod { atk: number; def: number; kw?: string; /** extra steps (Movement +N) */ move?: number; /** ends when the unit takes damage */ hurt?: boolean; turn?: number; /** lasts until the start of this player's next turn */ next?: PlayerId; /** ends when the unit leaves the void (Planar Gate) */ void?: boolean; /** ends when an adjacent Spellcaster taps to release it */ release?: boolean; from: string }
 
-export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean } // inst null = rubble
+export interface Site { inst: string | null; owner: PlayerId | null; tapped?: boolean; ward?: boolean; /** a face-down trap: the real card; `inst` is then the Ordinary draft site it counts as (Codex "Trap") */ trap?: string; /** silenced (Codex "Silenced"): its printed abilities don't work, until `next`'s turn starts or while unit `while` is in the realm; `noThreshold`: it provides no threshold meanwhile */ silenced?: { next?: PlayerId; while?: string; noThreshold?: boolean } } // inst null = rubble
 export interface Permanent { id: string; inst: string; owner: PlayerId; /** sites it has stopped at (Flame of the First Ones) */ visited?: number[]; /** artifact: its square; aura: the top-left square of its 2×2 area */ c: number; kind: 'artifact' | 'aura'; /** "Lasts N of your turns": end-of-turn counters so far */ turns?: number; /** unit id of the bearer, when a unit carries this artifact */ carrier?: string; tapped?: boolean }
 
 export interface PlayerState {

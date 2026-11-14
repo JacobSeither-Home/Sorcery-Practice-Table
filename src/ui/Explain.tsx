@@ -20,6 +20,7 @@ const WHEN: Record<Trigger, string> = {
   kills: 'Reaction: happens on its own whenever this kills a unit (the unit that struck or dealt the damage gets the kill).',
   casts: 'Reaction: happens on its own whenever the spellcaster it watches casts a spell.',
   stops: 'Reaction: happens on its own when it, or the unit carrying it, ends a move.',
+  trap: 'Trap: this site is played face down and counts as an Ordinary site of its element. On your turn, pay its cost from ✦ Abilities to turn it face up and spring it.',
 };
 
 /** One line per ability group, saying what the table does with it. */

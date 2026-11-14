@@ -61,9 +61,15 @@ export function sitesOf(s: GameState, p: PlayerId): number[] {
 }
 export function thresholdOf(s: GameState, p: PlayerId): Thresholds {
   const t: Thresholds = { air: 0, earth: 0, fire: 0, water: 0 };
-  for (const c of sitesOf(s, p)) { const d = cardOf(s, s.sites[c]!.inst!); for (const e of ELEMENTS) t[e] += d.thresholds[e]; }
+  for (const c of sitesOf(s, p)) {
+    if (s.sites[c]!.silenced?.noThreshold && siteSilenced(s, c)) continue; // Sinterfee: "provides no threshold while …"
+    const d = cardOf(s, s.sites[c]!.inst!); for (const e of ELEMENTS) t[e] += d.thresholds[e];
+    if (d.thresholds.water === 0 && isWater(s, c)) t.water += 1; // Codex "Flooded": a flooded site also gives one water affinity
+  }
   for (const x of provided(s, p)) for (const e of ELEMENTS) t[e] += x.el?.[e] ?? 0;
   const ex = s.players[p].extra; if (ex && ex.turn === s.turn) for (const e of ELEMENTS) t[e] += ex.th[e] ?? 0;
+  // Tundra / Scoria: "Your (A) and (W) are equal to the higher of the two."
+  for (const c of sitesOf(s, p)) for (const e of cardOf(s, s.sites[c]!.inst!).effects) if (e.on === 'static' && e.equalize && !siteSilenced(s, c)) { const [a, b] = e.equalize; const m = Math.max(t[a], t[b]); t[a] = m; t[b] = m; }
   return t;
 }
 const provideCache = new WeakMap<object, Set<string>>();
@@ -250,7 +256,7 @@ export function bonus(s: GameState, u: Unit): Bonus {
   };
   for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !d.keywords.includes('Disabled')) add(d, v.owner, v, v.id); }
   for (const m of s.perms) { const d = cardOf(s, m.inst); if (set.has(d.id)) add(d, m.owner, { c: m.c, r: m.carrier ? s.units[m.carrier]?.r ?? 'surface' : 'surface', ...(m.kind === 'aura' ? { aura: true } : {}) }, undefined, m.carrier); }
-  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface', site: true }); } }
+  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null && !siteSilenced(s, c)) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface', site: true }); } }
   return b;
 }
 let disabledDepth = 0;
@@ -404,7 +410,8 @@ function startTurn(s: GameState, p: PlayerId) {
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
   if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.next !== p); if (!s.ongoing.length) delete s.ongoing; }
   if (s.floods) { s.floods = s.floods.filter((f) => f.turn >= s.turn); if (!s.floods.length) delete s.floods; }
-  delete s.gone; delete s.goneAt; // rulebook p16 Start Phase: "Until next turn" effects end
+  delete s.gone; delete s.goneAt;
+  for (const st of s.sites) if (st?.silenced?.next === p || (st?.silenced?.while !== undefined && !s.units[st.silenced.while])) delete st.silenced; // rulebook p16 Start Phase: "Until next turn" effects end
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
   s.players[p].mana = s.players[p].income = manaIncome(s, p);
   if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); fireAll(s, p, 'startTurn'); return; }
@@ -587,7 +594,8 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins0: Loc[], p
   for (let c = 0; c < CELLS; c++) {
     if (e.siteKind && (!s.sites[c]?.inst || (e.siteKind === 'water') !== isWater(s, c))) continue;
     if (e.op === 'destroySite' && !s.sites[c]?.inst) continue;
-    if (e.inBody && !origins.some((o) => bodyOfKind(s, o.c, 'water').includes(c))) continue; // "in this body of water"
+    if (e.inBody && !origins.some((o) => bodyOfKind(s, o.c, 'water').includes(c))) continue;
+    if (e.notHere && origins.some((o) => o.c === c)) continue; // "in this body of water"
     if (e.op === 'rubble' && s.sites[c]) continue;
     if (e.op === 'replaceRubble' && !(s.sites[c] && !s.sites[c]!.inst)) continue;
     if (e.op === 'flood' && !s.sites[c]?.inst) continue;
@@ -724,13 +732,13 @@ export function sourcesOf(s: GameState, p: PlayerId): { src: Source; inst: strin
   const out: { src: Source; inst: string; loc: Loc; unit?: Unit }[] = [];
   for (const u of Object.values(s.units)) if (u.owner === p) out.push({ src: { unit: u.id }, inst: u.inst, loc: { c: u.c, r: u.r }, unit: u });
   for (const m of s.perms) if (m.owner === p) { const b = m.carrier ? s.units[m.carrier] : undefined; out.push({ src: { perm: m.id }, inst: m.inst, loc: b ? { c: b.c, r: b.r } : { c: m.c, r: 'surface', ...(m.kind === 'aura' ? { aura: true } : {}) } }); }
-  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner === p) out.push({ src: { site: c }, inst: st.inst, loc: { c, r: 'surface' } }); }
+  for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner === p && !siteSilenced(s, c)) out.push({ src: { site: c }, inst: st.inst, loc: { c, r: 'surface' } }); }
   return out;
 }
 export function sourceOf(s: GameState, src: Source): { inst: string; owner: PlayerId; loc: Loc; unit?: Unit; tapped: boolean } | null {
   if ('unit' in src) { const u = s.units[src.unit]; return u ? { inst: u.inst, owner: u.owner, loc: { c: u.c, r: u.r }, unit: u, tapped: u.tapped } : null; }
   if ('perm' in src) { const m = s.perms.find((x) => x.id === src.perm); if (!m) return null; const b = m.carrier ? s.units[m.carrier] : undefined; return { inst: m.inst, owner: m.owner, loc: b ? { c: b.c, r: b.r } : { c: m.c, r: 'surface' }, tapped: !!m.tapped }; }
-  const st = s.sites[src.site]; return st?.inst && st.owner !== null ? { inst: st.inst, owner: st.owner, loc: { c: src.site, r: 'surface' }, tapped: !!st.tapped } : null;
+  const st = s.sites[src.site]; return st?.inst && st.owner !== null ? { inst: st.trap ?? st.inst, owner: st.owner, loc: { c: src.site, r: 'surface' }, tapped: !!st.tapped } : null;
 }
 const srcKey = (src: Source) => ('unit' in src ? 'u' + src.unit : 'perm' in src ? 'm' + src.perm : 's' + src.site);
 const selfUnit = (s: GameState, src?: Source) => (src && 'unit' in src ? src.unit : undefined);
@@ -1419,6 +1427,22 @@ export function releasers(s: GameState, p: PlayerId, u: Unit): Unit[] {
   if (!shackled(s, u)) return [];
   return Object.values(s.units).filter((x) => x.owner === p && x.id !== u.id && has(s, x, 'Spellcaster') && canAct(s, x).ok && sameRegion(s, x, u) && [u.c, ...orthAdjacent(u.c)].includes(x.c)); // rulebook p32 "Adjacent"
 }
+/** Codex "Silenced": a silenced site's printed abilities don't work. */
+export function siteSilenced(s: GameState, c: number): boolean {
+  const z = s.sites[c]?.silenced; if (!z) return false;
+  if (z.while !== undefined) return !!s.units[z.while];
+  return true; // until its `next` turn starts (cleared in startTurn)
+}
+/** Codex "Trap": while face down a trap counts as the Ordinary draft site of its element. */
+const DRAFT: Record<Element, string> = { air: 'Spire', water: 'Stream', earth: 'Valley', fire: 'Wasteland' };
+export const isTrap = (d: CardDef) => d.type === 'Site' && d.effects.some((e) => e.on === 'trap');
+function trapFace(s: GameState, trap: CardDef): string {
+  const el = ELEMENTS.find((e) => trap.thresholds[e] > 0) ?? 'earth'; const name = DRAFT[el];
+  const found = Object.values(s.cards).find((c) => c.type === 'Site' && c.name === name);
+  if (found) return found.id;
+  const id = `draft:${name}`; if (!s.cards[id]) s.cards[id] = { id, slug: id, name, type: 'Site', rarity: 'Ordinary', rules: '', cost: 0, attack: 0, defense: 0, life: 0, thresholds: { air: 0, earth: 0, fire: 0, water: 0, [el]: 1 }, subtypes: [], keywords: [], movement: 0, ranged: 0, typeline: 'An Ordinary Site', printings: [], source: 'custom', effects: [] };
+  return id;
+}
 /** What a step costs against the unit's steps: 0 when it "moves freely" (rulebook p34 "Moves Freely": the step's
  *  start and end satisfy the condition), e.g. an Airborne minion leaving a site that lets it move freely away. */
 export function stepCost(s: GameState, u: Unit, from: Loc, to: Loc): number {
@@ -1702,7 +1726,12 @@ export function check(s: GameState, a: Action): Check {
       const src = sourceOf(s, a.src);
       if (!src || src.owner !== p) return no('That is not yours.');
       const d = cardOf(s, src.inst); const e = d.effects[a.fx];
-      if (!e || (e.on !== 'tap' && e.on !== 'activated') || e.afterSite) return no(`${d.name} has no ability to use there.`);
+      if (!e || (e.on !== 'tap' && e.on !== 'activated' && e.on !== 'trap') || e.afterSite) return no(`${d.name} has no ability to use there.`);
+      if (e.on === 'trap') { // Codex "Trap": pay X to flip a face-down trap; not while it is silenced or disabled
+        const st = 'site' in a.src ? s.sites[a.src.site] : null;
+        if (!st?.trap) return no(`${d.name} has already been sprung. A face-up trap works again only when an effect reactivates it.`, 'Trap');
+        if ('site' in a.src && siteSilenced(s, a.src.site)) return no(`${d.name} is silenced, so its Trap can't be activated.`, 'Trap');
+      }
       if (!effectsOn(d, e.on, a.fx).length) return no(`${d.name} has no ability to use there.`);
       if (src.unit && isDisabled(s, src.unit)) return no(`${d.name} is disabled and its abilities do not work.`, 'Disabled');
       const bearerU = 'perm' in a.src ? (() => { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); return m?.carrier ? s.units[m.carrier] : undefined; })() : undefined;
@@ -1834,11 +1863,13 @@ export function apply(state: GameState, a: Action): GameState {
     case 'playSite': {
       s.units[pl.avatar].tapped = true;
       pl.hand.splice(pl.hand.indexOf(a.inst), 1);
-      s.sites[a.c] = { inst: a.inst, owner: p, ...(cardOf(s, a.inst).keywords.includes('Ward') ? { ward: true } : {}) };
-      log(s, `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`); // the +1 comes from followMana below
+      if (isTrap(cardOf(s, a.inst))) { const face = `${p}trapface${s.nextId++}`; s.inst[face] = trapFace(s, cardOf(s, a.inst)); s.sites[a.c] = { inst: face, owner: p, trap: a.inst }; }
+      else s.sites[a.c] = { inst: a.inst, owner: p, ...(cardOf(s, a.inst).keywords.includes('Ward') ? { ward: true } : {}) };
+      const shown = s.sites[a.c]!.inst!; // a trap shows only its draft face
+      log(s, s.sites[a.c]!.trap ? `${pname(p)} plays a site face down: it counts as ${cardOf(s, shown).name} until it is sprung (+1 mana).` : `${pname(p)} plays ${cardOf(s, a.inst).name} (+1 mana).`); // the +1 comes from followMana below
       (s.players[p].cast ??= { turn: s.turn, ids: [] }); if (s.players[p].cast!.turn !== s.turn) s.players[p].cast = { turn: s.turn, ids: [] };
-      s.players[p].cast!.ids.push('site:' + s.inst[a.inst]);
-      fire(s, a.inst, 'genesis', p, { c: a.c, r: 'surface' }, { site: a.c });
+      s.players[p].cast!.ids.push('site:' + s.inst[shown]);
+      fire(s, shown, 'genesis', p, { c: a.c, r: 'surface' }, { site: a.c });
       // the Avatar's own "If you played an earth site, …" follow-ups
       const av = s.units[pl.avatar]; const avd = unitCard(s, av); const follow = avd.effects.map((e, i) => [e, i] as const).filter(([e]) => e.afterSite).map(([, i]) => i);
       if (follow.length) fire(s, av.inst, 'tap', p, { c: av.c, r: av.r }, { unit: av.id }, undefined, follow);
@@ -1891,6 +1922,7 @@ export function apply(state: GameState, a: Action): GameState {
         else if ('perm' in a.src) { const m = s.perms.find((x) => x.id === (a.src as { perm: string }).perm); if (m) m.tapped = true; }
         else if ('site' in a.src) s.sites[a.src.site]!.tapped = true;
       } else (s.used ??= {})[`${srcKey(a.src)}:${e.line ?? a.fx}`] = s.turn;
+      if (e.on === 'trap' && 'site' in a.src) { const st = s.sites[a.src.site]!; st.inst = st.trap!; delete st.trap; log(s, `${pname(p)} springs a trap: ${d.name}!`, p); }
       if (src.unit && s.units[src.unit.id]) s.units[src.unit.id].stealthLost = true; // Codex "Interact" / rulebook p34: activating a special ability ends Stealth
       if (e.cost) pl.mana -= e.cost;
       if (e.banishDead) {

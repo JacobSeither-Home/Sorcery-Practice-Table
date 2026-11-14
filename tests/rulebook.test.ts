@@ -802,3 +802,21 @@ describe('Gothic Harbinger', () => {
     expect(s.units[a].c).toBe(cell(2, 0)); expect(s.units[b].c).toBe(cell(0, 3));
   });
 });
+
+describe('Traps (Codex "Trap")', () => {
+  it('a trap site enters face down as its draft site, then is sprung by paying X', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0);
+    const spike = T('Test Spike', 'Site', { thresholds: { air: 0, earth: 0, fire: 1, water: 0 }, effects: effectsFromText('Site', 'Trap (1) → Deal 3 damage to a unit here.', 'Test Spike') });
+    s.units[s.players[0].avatar].tapped = false;
+    const inst = give(s, 0, spike);
+    s = apply(s, { t: 'playSite', inst, c: cell(2, 3) });
+    const st = s.sites[cell(2, 3)]!;
+    expect(st.trap).toBe(inst); expect(s.cards[s.inst[st.inst!]].name).toBe('Wasteland');
+    const foe = unit(s, 1, cell(2, 3), id('Kiln Brute'));
+    s = apply(s, { t: 'ability', src: { site: cell(2, 3) }, fx: 0, choices: [{ target: foe }] });
+    expect(s.units[foe].damage).toBe(3);
+    expect(s.sites[cell(2, 3)]!.inst).toBe(inst); expect(s.sites[cell(2, 3)]!.trap).toBeUndefined();
+    expect(check(s, { t: 'ability', src: { site: cell(2, 3) }, fx: 0, choices: [{ target: foe }] }).ok).toBe(false); // already sprung
+  });
+});

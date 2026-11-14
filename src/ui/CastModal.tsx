@@ -287,12 +287,12 @@ export function abilityList(s: GameState, p: PlayerId): { src: Source; fx: numbe
   const srcs: { src: Source; inst: string }[] = [
     ...Object.values(s.units).filter((u) => u.owner === p).map((u) => ({ src: { unit: u.id } as Source, inst: u.inst })),
     ...s.perms.filter((m) => m.owner === p).map((m) => ({ src: { perm: m.id } as Source, inst: m.inst })),
-    ...s.sites.map((st, c) => (st?.inst && st.owner === p ? { src: { site: c } as Source, inst: st.inst } : null)).filter((x): x is { src: Source; inst: string } => !!x),
+    ...s.sites.map((st, c) => (st?.inst && st.owner === p ? { src: { site: c } as Source, inst: st.trap ?? st.inst } : null)).filter((x): x is { src: Source; inst: string } => !!x),
   ];
   for (const { src, inst } of srcs) {
     const d = cardOf(s, inst); const seen = new Set<string>();
     d.effects.forEach((e, i) => {
-      if (e.on !== 'tap' && e.on !== 'activated') return;
+      if (e.on !== 'tap' && e.on !== 'activated' && e.on !== 'trap') return;
       const key = `${e.on}:${e.line ?? i}`; if (seen.has(key)) return; seen.add(key);
       const idx = effectsOn(d, e.on, i); const so = sourceOf(s, src)!;
       const ch: Choice[] = [];
