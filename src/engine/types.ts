@@ -21,10 +21,12 @@ export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | '
   | 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts';
 export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts'];
 /** Which events a reaction listens to, relative to the card that has it. */
-export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
+export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** fire the Genesis abilities of your nearby sites (of subtypes `sub`) again */
+  | 'regenesis'
   /** this unit fights the unit an earlier effect on the line brought to it (Pudge Butcher) */
   | 'fight'
   /** this artifact rolls in a chosen direction as far as it can, dealing `n` damage to each other unit along its path (Rolling Boulder) */
@@ -88,6 +90,8 @@ export type Who =
   | 'allyUnits' | 'enemyUnits'
   /** allies occupying the body of water / span of land the card is in (rulebook p12) */
   | 'alliesInBody'
+  /** other minions at rest here or one step in front of this (Hillock Basilisk) */
+  | 'restHereFront'
   /** units at a location the player chooses (Choice.cell), within `range` */
   | 'atTarget'
   /** the site this card is at: damage to it costs its controller life */
@@ -129,6 +133,8 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** atTarget: the location may also be near an allied unit of this subtype ("near the caster or an allied Dragon") */
+  nearAlly?: string;
   /** shoot: the hit unit is dragged to the shooter's location (forced movement) */
   drag?: boolean;
   /** the ability taps the artifact's bearer as (part of) its cost ("Tap bearer and another ally here →") */
@@ -262,6 +268,8 @@ export interface Unit {
   stealthLost: boolean;
   /** set by an effect that stops the unit's movement part-way (rulebook p33 "Movement +X": triggers may stop the motion) */
   halted?: boolean;
+  /** corners of the realm it has entered (Wayfaring Pilgrim) */
+  corners?: number[];
   /** a follow-up it may take straight away: a step after a ranged strike (Kite Archer), or a ranged strike from a
    *  location it passed while moving (Skirmishers of Mu). Ends when its controller does anything else. */
   follow?: { turn: number; kind: 'step' | 'shot'; from?: Loc[] };
@@ -366,6 +374,8 @@ export interface GameState {
   pending: Pending | null;
   /** triggered abilities that need a decision, first one first */
   queue?: Queued[];
+  /** units not "at rest" while the current action resolves: the mover and its defenders (Codex "At Rest") */
+  busy?: string[];
   /** effects abilities left behind for a while (Codex "Ongoing Effect"): applied like static text from `loc`, ending at the start of `next`'s turn */
   ongoing?: { id: string; p: PlayerId; from: string; loc: Loc; fx: Omit<Effect, 'on'>[]; next: PlayerId }[];
   /** activated abilities used this turn: `${source}:${effect index}` -> turn */

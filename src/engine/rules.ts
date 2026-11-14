@@ -86,7 +86,14 @@ export const manaIncome = (s: GameState, p: PlayerId) => sitesOf(s, p).length + 
 // static abilities of cards in the realm ("Other allies here have +1 power", "Bearer has Airborne").
 const staticCache = new WeakMap<object, Set<string>>();
 /** The index of cards with static abilities is kept per card table; call this after changing a table in place. */
-export function forgetStatics(cards: Record<string, CardDef>) { staticCache.delete(cards); provideCache.delete(cards); preventCache.delete(cards); }
+export function forgetStatics(cards: Record<string, CardDef>) { staticCache.delete(cards); provideCache.delete(cards); preventCache.delete(cards); disablerCache.delete(cards); }
+const disablerCache = new WeakMap<object, boolean>();
+/** Can anything in this game disable through always-on text? (keeps the common case fast) */
+function disablers(s: GameState): boolean {
+  let v = disablerCache.get(s.cards);
+  if (v === undefined) { v = Object.values(s.cards).some((d) => d.effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Disabled')); disablerCache.set(s.cards, v); }
+  return v || !!s.ongoing?.some((o) => o.fx.some((e) => e.keyword === 'Disabled'));
+}
 /** Is any always-on effect around (static card text, or an ongoing effect from an ability)? */
 const anyStatic = (s: GameState) => staticCards(s).size > 0 || !!s.ongoing?.length;
 function staticCards(s: GameState): Set<string> {
@@ -182,6 +189,11 @@ function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, s
     case 'unitsNearby': return near;
     case 'allyMinions': return !u.avatar && u.owner === p;
     case 'enemyMinions': return !u.avatar && u.owner !== p;
+    case 'restHereFront': { // Codex "At Rest": minions not moving or acting right now; "in front" = one step forward (Codex "Forward")
+      if (u.avatar || s.busy?.includes(u.id)) return false;
+      const [x, y] = xy(at.c); const front = cell(x, y + (p === 0 ? -1 : 1));
+      return (u.c === at.c && sameRegion(s, u, at)) || (u.c === front && u.r === at.r && sameRegion(s, u, { c: front, r: at.r }));
+    }
     case 'allyUnits': return u.owner === p;
     case 'enemyUnits': return u.owner !== p;
     case 'alliesInBody': return u.owner === p && bodyOfKind(s, at.c, isWater(s, at.c) ? 'water' : 'land').includes(u.c) && regionOf(s, u) !== 'void';
@@ -229,9 +241,12 @@ export function bonus(s: GameState, u: Unit): Bonus {
   for (let c = 0; c < CELLS; c++) { const st = s.sites[c]; if (st?.inst && st.owner !== null) { const d = cardOf(s, st.inst); if (set.has(d.id)) add(d, st.owner, { c, r: 'surface', site: true }); } }
   return b;
 }
+let disabledDepth = 0;
 export function isDisabled(s: GameState, u: Unit): boolean {
   const k = unitCard(s, u).keywords;
   if (k.includes('Disabled') || (u.mods?.some((m) => m.kw === 'Disabled') && !unmodifiable(unitCard(s, u)))) return true;
+  // disabled by another card's always-on text ("Other minions at rest here … are disabled")
+  if (!u.avatar && disablers(s) && disabledDepth === 0) { disabledDepth++; try { if (bonus(s, u).kws.includes('Disabled')) return true; } finally { disabledDepth--; } }
   if (k.includes('Waterbound') && !isWater(s, u.c)) return true;
   if (k.includes('Landbound') && !isLand(s, u.c)) return true;
   return false;
@@ -326,6 +341,7 @@ export function clone(s: GameState): GameState {
     ...(s.queue ? { queue: s.queue.map((q) => ({ ...q, fx: q.fx.slice() })) } : {}),
     ...(s.used ? { used: { ...s.used } } : {}),
     ...(s.ongoing ? { ongoing: s.ongoing.slice() } : {}),
+    ...(s.busy ? { busy: s.busy.slice() } : {}),
   };
 }
 
@@ -468,6 +484,10 @@ function damageUnit(s: GameState, u: Unit, n0: number, lethal = false, from?: Dm
   if (n0 <= 0 || !s.units[u.id]) return;
   if (killer && s.units[killer.id]) killer.stealthLost = true; // Codex "Interact": dealing damage (even if prevented) ends Stealth
   if (warded(s, u)) { breakWard(s, u, `prevents ${n0} damage`); return; }
+  // Codex "Replacement Effect": "If this would take fire damage, it gains +1 power this turn instead" (Askelon Phoenix)
+  const emp = has(s, u, 'Fire damage empowers') ? unitCard(s, u).effects.find((e) => e.keyword === 'Fire damage empowers')?.n ?? 1 : 0;
+  const srcCard = from?.unit ? unitCard(s, from.unit) : from?.card;
+  if (emp && srcCard && srcCard.thresholds.fire > 0) { (u.mods ??= []).push({ atk: emp, def: emp, turn: s.turn, from: 'fire' }); log(s, `${unitCard(s, u).name} takes no fire damage and gains +${emp} power this turn instead.`, null); return; }
   let n = afterPrevention(s, u, n0, from);
   if (has(s, u, 'Immune to damage') || (from?.card?.type === 'Magic' && !from.unit && has(s, u, "Can't be damaged by magic"))) n = 0;
   else { const src = from?.unit ? unitCard(s, from.unit) : from?.card; const el = ELEMENTS.find((x) => has(s, u, `Immune to ${x} damage`)); if (el && src && src.thresholds[el] > 0) n = 0; }
@@ -521,8 +541,10 @@ function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: numbe
   return true;
 }
 /** Squares effect `i` may choose for "at target location" (only squares that have a site or a unit). */
-export function cellsFor(s: GameState, d: CardDef, i: number, origins: Loc[]): number[] {
+export function cellsFor(s: GameState, d: CardDef, i: number, origins0: Loc[], p?: PlayerId): number[] {
   const e = d.effects[i]; if (e?.who !== 'atTarget') return [];
+  // "… near the caster or an allied Dragon" (Incinerate): allied units of that kind count as origins too
+  const origins = e.nearAlly && p !== undefined ? [...origins0, ...Object.values(s.units).filter((u) => u.owner === p && unitCard(s, u).subtypes.some((t) => t.toLowerCase() === e.nearAlly!.toLowerCase())).map((u) => ({ c: u.c, r: u.r }))] : origins0;
   const out: number[] = [];
   for (let c = 0; c < CELLS; c++) {
     if (e.siteKind && (!s.sites[c]?.inst || (e.siteKind === 'water') !== isWater(s, c))) continue;
@@ -631,7 +653,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
       if (!c?.target || !ok.includes(c.target)) return no('Choose a valid target: in range and in the same region as a spellcaster you control (or the card using the ability), and not a stealthed or otherwise protected enemy.', 'Target');
     }
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
-    if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
+    if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins, p); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
     if (e.op === 'roll' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose which way to push it.');
     if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
@@ -677,6 +699,8 @@ function fire(s: GameState, inst: string, on: Trigger, p: PlayerId, loc: Loc | n
   }
   resolve(s, d, idx, p, loc, [], src, subject);
 }
+/** The unit casting the magic now resolving ("each other unit" leaves it out). */
+let castBy: string | undefined;
 /** Reactions ("Whenever …") of every card in the realm to something that happened to unit `u`. */
 let reacting = 0;
 /** `u` is the unit the event is about (for kills and casts: the one who killed or cast); `subject` is what "it" means in the text (the killed unit; default u). */
@@ -693,6 +717,7 @@ function react(s: GameState, on: 'dies' | 'damaged' | 'attacks' | 'enters' | 'ki
       if (idx.length) fire(s, x.inst, on, p, x.loc, x.src, (subject ?? u).id, idx);
     }
   } finally { reacting--; }
+  if (on === 'enters' && CORNERS.includes(u.c) && s.units[u.id] && !u.corners?.includes(u.c)) (u.corners ??= []).push(u.c);
 }
 function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: Loc, self: string | undefined, src: Source, u: Unit): boolean {
   if (f.self) return u.id === self || ('perm' in src && s.perms.find((m) => m.id === src.perm)?.carrier === u.id);
@@ -705,8 +730,10 @@ function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: 
   if (f.sub?.length && !f.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
   if (f.range === 'here' && u.c !== at.c) return false;
   if (f.range === 'nearby' && !(sameRegion(s, u, at) && nearby(at.c).includes(u.c))) return false;
+  if (f.corner && !(CORNERS.includes(u.c) && !u.corners?.includes(u.c))) return false; // Codex "Corner": squares 1, 5, 16, 20
   return true;
 }
+const CORNERS = [cell(0, 0), cell(COLS - 1, 0), cell(0, ROWS - 1), cell(COLS - 1, ROWS - 1)];
 function fireAll(s: GameState, p: PlayerId, on: 'startTurn' | 'endTurn') {
   for (const x of sourcesOf(s, p)) { const d = cardOf(s, x.inst); const idx = effectsOn(d, on).filter((i) => !d.effects[i].eachTurn); if (idx.length) fire(s, x.inst, on, p, x.loc, x.src, undefined, idx); }
   // "At the end of each turn" / "At the start of each player's turn": cards of both players
@@ -784,7 +811,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       if (e.only === 'minion' || e.who === 'minionsHere') victims = victims.filter((u) => !u.avatar);
       if (e.only === 'enemy' || e.only === 'enemyMinion') victims = victims.filter((u) => u.owner !== p);
       if (e.only === 'ally' || e.only === 'allyMinion') victims = victims.filter((u) => u.owner === p);
-      if (e.other) victims = victims.filter((u) => u.id !== self);
+      if (e.other) victims = victims.filter((u) => u.id !== self && u.id !== castBy);
       victims = victims.filter((u) => fits(s, e, u) && !(e.notKw && has(s, u, e.notKw)));
       if (e.random && victims.length > e.random) { const pick: Unit[] = []; const pool = victims.slice(); while (pick.length < e.random && pool.length) pick.push(pool.splice(Math.floor(rand(s) * pool.length), 1)[0]); victims = pick; }
     }
@@ -907,6 +934,13 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
           for (const v of Object.values(s.units).filter((u) => u.c === nc && u.r === 'surface' && u.id !== pusher)) { log(s, `${d.name} rolls over ${nm(v)} for ${n}.`, p); damageUnit(s, v, n, false, { card: d }); }
         }
         log(s, k > 1 ? `${d.name} rolls ${k - 1} square${k > 2 ? 's' : ''}.` : `${d.name} can't roll that way.`, p);
+        break;
+      }
+      case 'regenesis': { // "Reactivate the Genesis abilities of your nearby Deserts"
+        if (!loc) break;
+        for (const c0 of nearby(loc.c)) { const st = s.sites[c0]; if (c0 === loc.c || !st?.inst || st.owner !== p) continue; const sd = cardOf(s, st.inst);
+          if (e.sub?.length && !e.sub.some((x) => sd.subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) continue;
+          if (effectsOn(sd, 'genesis').length) { log(s, `${d.name} reactivates ${sd.name}'s Genesis.`, p); fire(s, st.inst, 'genesis', p, { c: c0, r: 'surface' }, { site: c0 }); } }
         break;
       }
       case 'ongoing': {
@@ -1284,7 +1318,7 @@ function defenders(s: GameState, attacker: Unit, at: Loc, target?: string): stri
     && (has(s, d, "Can't move to defend") ? d.c === at.c && d.r === at.r : reach(s, d).has(locKey(at)))).map((d) => d.id);
 }
 function interceptors(s: GameState, mover: Unit): string[] {
-  if (hasStealth(s, mover)) return [];
+  if (hasStealth(s, mover) || has(s, mover, "Can't be intercepted")) return [];
   const air = has(s, mover, 'Airborne');
   return unitsAt(s, mover).filter((d) => d.owner !== mover.owner && !d.tapped && !isDisabled(s, d) && !has(s, d, "Can't intercept") && (!air || has(s, d, 'Airborne') || rangedOf(s, d) > 0)).map((d) => d.id);
 }
@@ -1659,7 +1693,8 @@ export function apply(state: GameState, a: Action): GameState {
         resolve(s, d, idx, p, { c: a.c!, r: 'surface' }, ch, { perm: mid });
       } else {
         log(s, `${pname(p)} casts ${d.name}.${hand}`);
-        resolve(s, d, idx, p, caster ? { c: caster.c, r: caster.r } : null, ch); // the spell happens where its caster is (rulebook p17)
+        castBy = caster?.id;
+        try { resolve(s, d, idx, p, caster ? { c: caster.c, r: caster.r } : null, ch); } finally { castBy = undefined; } // the spell happens where its caster is (rulebook p17)
         if (fromCem && castRules(d).some((e) => e.banishAfter)) log(s, `${d.name} is banished.`); else pl.cemetery.push(a.inst);
       }
       break;
@@ -1699,7 +1734,8 @@ export function apply(state: GameState, a: Action): GameState {
       u.tapped = true;
       // Rulebook p21: resolve the declared steps one at a time, confirming each is legal at that moment; an illegal
       // step is skipped and the rest continue. p28: a unit enters every location it passes, even for a moment.
-      let took = 0; const passed: Loc[] = [{ c: u.c, r: u.r }];
+      (s.busy ??= []).push(u.id); // not at rest while it moves and fights (Codex "At Rest")
+      let took = 0; const passed: Loc[] = [{ c: u.c, r: u.r }]; let trail: Loc[] | undefined;
       for (const to of a.path) {
         if (!s.units[u.id] || u.halted) break;
         const from: Loc = { c: u.c, r: u.r };
@@ -1707,8 +1743,13 @@ export function apply(state: GameState, a: Action): GameState {
         // "Minions here can traverse the void, gaining Voidwalk until leaving it" (Planar Gate)
         if (!s.sites[to.c] && s.sites[from.c]?.inst && cardOf(s, s.sites[from.c]!.inst!).effects.some((e) => e.keyword === 'Void gate') && !u.mods?.some((m) => m.void)) (u.mods ??= []).push({ atk: 0, def: 0, kw: 'Voidwalk', void: true, from: cardOf(s, s.sites[from.c]!.inst!).name });
         if (s.sites[to.c] && u.mods?.some((m) => m.void)) { u.mods = u.mods.filter((m) => !m.void); if (!u.mods.length) delete u.mods; }
+        if (u.mods?.some((m) => m.kw?.startsWith('Trail of fire') && m.turn === s.turn)) (trail ??= []).push(from);
         u.c = to.c; u.r = to.r; took++; passed.push({ ...to });
         if (to.c !== from.c) react(s, 'enters', u);
+      }
+      if (trail?.length) { // Blaze: "When it stops, each unit along the trail takes 2 damage"
+        const n = parseInt(u.mods!.find((m) => m.kw?.startsWith('Trail of fire'))!.kw!.slice(14), 10) || 2;
+        for (const at of trail) for (const v of Object.values(s.units).filter((x) => x.c === at.c && x.r === at.r)) { log(s, `The trail of fire burns ${unitCard(s, v).name} for ${n}.`); damageUnit(s, v, n); }
       }
       if (s.units[u.id] && took && rangedOf(s, u) && has(s, u, 'Shoots while moving')) s.units[u.id].follow = { turn: s.turn, kind: 'shot', from: passed };
       if (s.units[u.id]) delete s.units[u.id].halted;
@@ -1774,6 +1815,7 @@ export function apply(state: GameState, a: Action): GameState {
     }
     case 'manual': manual(s, a); break;
   }
+  if (!s.pending && !s.queue?.length) delete s.busy; // everyone is at rest again once the storyline is empty
   followControl(s);
   followMana(s);
   // carried artifacts go where their bearer goes; if the bearer is gone they stay where it fell
@@ -1783,7 +1825,7 @@ export function apply(state: GameState, a: Action): GameState {
 function resolvePending(s: GameState, ids: string[], removeOriginal: boolean) {
   const pd = s.pending!; s.pending = null;
   const a = s.units[pd.attacker]; if (!a) return;
-  for (const id of ids) { const d = s.units[id]; d.tapped = true; d.c = pd.loc.c; d.r = pd.loc.r; }
+  for (const id of ids) { const d = s.units[id]; d.tapped = true; d.c = pd.loc.c; d.r = pd.loc.r; (s.busy ??= []).push(id); }
   if (ids.length) log(s, `${ids.map((id) => unitCard(s, s.units[id]).name).join(', ')} ${pd.kind === 'defend' ? 'defend' : 'intercept'}.`, pd.by);
   if (pd.kind === 'intercept' && !ids.length) return;
   const enemies = [...ids];

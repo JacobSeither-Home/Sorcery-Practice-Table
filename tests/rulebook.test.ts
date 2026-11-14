@@ -553,3 +553,52 @@ describe('Beta Earth', () => {
     expect(s.units[u].ward).toBe(true);
   });
 });
+
+describe('Beta Fire', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  it('Quarrelsome Kobolds: at the end of your turn they strike themselves or another adjacent unit (your choice)', async () => {
+    let s = start(0); site(s, 0, cell(1, 3)); site(s, 0, cell(1, 2));
+    const kob = await read('Minion', 'Test Kobolds', 'At the end of your turn, Test Kobolds strike themselves or another target adjacent unit.', { attack: 3 });
+    const k = unit(s, 0, cell(1, 3), kob); const foe = unit(s, 1, cell(1, 2), id('Ember Runner'));
+    s = apply(s, { t: 'endTurn' });
+    expect(s.queue?.length).toBe(1);
+    s = apply(s, { t: 'trigger', choices: [{ target: foe }] });
+    expect(s.units[foe]).toBeUndefined(); expect(s.units[k]).toBeDefined();
+  });
+  it('Askelon Phoenix: fire damage makes it stronger instead (Codex "Replacement Effect")', async () => {
+    let s = start(0); site(s, 0, cell(1, 3));
+    const ph = await read('Minion', 'Test Phoenix', 'Airborne\n\nIf Test Phoenix would take fire damage, it gains +1 power this turn instead.', { attack: 2, keywords: ['Airborne'] });
+    const u = unit(s, 0, cell(1, 3), ph);
+    const bolt = T('Hot Bolt', 'Magic', { cost: 0, thresholds: { air: 0, earth: 0, fire: 1, water: 0 }, effects: [{ on: 'cast', op: 'damage', n: 3, who: 'target', range: 'any', targets: true }] });
+    const bi = give(s, 0, bolt); site(s, 0, cell(2, 3));
+    s = apply(s, { t: 'cast', inst: bi, choices: [{ target: u }] });
+    expect(s.units[u].damage).toBe(0); expect(power(s, s.units[u])).toBe(3);
+  });
+  it('Incinerate: the location may be near an allied Dragon instead of the caster; the caster is spared', async () => {
+    let s = start(0); for (const c of [cell(2, 3), cell(0, 1), cell(0, 0)]) site(s, 0, c);
+    const inc = await read('Magic', 'Test Incinerate', 'Deal 4 damage to each other unit at target location near the caster or an allied Dragon.', { cost: 0 });
+    const drake = T('Test Drake', 'Minion', { attack: 3, subtypes: ['Dragon'] });
+    unit(s, 0, cell(0, 1), drake); const foe = unit(s, 1, cell(0, 0), id('Kiln Brute'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, inc), choices: [{ cell: cell(0, 0) }] });
+    expect(s.units[foe]).toBeUndefined();
+  });
+  it('Wayfaring Pilgrim: may draw the first time it enters each corner', async () => {
+    let s = start(0); for (const c of [cell(0, 3), cell(1, 3)]) site(s, 0, c);
+    const pil = await read('Minion', 'Test Pilgrim', 'Whenever Test Pilgrim enters each corner of the realm for the first time, you may draw a card.', { attack: 1 });
+    const u = unit(s, 0, cell(1, 3), pil);
+    s = apply(s, { t: 'move', unit: u, path: [{ c: cell(0, 3), r: 'surface' }] });
+    expect(s.queue?.length).toBe(1);
+    const hand = s.players[0].hand.length; s = apply(s, { t: 'trigger', choices: [{ deck: 'spellbook' }] });
+    expect(s.players[0].hand.length).toBe(hand + 1);
+    expect(s.units[u].corners).toEqual([cell(0, 3)]);
+  });
+  it('Blaze: Movement +2, no intercepting, and a trail that burns where it left', async () => {
+    let s = start(0); for (const c of [cell(1, 3), cell(1, 2), cell(1, 1), cell(1, 0)]) site(s, 0, c);
+    const blaze = await read('Magic', 'Test Blaze', "This turn, give an ally Movement +2, it can't be intercepted, and it leaves a trail of fire at departed locations. When it stops, each unit along the trail takes 2 damage.", { cost: 0 });
+    const u = unit(s, 0, cell(1, 3), id('Kiln Brute')); const foe = unit(s, 1, cell(1, 2), id('Ember Runner'), { tapped: true });
+    s = apply(s, { t: 'cast', inst: give(s, 0, blaze), choices: [{ target: u }] });
+    s = apply(s, { t: 'move', unit: u, path: [{ c: cell(1, 2), r: 'surface' }, { c: cell(1, 1), r: 'surface' }, { c: cell(1, 0), r: 'surface' }] });
+    expect(s.units[u].c).toBe(cell(1, 0));
+    expect(s.units[foe]).toBeUndefined();          // it left (1,2) behind with the 2/2 there
+  });
+});

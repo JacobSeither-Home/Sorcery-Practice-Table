@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  regenesis: 'Other',
   fight: 'Damage',
   roll: 'Damage',
   ongoing: 'Keyword grants',
@@ -481,6 +482,20 @@ export const RULES: Rule[] = [
   // the area of effect is a shape printed on the card, not in its text: the site is destroyed here, the damage is left by hand
   { id: 'destroy-site-aoe', label: 'Destroy target site and deal damage … in the area of effect', re: /^destroy target site and deal damage to (.+?) in the area of effect:?\.?$/i,
     build: (m) => [{ op: 'destroySite', who: 'atTarget', range: 'any', targets: true }, { op: 'manual', who: 'controller', text: `Deal damage to ${m[1]} in the area of effect shown on the card.` }] },
+  { id: 'basilisk', label: 'Other minions at rest here or one step in front of this are disabled', re: /^other minions at rest here or one step in front of this are disabled\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'restHereFront', other: true, keyword: 'Disabled', until: 'permanent' }] : null) },
+  { id: 'strike-self-or-adjacent', label: 'This strikes itself or another target adjacent unit', re: /^(?:this )?strikes? (?:themselves|itself) or another target adjacent unit\.$/i,
+    build: () => [{ op: 'strike', who: 'target', range: 'adjacent', targets: true }] },
+  { id: 'fire-empowers', label: 'If this would take fire damage, it gains +N power this turn instead', re: /^if this would take fire damage, it gains \+(\d+) power this turn instead\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Fire damage empowers', n: +m[1], until: 'permanent' }] : null) },
+  { id: 'damage-near-ally', label: 'Deal N damage to each other unit at target location near the caster or an allied X', re: /^deal (\d+) damage to each (other )?unit at target location near the caster or an allied (\w+)\.$/i,
+    build: (m) => { const sb = subOf(m[3]); return sb ? [{ op: 'damage', who: 'atTarget', range: 'nearby', targets: true, n: +m[1], ...(m[2] ? { other: true } : {}), nearAlly: sb }] : null; } },
+  { id: 'regenesis', label: 'Reactivate the Genesis abilities of your nearby X', re: /^reactivate the genesis abilities of your nearby (\w+)\.$/i,
+    build: (m) => { const sb = subOf(m[1]); return sb ? [{ op: 'regenesis', who: 'controller', range: 'nearby', sub: [sb] }] : null; } },
+  { id: 'blaze', label: 'This turn, give an ally Movement +N, it can\'t be intercepted, and it leaves a trail of fire', re: /^this turn, give an ally movement \+(\d+), it can'?t be intercepted, and it leaves a trail of fire at departed locations\.$/i,
+    build: (m) => [{ op: 'grant', who: 'target', only: 'ally', range: 'any', targets: false, keyword: 'Movement', n: +m[1], until: 'turn' }, { op: 'grant', who: 'target', ref: true, keyword: "Can't be intercepted", until: 'turn' }, { op: 'grant', who: 'target', ref: true, keyword: 'Trail of fire 2', until: 'turn' }] },
+  { id: 'trail-damage', label: 'When it stops, each unit along the trail takes N damage', re: /^when it stops, each unit along the trail takes (\d+) damage\.$/i,
+    build: () => [] }, // carried by the trail granted in the sentence before (the 2 there is this number on Blaze)
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -714,6 +729,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
     else if ((m = line.match(/^Tap bearer and another ally here(, discard an? (?:spell|site|card))?\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; tapBearer = true; tapAlly = 'other'; if (m[1]) discardCost = m[1].match(/(spell|site|card)/i)![1].toLowerCase(); }
     else if ((m = line.match(/^Units here have [“"]Tap → Give (?:this|.+?) a push\. It rolls as far as possible and deals (\d+) damage to each other unit along its path\.?[”"]\.?$/i))) { on = 'activated'; body = ''; tapAlly = 'any'; repeat = true; roll = +m[1]; }
+    else if ((m = line.match(/^Whenever this enters each corner of the realm for the first time,\s*(.+)$/i))) { on = 'enters'; ev = { self: true, corner: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Discard an? (spell|site|card)\s*→\s*(.+)$/i))) { on = 'activated'; body = m[2]; repeat = true; discardCost = m[1].toLowerCase(); }
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
     else if ((m = line.match(/^When(?:ever)? this dies,\s*(.+)$/i))) { on = 'deathrite'; body = cap(m[1]); }

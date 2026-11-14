@@ -13,7 +13,7 @@ export const TRIGGER_SHORT: Record<Trigger, string> = {
   kills: 'When it kills', casts: 'When a spell is cast',
 };
 export const OP_LABEL: Record<Op, string> = {
-  fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
+  regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
   control: 'Gain control', castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
@@ -22,7 +22,7 @@ export const WHO_LABEL: Record<Who, string> = {
   target: 'a chosen unit', enemyAvatar: 'the enemy Avatar', ownAvatar: 'your Avatar', enemiesHere: 'each enemy here', controller: 'you', nearbyAvatars: 'each nearby Avatar',
   opponent: 'your opponent', self: 'this unit', alliesHere: 'each ally here', unitsHere: 'each unit here', minionsHere: 'each minion here', enemiesNearby: 'each enemy nearby',
   alliesNearby: 'each ally nearby', unitsNearby: 'each unit nearby', allMinions: 'every minion', enemyMinions: 'every enemy minion', allyMinions: 'every allied minion',
-  allAvatars: 'both Avatars', bearer: 'the bearer', allyUnits: 'every ally (your Avatar too)', enemyUnits: 'every enemy (their Avatar too)', alliesInBody: 'each ally in its body of water or span of land', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
+  allAvatars: 'both Avatars', bearer: 'the bearer', allyUnits: 'every ally (your Avatar too)', enemyUnits: 'every enemy (their Avatar too)', alliesInBody: 'each ally in its body of water or span of land', restHereFront: 'other minions at rest here or one step in front of it', atTarget: 'each unit at a chosen location', siteHere: 'this site', affected: 'each unit in its 2×2 area', affectedSites: 'the sites in its 2×2 area', siteController: "the controller of this card's site",
 };
 /** Which "applies to" choices make sense for an op. */
 export function whoFor(op: Op): Who[] {
@@ -90,6 +90,7 @@ export function describe(e: Effect): string {
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
     case 'moveAura': return 'Move this aura one step, to a neighbouring joint';
+    case 'regenesis': return `Your nearby ${e.sub?.join('/') ?? 'site'}s do their Genesis again`;
     case 'fight': return 'It fights the unit it dragged here (you may skip this)';
     case 'roll': return `Push it: it rolls as far as it can in the direction you choose, dealing ${e.n} damage to each other unit along its path`;
     case 'ongoing': return `Until your next turn: ${(e.fx ?? []).map((x) => describe({ ...x, on: 'static' } as Effect)).join('; ')}`;
