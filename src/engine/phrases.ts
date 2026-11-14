@@ -451,6 +451,13 @@ export const RULES: Rule[] = [
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Steps after shooting', until: 'permanent' }] : null) },
   { id: 'shoot-while-moving', label: 'During basic movement, this may shoot from along its path', re: /^during basic movement, this may perform a ranged strike from any location along (?:their|its|the) path\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Shoots while moving', until: 'permanent' }] : null) },
+  // Codex "Can't be Modified"
+  { id: 'cant-modify', label: "Can't be modified (except by Wards)", re: /^(?:this )?can'?t be modified(, except by wards)?\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: m[1] ? "Can't be modified except by Wards" : "Can't be modified", until: 'permanent' }] : null) },
+  { id: 'site-fixed', label: "Can't be moved, destroyed, or modified (a site)", re: /^(?:this )?can'?t be moved, destroyed, or modified\.$/i,
+    build: (_m, on, type) => (on === 'static' && type === 'Site' ? [{ op: 'grant', who: 'siteHere', keyword: "Can't be moved, destroyed, or modified", until: 'permanent' }] : null) },
+  { id: 'range-plus', label: 'Ranged units atop this site have +N range', re: /^ranged units (?:atop this site|here) have \+(\d+) range\.$/i,
+    build: (m, on) => (on === 'static' ? [{ op: 'buff', who: 'unitsHere', surface: true, kw: 'Ranged', atk: 0, def: 0, rangePlus: +m[1], until: 'permanent' }] : null) },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,

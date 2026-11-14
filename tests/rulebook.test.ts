@@ -454,3 +454,32 @@ describe('Beta Air minions and spells', () => {
     expect(s.players[0].mana).toBe(0);                                                                     // 1 + 2 + 2
   });
 });
+
+describe('Beta Earth', () => {
+  it('Vantage Hills: Ranged units atop have +1 range; Bedrock can\'t be destroyed (Codex "Can\'t be Modified")', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    const { rangedOf } = await import('../src/engine/rules');
+    let s = start(0);
+    const hills = T('Test Hills', 'Site', { effects: effectsFromText('Site', 'Ranged units atop this site have +1 range.', 'Test Hills') });
+    const k = '0thills'; s.inst[k] = hills; s.sites[cell(2, 3)] = { inst: k, owner: 0 };
+    const archer = unit(s, 0, cell(2, 3), id('Ash Archer'));
+    expect(rangedOf(s, s.units[archer])).toBe(2);
+    const rock = T('Test Rock', 'Site', { effects: effectsFromText('Site', "Can't be moved, destroyed, or modified.", 'Test Rock') });
+    const kr = '1trock'; s.inst[kr] = rock; s.sites[cell(2, 0)] = { inst: kr, owner: 1 };
+    const quake = T('Quake2', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'destroySite', who: 'atTarget', range: 'any' }] });
+    s = apply(s, { t: 'cast', inst: give(s, 0, quake), choices: [{ cell: cell(2, 0) }] });
+    expect(s.sites[cell(2, 0)]?.inst).toBe(kr);
+  });
+  it('Monks of Kobalsa: can\'t be modified, except by Wards', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); site(s, 0, cell(2, 3));
+    const monks = T('Test Monks', 'Minion', { attack: 2, effects: effectsFromText('Minion', "Can't be modified, except by Wards.", 'Test Monks') });
+    const u = unit(s, 0, cell(2, 3), monks);
+    const pump = T('Pump', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'buff', who: 'target', range: 'any', atk: 2, def: 2, until: 'turn', targets: true }] });
+    s = apply(s, { t: 'cast', inst: give(s, 0, pump), choices: [{ target: u }] });
+    expect(power(s, s.units[u])).toBe(2);
+    const bless = T('Bless2', 'Magic', { cost: 0, effects: [{ on: 'cast', op: 'grant', who: 'target', range: 'any', keyword: 'Ward', until: 'permanent', targets: true }] });
+    s = apply(s, { t: 'cast', inst: give(s, 0, bless), choices: [{ target: u }] });
+    expect(s.units[u].ward).toBe(true);
+  });
+});

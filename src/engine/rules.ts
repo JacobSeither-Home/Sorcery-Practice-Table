@@ -92,7 +92,7 @@ function staticCards(s: GameState): Set<string> {
   if (!set) { set = new Set(Object.values(s.cards).filter((d) => d.effects.some((e) => e.on === 'static' && (e.op === 'buff' || e.op === 'grant'))).map((d) => d.id)); staticCache.set(s.cards, set); }
   return set;
 }
-interface Bonus { atk: number; def: number; kws: string[] }
+interface Bonus { atk: number; def: number; kws: string[]; /** extra range for Ranged units ("Ranged units atop this site have +1 range") */ range: number }
 /** Does a condition on an ability hold, for a card controlled by `p` at `at` (unit `self` if it is one)? */
 export function condHolds(s: GameState, w: Effect['when'], p: PlayerId, at: Loc | null, self?: string): boolean {
   if (!w) return true;
@@ -128,7 +128,9 @@ export function summonCells(s: GameState, p: PlayerId, d: CardDef): number[] {
 }
 /** Rulebook p28 "When Sites Move": a site moves only to a void; everything atop and under it goes with it (they
  *  are not considered to have moved), and anything in that void ends up atop the site. Here: nearby voids. */
-export function siteMoveCells(s: GameState, from: number): number[] { return nearby(from).filter((c) => c !== from && !s.sites[c]); }
+export function siteMoveCells(s: GameState, from: number): number[] { return siteFixed(s, from) ? [] : nearby(from).filter((c) => c !== from && !s.sites[c]); }
+/** A site that "can't be moved, destroyed, or modified" (Bedrock). */
+export const siteFixed = (s: GameState, c: number) => { const st = s.sites[c]; return !!st?.inst && cardOf(s, st.inst).effects.some((e) => e.on === 'static' && e.keyword === "Can't be moved, destroyed, or modified"); };
 function moveSite(s: GameState, from: number, to: number) {
   for (const u of Object.values(s.units)) if (u.c === to) u.r = 'surface';
   for (const u of Object.values(s.units)) if (u.c === from) u.c = to;
@@ -156,6 +158,7 @@ const AURA_HERE: Partial<Record<Effect['who'], Effect['who']>> = { unitsHere: 'a
 function staticReaches(s: GameState, e: Effect, p: PlayerId, at: Loc, u: Unit, self?: string, bearer?: string): boolean {
   if (e.only === 'minion' && u.avatar) return false;
   if (e.other && u.id === self) return false;
+  if (e.surface && u.r !== 'surface') return false; // "atop"
   const here = u.c === at.c && (u.r === at.r || !!at.site), near = sameRegion(s, u, at) && nearby(at.c).includes(u.c); // p33: a site's "here" is its surface and subsurface
   const inArea = u.r === 'surface' && auraArea(at.c).includes(u.c);
   if (at.aura && AURA_HERE[e.who]) { // Codex "Here": for an aura, its four locations
@@ -198,13 +201,21 @@ function countFor(s: GameState, per: NonNullable<Effect['per']>, d: CardDef, p: 
     case 'bodySites': return bodyOfKind(s, at.c, per.body ?? 'water').length;
   }
 }
+/** Codex "Can't be Modified": no abilities gained or lost, no Stealth or Ward marks, characteristics unchanged, can't be
+ *  disabled, silenced, immobilized or transformed. "except by Wards" (Monks of Kobalsa) still allows a Ward. */
+export function unmodifiable(d: CardDef): 'all' | 'wards' | null {
+  const e = d.effects.find((x) => x.on === 'static' && (x.keyword === "Can't be modified" || x.keyword === "Can't be modified except by Wards"));
+  return e ? (e.keyword === "Can't be modified" ? 'all' : 'wards') : null;
+}
 export function bonus(s: GameState, u: Unit): Bonus {
-  const b: Bonus = { atk: 0, def: 0, kws: [] };
-  for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
+  const b: Bonus = { atk: 0, def: 0, kws: [], range: 0 };
+  const fixed = !!unmodifiable(unitCard(s, u));
+  if (!fixed) for (const m of u.mods ?? []) { b.atk += m.atk; b.def += m.def; if (m.kw) b.kws.push(m.kw); }
   const set = staticCards(s); if (!set.size) return b;
   const add = (d: CardDef, p: PlayerId, at: Loc, self?: string, bearer?: string) => {
+    if (fixed && self !== u.id) return; // only its own text applies to it
     for (const e of d.effects) if (e.on === 'static' && staticReaches(s, e, p, at, u, self, bearer) && condHolds(s, e.when, p, at, self ?? bearer) && needMet(s, p, e)) {
-      if (e.op === 'buff') { const k = e.per ? countFor(s, e.per, d, p, at, self) : 1; b.atk += (e.atk ?? 0) * k; b.def += (e.def ?? 0) * k; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
+      if (e.op === 'buff') { const k = e.per ? countFor(s, e.per, d, p, at, self) : 1; b.atk += (e.atk ?? 0) * k; b.def += (e.def ?? 0) * k; b.range += e.rangePlus ?? 0; } else if (e.op === 'grant' && e.keyword) b.kws.push(e.keyword);
     }
   };
   for (const v of Object.values(s.units)) { const d = unitCard(s, v); if (set.has(d.id) && !d.keywords.includes('Disabled')) add(d, v.owner, v, v.id); }
@@ -214,7 +225,7 @@ export function bonus(s: GameState, u: Unit): Bonus {
 }
 export function isDisabled(s: GameState, u: Unit): boolean {
   const k = unitCard(s, u).keywords;
-  if (k.includes('Disabled') || u.mods?.some((m) => m.kw === 'Disabled')) return true;
+  if (k.includes('Disabled') || (u.mods?.some((m) => m.kw === 'Disabled') && !unmodifiable(unitCard(s, u)))) return true;
   if (k.includes('Waterbound') && !isWater(s, u.c)) return true;
   if (k.includes('Landbound') && !isLand(s, u.c)) return true;
   return false;
@@ -252,8 +263,8 @@ export function has(s: GameState, u: Unit, kw: string): boolean {
 export const hasStealth = (s: GameState, u: Unit) => !u.stealthLost && has(s, u, 'Stealth');
 /** Ranged X: printed, or given ("Bearer has Ranged 3"). 0 = not ranged. */
 export function rangedOf(s: GameState, u: Unit): number {
-  if (!has(s, u, 'Ranged') && !unitCard(s, u).ranged) { const g = givenNumber(s, u, 'Ranged'); return g; }
-  return Math.max(unitCard(s, u).ranged, givenNumber(s, u, 'Ranged'), has(s, u, 'Ranged') ? 1 : 0);
+  const base = !has(s, u, 'Ranged') && !unitCard(s, u).ranged ? givenNumber(s, u, 'Ranged') : Math.max(unitCard(s, u).ranged, givenNumber(s, u, 'Ranged'), has(s, u, 'Ranged') ? 1 : 0);
+  return base > 0 && staticCards(s).size ? base + bonus(s, u).range : base;
 }
 /** The number on a keyword given by a static ability (Ranged 3, Movement +7). */
 function givenNumber(s: GameState, u: Unit, kw: string): number {
@@ -936,7 +947,8 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         break;
       }
       case 'noUntap': for (const v of victims) { v.noUntap = true; } if (victims.length) log(s, `${victims.map(nm).join(', ')} will not untap next time (${d.name}).`, p); break;
-      case 'flood': if (c2?.cell !== undefined && s.sites[c2.cell]?.inst) { s.players[p].flooded = c2.cell; log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name}: it is a water site until ${pname(p)} floods another.`, p); } break;
+      case 'flood': if (c2?.cell !== undefined && s.sites[c2.cell]?.inst && siteFixed(s, c2.cell)) { log(s, `${cardOf(s, s.sites[c2.cell]!.inst!).name} can't be modified.`, p); break; }
+        if (c2?.cell !== undefined && s.sites[c2.cell]?.inst) { s.players[p].flooded = c2.cell; log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name}: it is a water site until ${pname(p)} floods another.`, p); } break;
       case 'rubble': if (c2?.cell !== undefined && !s.sites[c2.cell]) { s.sites[c2.cell] = { inst: null, owner: null }; log(s, `${d.name} fills the void with Rubble.`, p); } break;
       case 'replaceRubble': {
         const st = c2?.cell !== undefined ? s.sites[c2.cell] : null; const top = s.players[p].atlas[0];
@@ -947,6 +959,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'destroySite': {
         const st = c?.cell !== undefined ? s.sites[c.cell] : null;
         if (!st?.inst) break;
+        if (siteFixed(s, c!.cell!)) { log(s, `${cardOf(s, st.inst).name} can't be destroyed.`, p); break; }
         if (st.ward) { st.ward = false; log(s, `The site's Ward breaks instead (${d.name}).`, p); break; }
         s.players[Number(st.inst[0]) as PlayerId].cemetery.push(st.inst); log(s, `${d.name} destroys ${cardOf(s, st.inst).name}; it leaves Rubble.`, p);
         s.sites[c!.cell!] = { inst: null, owner: null };
@@ -969,6 +982,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       }
       case 'buff': case 'grant':
         if (e.who === 'siteHere' && e.keyword === 'Ward') { const st = loc ? s.sites[loc.c] : null; if (st?.inst) { st.ward = true; log(s, `${d.name} wards the site.`, p); } break; }
+        { const keep = victims.filter((v) => { const fx = unmodifiable(unitCard(s, v)); if (!fx || (fx === 'wards' && e.keyword === 'Ward')) return true; log(s, `${nm(v)} can't be modified (${d.name} has no effect on it).`, p); return false; }); victims.length = 0; victims.push(...keep); }
         if (e.keyword === 'Ward') { for (const v of victims) { if (isEvil(s, v)) { log(s, `${nm(v)} is Evil and can't be warded (${d.name}).`, p); continue; } v.ward = true; log(s, `${nm(v)} gains a Ward (${d.name}).`, p); } break; }
         if (e.keyword === 'Lance' && e.on !== 'static') { for (const v of victims) { v.lance = true; log(s, `${nm(v)} takes up a Lance (${d.name}).`, p); } break; }
         if (e.keyword === 'Disabled') for (const v of victims) v.stealthLost = true; // Codex "Stealth": a minion that becomes disabled loses its Stealth mark
