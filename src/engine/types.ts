@@ -21,10 +21,14 @@ export type Trigger = 'cast' | 'genesis' | 'deathrite' | 'tap' | 'activated' | '
   | 'dies' | 'damaged' | 'attacks' | 'enters' | 'kills' | 'casts';
 export const TRIGGERS: Trigger[] = ['cast', 'genesis', 'deathrite', 'tap', 'activated', 'startTurn', 'endTurn', 'static', 'dies', 'damaged', 'attacks', 'enters', 'kills', 'casts'];
 /** Which events a reaction listens to, relative to the card that has it. */
-export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
+export interface EventFilter { self?: boolean; side?: 'enemy' | 'ally'; minion?: boolean; range?: 'here' | 'nearby'; sub?: string[]; other?: boolean; /** units without this keyword ("a non-Airborne minion") */ notKw?: string; /** casts: only magic */ magic?: boolean; /** enters: a corner of the realm it has not entered before */ corner?: boolean; /** enters: a water site in the aura's area */ affectedWater?: boolean; /** the event's unit is an Avatar */ avatar?: boolean }
 export type Op =
   /** an aura moves one step: to a neighbouring joint, chosen by its controller (Choice.cell = the new top-left square) */
   | 'moveAura'
+  /** the unit (self) comes up from the subsurface to the surface of its site */
+  | 'surface'
+  /** pull: a unit adjacent to the chosen water site / each minion in this body of water moves one step toward it (forced) */
+  | 'pull'
   /** fire the Genesis abilities of your nearby sites (of subtypes `sub`) again */
   | 'regenesis'
   /** this unit fights the unit an earlier effect on the line brought to it (Pudge Butcher) */
@@ -133,6 +137,12 @@ export interface Effect {
   rangePlus?: number;
   /** this effect is the ability's cost ("Discard a spell → …"): the ability can't be used unless it can be paid */
   isCost?: boolean;
+  /** shoot (piercing): damage at each of the first locations along the path, up to one unit at each (Ice Lance: 3, 2, 1) */
+  falloff?: number[];
+  /** teleport/step: stays within the body of water of the card's site (Undertow) */
+  inBody?: boolean;
+  /** flood: every site next to a body of water (Wrath of the Sea) */
+  allNearWater?: boolean;
   /** atTarget: the location may also be near an allied unit of this subtype ("near the caster or an allied Dragon") */
   nearAlly?: string;
   /** shoot: the hit unit is dragged to the shooter's location (forced movement) */
@@ -192,7 +202,7 @@ export interface Effect {
   fromBottom?: boolean;
   /** teleport (movement): where to. Chosen: a nearby / adjacent location or any site; fixed: this card's location ("here"),
    *  the caster's, one step toward / away from this card, a random site or void, or the location of the chosen unit ("to") */
-  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid';
+  dest?: 'nearby' | 'site' | 'adjacent' | 'here' | 'caster' | 'toward' | 'away' | 'random' | 'to' | 'nearbyVoid' | 'body';
   /** movement kind (Codex "Forced Movement"): teleport and drag move anyone; a step is the unit's own and Immobile stops it */
   move?: 'teleport' | 'drag' | 'step';
   /** only units with less power than this card ("target weaker minion") */
@@ -374,6 +384,8 @@ export interface GameState {
   pending: Pending | null;
   /** triggered abilities that need a decision, first one first */
   queue?: Queued[];
+  /** sites flooded "this turn" (they stop being flooded when the turn ends) */
+  floods?: { c: number; turn: number }[];
   /** units not "at rest" while the current action resolves: the mover and its defenders (Codex "At Rest") */
   busy?: string[];
   /** effects abilities left behind for a while (Codex "Ongoing Effect"): applied like static text from `loc`, ending at the start of `next`'s turn */

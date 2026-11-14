@@ -32,6 +32,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
+  surface: 'Movement & position', pull: 'Movement & position',
   regenesis: 'Other',
   fight: 'Damage',
   roll: 'Damage',
@@ -496,6 +497,28 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'grant', who: 'target', only: 'ally', range: 'any', targets: false, keyword: 'Movement', n: +m[1], until: 'turn' }, { op: 'grant', who: 'target', ref: true, keyword: "Can't be intercepted", until: 'turn' }, { op: 'grant', who: 'target', ref: true, keyword: 'Trail of fire 2', until: 'turn' }] },
   { id: 'trail-damage', label: 'When it stops, each unit along the trail takes N damage', re: /^when it stops, each unit along the trail takes (\d+) damage\.$/i,
     build: () => [] }, // carried by the trail granted in the sentence before (the 2 there is this number on Blaze)
+  { id: 'move-sideways', label: 'Can only move themselves sideways', re: /^(?:this )?can only move (?:themselves|itself) sideways\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Moves only sideways', until: 'permanent' }] : null) },
+  // Codex "As If Connected"
+  { id: 'wrap-edges', label: 'Can move as if the top and bottom edges of the realm were connected', re: /^(?:this )?can move as if the top and bottom edges of the realm were connected\.$/i,
+    build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'self', keyword: 'Wraps top and bottom', until: 'permanent' }] : null) },
+  { id: 'surface-strike', label: 'Surface to strike each other unit nearby', re: /^surface to strike each other unit nearby\.$/i,
+    build: () => [{ op: 'surface', who: 'self' }, { op: 'strike', who: 'unitsNearby', other: true }] },
+  { id: 'flood-adjacent-turn', label: 'Flood an adjacent site this turn', re: /^(?:you may )?flood an adjacent site this turn\.$/i,
+    build: () => [{ op: 'flood', who: 'atTarget', range: 'adjacent', until: 'turn' }] },
+  { id: 'riptide', label: 'Target water site pulls in an aboveground unit it\'s adjacent to', re: /^target water site pulls in an aboveground unit it'?s adjacent to\.$/i,
+    build: () => [{ op: 'pull', who: 'atTarget', range: 'any', siteKind: 'water', targets: true }] },
+  { id: 'maelstrom', label: 'Pull in each minion in this body of water one step', re: /^(?:you may )?pull in each minion in this body of water one step\.$/i,
+    build: () => [{ op: 'pull', who: 'controller', dest: 'body' }] },
+  { id: 'flood-near-body', label: 'Flood all sites adjacent to a body of water this turn', re: /^flood all sites adjacent to a body of water this turn\.$/i,
+    build: () => [{ op: 'flood', who: 'controller', allNearWater: true, until: 'turn' }] },
+  // Codex "Submerge": a forced submerge works on minions without Submerge too (they can't live there and die, p13). Artifacts are not moved here.
+  { id: 'submerge-all', label: 'Submerge all minions (and artifacts) on water', re: /^(?:then )?submerge all minions(?: and artifacts)? on water\.$/i,
+    build: () => [{ op: 'sink', who: 'allMinions', under: 'water' }] },
+  { id: 'undertow', label: 'Staying within this body of water, move target unit one step', re: /^staying within this body of water, move target unit one step\.$/i,
+    build: () => [{ op: 'teleport', who: 'target', range: 'any', targets: true, dest: 'adjacent', inBody: true }] },
+  { id: 'submerge-it-return', label: 'Submerge it and return this to its owner\'s hand', re: /^submerge it and return this to its owner'?s hand\.$/i,
+    build: () => [{ op: 'sink', who: 'target', ref: true }, { op: 'bounce', who: 'self' }] },
   { id: 'void-gate', label: 'Minions here can traverse the void, gaining Voidwalk until leaving it', re: /^minions here can traverse the void, gaining voidwalk until leaving it\.$/i,
     build: (_m, on) => (on === 'static' ? [{ op: 'grant', who: 'minionsHere', keyword: 'Voidwalk', until: 'permanent' }, { op: 'grant', who: 'siteHere', keyword: 'Void gate', until: 'permanent' }] : null) },
   { id: 'move-freely-away', label: '(Airborne) minions atop this move freely away', re: /^(airborne )?minions atop this (?:site )?move freely away\.$/i,
@@ -729,6 +752,7 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     else if ((m = line.match(/^Sacrifice this\s*→\s*(.+)$/i))) { on = 'activated'; body = m[1]; sac = true; }
     else if ((m = line.match(/^Tap bearer and another ally here(, discard an? (?:spell|site|card))?\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; tapBearer = true; tapAlly = 'other'; if (m[1]) discardCost = m[1].match(/(spell|site|card)/i)![1].toLowerCase(); }
     else if ((m = line.match(/^Units here have [“"]Tap → Give (?:this|.+?) a push\. It rolls as far as possible and deals (\d+) damage to each other unit along its path\.?[”"]\.?$/i))) { on = 'activated'; body = ''; tapAlly = 'any'; repeat = true; roll = +m[1]; }
+    else if ((m = line.match(/^Whenever a minion enters an affected water site,\s*(.+)$/i))) { on = 'enters'; ev = { minion: true, affectedWater: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Whenever this enters each corner of the realm for the first time,\s*(.+)$/i))) { on = 'enters'; ev = { self: true, corner: true }; body = cap(m[1]); }
     else if ((m = line.match(/^Discard an? (spell|site|card)\s*→\s*(.+)$/i))) { on = 'activated'; body = m[2]; repeat = true; discardCost = m[1].toLowerCase(); }
     else if ((m = line.match(/^Tap, Banish all your dead (air|earth|fire|water) minions\s*→\s*(.+)$/i))) { on = 'tap'; body = m[2]; banishDead = m[1].toLowerCase() as Element; }
@@ -745,6 +769,12 @@ export function readRules(type: CardType, rules: string, name = ''): Reading {
     const ss = sentences(body);
     for (let k = 0; k < ss.length; k++) {
       let sentence = ss[k];
+      // "Shoot a piercing projectile." + "Deal 3, then 2, then 1 damage to up to one hit unit at each of the first three locations along its path." (Ice Lance)
+      const fall = ss[k + 1]?.match(/^Deal ((?:\d+, then )+\d+) damage to up to one hit unit at each of the first \w+ locations along its path\.$/i);
+      if (/^shoot a piercing projectile\.$/i.test(sentence) && fall) {
+        rl.effects.push({ on, op: 'shoot', who: 'controller', pierce: true, falloff: fall[1].split(/, then /).map(Number), line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-falloff', auto: true, ...(cost ? { cost } : {}) });
+        k++; continue;
+      }
       // "Shoot a projectile." + "If it hits a unit, drag it to this location." [+ "This may fight it when it arrives."] (Pudge Butcher)
       if (/^shoot a projectile\.$/i.test(sentence) && /^if it hits a unit, (?:drag|pull) it to this location\.$/i.test(ss[k + 1] ?? '')) {
         rl.effects.push({ on, op: 'shoot', who: 'controller', n: 0, drag: true, line: lineNo, text: `${sentence} ${ss[k + 1]}`, rule: 'shoot-drag', auto: true, ...(cost ? { cost } : {}) });

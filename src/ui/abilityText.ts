@@ -13,7 +13,7 @@ export const TRIGGER_SHORT: Record<Trigger, string> = {
   kills: 'When it kills', casts: 'When a spell is cast',
 };
 export const OP_LABEL: Record<Op, string> = {
-  regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
+  surface: 'Surface', pull: 'Pull a unit in', regenesis: 'Reactivate Genesis abilities', fight: 'Fight the unit brought here', roll: 'Roll this artifact', ongoing: 'Leave an effect until your next turn', chain: 'Chain to more targets', moveSite: 'Move this site to a nearby void', moveAura: 'Move this aura one step', damage: 'Deal damage', heal: 'Gain / heal life', loseLife: 'Lose life', draw: 'Draw cards', mana: 'Gain mana', destroy: 'Destroy', banish: 'Banish',
   bounce: "Return to owner's hand", tap: 'Tap', untap: 'Untap', buff: 'Change power', grant: 'Give a keyword', discard: 'Discard at random', manual: 'Resolve by hand',
   provide: 'Provide mana / threshold', summon: 'Summon a token', shoot: 'Shoot a projectile', strike: 'Strike', mill: 'Discard from the top of a deck',
   control: 'Gain control', castRule: 'Casting rule', lasts: 'Lasts N turns', pick: 'Choose cards from a zone', unward: 'Break Wards', raise: 'Summon a dead minion', destroySite: 'Destroy a site', choose: 'Choose a location', rubble: 'Fill a void with Rubble', replaceRubble: 'Replace Rubble with your top site', flood: 'Flood a site', noUntap: 'Skip the next untap', scry: 'Look at the top card', sink: 'Submerge / burrow', teleport: 'Teleport', prevent: 'Prevent damage',
@@ -90,6 +90,8 @@ export function describe(e: Effect): string {
     case 'scry': return `Look at the top card of your ${e.deck === 'atlas' ? 'atlas' : 'spellbook'}; you may put it on the bottom`;
     case 'sink': return `${e.under === 'water' ? 'Submerge' : e.under === 'land' ? 'Burrow' : 'Submerge or burrow'} ${who}`;
     case 'moveAura': return 'Move this aura one step, to a neighbouring joint';
+    case 'surface': return 'It comes up to the surface';
+    case 'pull': return e.dest === 'body' ? 'Each minion in its body of water moves one step toward it' : 'A water site you choose pulls in an aboveground unit next to it';
     case 'regenesis': return `Your nearby ${e.sub?.join('/') ?? 'site'}s do their Genesis again`;
     case 'fight': return 'It fights the unit it dragged here (you may skip this)';
     case 'roll': return `Push it: it rolls as far as it can in the direction you choose, dealing ${e.n} damage to each other unit along its path`;

@@ -49,7 +49,7 @@ export function isWater(s: GameState, c: number): boolean {
   const site = s.sites[c];
   if (!site || !site.inst) return false;
   const d = cardOf(s, site.inst);
-  if (d.thresholds.water > 0 || d.keywords.includes('Flood') || s.players?.some((pl) => pl?.flooded === c)) return true; // Codex "Flooded": a flooded site is a water site
+  if (d.thresholds.water > 0 || d.keywords.includes('Flood') || s.players?.some((pl) => pl?.flooded === c) || s.floods?.some((f) => f.c === c && f.turn === s.turn)) return true; // Codex "Flooded": a flooded site is a water site
   if (s.perms?.some((m) => m.kind === 'aura' && auraArea(m.c).includes(c) && cardOf(s, m.inst).effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Flood' && e.who === 'affectedSites'))) return true;
   return Object.values(s.units).some((u) => u.c === c && unitCard(s, u).effects.some((e) => e.on === 'static' && e.op === 'grant' && e.keyword === 'Flood' && e.who === 'siteHere'));
 }
@@ -342,6 +342,7 @@ export function clone(s: GameState): GameState {
     ...(s.used ? { used: { ...s.used } } : {}),
     ...(s.ongoing ? { ongoing: s.ongoing.slice() } : {}),
     ...(s.busy ? { busy: s.busy.slice() } : {}),
+    ...(s.floods ? { floods: s.floods.slice() } : {}),
   };
 }
 
@@ -384,7 +385,8 @@ function startTurn(s: GameState, p: PlayerId) {
   for (const u of Object.values(s.units)) if (u.owner === p) { if (u.tapped && has(s, u, "Can't untap")) { log(s, `${unitCard(s, u).name} can't untap.`, p); continue; } if (u.noUntap) { delete u.noUntap; log(s, `${unitCard(s, u).name} does not untap this time.`, p); } else u.tapped = false; }
   for (const m of s.perms) if (m.owner === p) m.tapped = false;
   for (const st of s.sites) if (st?.owner === p) st.tapped = false;
-  if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.next !== p); if (!s.ongoing.length) delete s.ongoing; } // rulebook p16 Start Phase: "Until next turn" effects end
+  if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.next !== p); if (!s.ongoing.length) delete s.ongoing; }
+  if (s.floods) { s.floods = s.floods.filter((f) => f.turn >= s.turn); if (!s.floods.length) delete s.floods; } // rulebook p16 Start Phase: "Until next turn" effects end
   for (const u of Object.values(s.units)) if (u.mods?.some((m) => m.next === p)) { u.mods = u.mods.filter((m) => m.next !== p); if (!u.mods.length) delete u.mods; }
   s.players[p].mana = s.players[p].income = manaIncome(s, p);
   if (s.turn === 1) { s.phase = 'main'; log(s, `Turn 1 — ${pname(p)}. The first player skips the draw.`); fireAll(s, p, 'startTurn'); return; }
@@ -528,7 +530,7 @@ function squareInRange(from: number, to: number, range: Effect['range']): boolea
   return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => (e.op === 'pull' && e.dest !== 'body') || e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number): boolean {
   if (e.sub?.length && !e.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
@@ -551,7 +553,8 @@ export function cellsFor(s: GameState, d: CardDef, i: number, origins0: Loc[], p
     if (e.op === 'destroySite' && !s.sites[c]?.inst) continue;
     if (e.op === 'rubble' && s.sites[c]) continue;
     if (e.op === 'replaceRubble' && !(s.sites[c] && !s.sites[c]!.inst)) continue;
-    if (e.op === 'flood' && !(s.sites[c]?.inst && nearby(c).some((x) => x !== c && isWater(s, x)))) continue;
+    if (e.op === 'flood' && !s.sites[c]?.inst) continue;
+    if (e.op === 'flood' && e.until !== 'turn' && !nearby(c).some((x) => x !== c && isWater(s, x))) continue; // "near your body of water"
     if ((s.sites[c] || Object.values(s.units).some((u) => u.c === c) || e.op === 'rubble') && origins.some((o) => squareInRange(o.c, c, e.range))) out.push(c);
   }
   const busy = (c: number) => Object.values(s.units).some((u) => u.c === c) ? 0 : 1;
@@ -569,7 +572,7 @@ export function teleportCells(s: GameState, e: Effect, u: Unit | undefined, from
     if (c === u.c) continue;
     switch (e.dest) {
       case 'site': if (s.sites[c]?.inst) out.push(c); break;
-      case 'adjacent': if (orthAdjacent(u.c).includes(c) && enterable(c)) out.push(c); break;
+      case 'adjacent': if (orthAdjacent(u.c).includes(c) && enterable(c) && (!e.inBody || !from || bodyOfKind(s, from.c, 'water').includes(c))) out.push(c); break;
       case 'toward': if (from && orthAdjacent(u.c).includes(c) && enterable(c) && dist(c, from.c) < dist(u.c, from.c)) out.push(c); break;
       case 'away': if (from && orthAdjacent(u.c).includes(c) && enterable(c) && dist(c, from.c) > dist(u.c, from.c)) out.push(c); break;
       case 'here': case 'caster': case 'random': case 'to': break;
@@ -624,6 +627,7 @@ export function targetsFor(s: GameState, p: PlayerId, d: CardDef, i: number, ori
     }
     if (e.other && u.id === self) return false;
     if (!fits(s, e, u, self, Math.floor((d.attack + d.defense) / 2))) return false;
+    if (e.inBody && !origins.some((o) => bodyOfKind(s, o.c, 'water').includes(u.c))) return false; // "Staying within this body of water"
     return origins.some((o) => inRange(s, o, u, e.range, targeted));
   }).map((u) => u.id);
 }
@@ -655,6 +659,7 @@ function checkChoices(s: GameState, p: PlayerId, d: CardDef, idx: number[], ch: 
     if (e.x && c?.n !== undefined && (!Number.isInteger(c.n) || c.n < 0 || c.n > 99)) return no('Choose a number from 0 up.');
     if (e.who === 'atTarget' && !e.refCell) { const ok = cellsFor(s, d, i, origins, p); if (!ok.length) return no(`${d.name} has no location in range.`); if (c?.cell === undefined || !ok.includes(c.cell)) return no('Choose a location in range.'); }
     if (e.op === 'shoot' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose a direction to shoot.');
+    if (e.op === 'pull' && e.dest !== 'body') { const v = c?.target ? s.units[c.target] : undefined; if (c?.cell === undefined || !isWater(s, c.cell)) return no('Choose a water site.'); if (!v || v.r !== 'surface' || !orthAdjacent(c.cell).includes(v.c)) return no('Choose an aboveground unit next to that water site.'); }
     if (e.op === 'roll' && (!c?.dir || Math.abs(c.dir[0]) + Math.abs(c.dir[1]) !== 1)) return no('Choose which way to push it.');
     if (e.op === 'shoot' && c?.hit && origins[0] && !projectileCandidates(s, p, origins[0], c.dir![0], c.dir![1], 9, self).some((u) => u.id === c.hit)) return no('The projectile stops at the first square with a unit it can hit; that unit is not there.', 'Projectile');
     if (e.op === 'chain' && c?.chain?.length) {
@@ -730,6 +735,7 @@ function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: 
   if (f.sub?.length && !f.sub.some((x) => unitCard(s, u).subtypes.some((y) => y.toLowerCase() === x.toLowerCase()))) return false;
   if (f.range === 'here' && u.c !== at.c) return false;
   if (f.range === 'nearby' && !(sameRegion(s, u, at) && nearby(at.c).includes(u.c))) return false;
+  if (f.affectedWater && !(at.aura && auraArea(at.c).includes(u.c) && isWater(s, u.c) && u.r === 'surface')) return false;
   if (f.corner && !(CORNERS.includes(u.c) && !u.corners?.includes(u.c))) return false; // Codex "Corner": squares 1, 5, 16, 20
   return true;
 }
@@ -828,6 +834,16 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       }
       case 'shoot': {
         if (!loc || !c?.dir) break;
+        if (e.falloff) { // up to one unit at each of the first locations along the path, the player choosing which (Choice.chain: unit id or '' per location)
+          const [x0, y0] = xy(loc.c);
+          e.falloff.forEach((dmg, k) => {
+            const cc = cell(x0 + c.dir![0] * k, y0 + c.dir![1] * k); if (cc < 0) return;
+            const there = Object.values(s.units).filter((u) => u.c === cc && sameRegion(s, u, loc!) && u.id !== self && !(k === 0 && u.owner === p) && !hasStealth(s, u));
+            const want = c.chain?.[k]; const v = want === '' ? undefined : there.find((u) => u.id === want) ?? there.find((u) => u.owner !== p) ?? there[0];
+            if (v) { log(s, `${d.name} hits ${nm(v)} for ${dmg}.`, p); damageUnit(s, v, dmg, false, { card: d, ...(self && s.units[self] ? { unit: s.units[self] } : {}) }); }
+          });
+          break;
+        }
         if (e.pierce) { // a piercing projectile hits every unit along its path
           const [x0, y0] = xy(loc.c); const hits: Unit[] = [];
           for (let k = 0; k < 9; k++) { const cc = cell(x0 + c.dir[0] * k, y0 + c.dir[1] * k); if (cc < 0) break; hits.push(...Object.values(s.units).filter((u) => u.c === cc && sameRegion(s, u, loc!) && u.id !== self && !(k === 0 && u.owner === p) && !hasStealth(s, u))); }
@@ -883,7 +899,9 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       }
       case 'destroy': for (const v of victims) if (!v.avatar && s.units[v.id]) { log(s, `${d.name} destroys ${nm(v)}.`, p); killUnit(s, v); } break;
       case 'banish': for (const v of victims) if (!v.avatar && s.units[v.id] && !has(s, v, "Can't be banished")) removeUnit(s, v, 'banish', d.name); break;
-      case 'bounce': for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'hand', d.name); break;
+      case 'bounce':
+        if (e.who === 'self' && src && 'perm' in src) { const i = s.perms.findIndex((m) => m.id === src.perm); if (i >= 0) { const [m] = s.perms.splice(i, 1); s.players[Number(m.inst[0]) as PlayerId].hand.push(m.inst); log(s, `${d.name} returns to its owner's hand.`, p); } break; }
+        for (const v of victims) if (!v.avatar && s.units[v.id]) removeUnit(s, v, 'hand', d.name); break;
       case 'heal':
         if (e.who === 'siteController') { const sc = loc ? s.sites[loc.c]?.owner : undefined; if (sc != null) gainLife(s, sc, n); }
         else if (e.who === 'controller' || e.who === 'opponent') for (const q of players) gainLife(s, q, n);
@@ -918,6 +936,7 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         const water = isWater(s, v.c);
         if (e.under && (e.under === 'water') !== water) continue;
         v.r = 'under'; log(s, `${nm(v)} is ${water ? 'submerged' : 'burrowed'} (${d.name}).`, p);
+        if (!v.avatar && !canOperate(s, v, regionOf(s, v))) { log(s, `${nm(v)} can't survive ${water ? 'underwater' : 'underground'} and dies (rulebook p13).`, p); killUnit(s, v, true); }
       } break;
       case 'fight': { // "This may fight it when it arrives"
         const me = self ? s.units[self] : undefined; const them = lastHit ? s.units[lastHit] : undefined;
@@ -934,6 +953,18 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
           for (const v of Object.values(s.units).filter((u) => u.c === nc && u.r === 'surface' && u.id !== pusher)) { log(s, `${d.name} rolls over ${nm(v)} for ${n}.`, p); damageUnit(s, v, n, false, { card: d }); }
         }
         log(s, k > 1 ? `${d.name} rolls ${k - 1} square${k > 2 ? 's' : ''}.` : `${d.name} can't roll that way.`, p);
+        break;
+      }
+      case 'surface': { const me = self ? s.units[self] : undefined; if (me && me.r === 'under') { me.r = 'surface'; loc = { c: me.c, r: 'surface' }; log(s, `${nm(me)} surfaces.`, p); } break; }
+      case 'pull': {
+        // Riptide: "Target water site pulls in an aboveground unit it's adjacent to"; Maelström: "pull in each minion in this body of water one step"
+        if (e.dest === 'body' && loc) {
+          const body = bodyOfKind(s, loc.c, 'water');
+          for (const v of Object.values(s.units).filter((u) => !u.avatar && body.includes(u.c) && u.c !== loc!.c)) {
+            const [vx, vy] = xy(v.c), [tx, ty] = xy(loc.c); const nx = vx + Math.sign(tx - vx), ny = vy + (nx !== vx ? 0 : Math.sign(ty - vy)); const to = cell(nx, ny);
+            if (to >= 0 && s.sites[to]) { v.c = to; log(s, `${d.name} pulls ${nm(v)} one step.`, p); react(s, 'enters', v); }
+          }
+        } else if (c2?.cell !== undefined && c2.target && s.units[c2.target]) { const v = s.units[c2.target]; v.c = c2.cell; v.r = 'surface'; log(s, `${d.name} pulls ${nm(v)} in.`, p); react(s, 'enters', v); }
         break;
       }
       case 'regenesis': { // "Reactivate the Genesis abilities of your nearby Deserts"
@@ -1018,8 +1049,12 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
         break;
       }
       case 'noUntap': for (const v of victims) { v.noUntap = true; } if (victims.length) log(s, `${victims.map(nm).join(', ')} will not untap next time (${d.name}).`, p); break;
-      case 'flood': if (c2?.cell !== undefined && s.sites[c2.cell]?.inst && siteFixed(s, c2.cell)) { log(s, `${cardOf(s, s.sites[c2.cell]!.inst!).name} can't be modified.`, p); break; }
-        if (c2?.cell !== undefined && s.sites[c2.cell]?.inst) { s.players[p].flooded = c2.cell; log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name}: it is a water site until ${pname(p)} floods another.`, p); } break;
+      case 'flood': if (e.allNearWater) { // "Flood all sites adjacent to a body of water this turn"
+          const near = new Set<number>(); for (let x = 0; x < CELLS; x++) if (isWater(s, x)) for (const y of orthAdjacent(x)) if (s.sites[y]?.inst && !isWater(s, y) && !siteFixed(s, y)) near.add(y);
+          for (const y of near) (s.floods ??= []).push({ c: y, turn: s.turn }); log(s, `${d.name} floods ${near.size} site${near.size === 1 ? '' : 's'} this turn.`, p); break; }
+        if (c2?.cell !== undefined && s.sites[c2.cell]?.inst && siteFixed(s, c2.cell)) { log(s, `${cardOf(s, s.sites[c2.cell]!.inst!).name} can't be modified.`, p); break; }
+        if (c2?.cell !== undefined && s.sites[c2.cell]?.inst && e.until === 'turn') { (s.floods ??= []).push({ c: c2.cell, turn: s.turn }); log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name} this turn.`, p); }
+        else if (c2?.cell !== undefined && s.sites[c2.cell]?.inst) { s.players[p].flooded = c2.cell; log(s, `${d.name} floods ${cardOf(s, s.sites[c2.cell]!.inst!).name}: it is a water site until ${pname(p)} floods another.`, p); } break;
       case 'rubble': if (c2?.cell !== undefined && !s.sites[c2.cell]) { s.sites[c2.cell] = { inst: null, owner: null }; log(s, `${d.name} fills the void with Rubble.`, p); } break;
       case 'replaceRubble': {
         const st = c2?.cell !== undefined ? s.sites[c2.cell] : null; const top = s.players[p].atlas[0];
@@ -1236,13 +1271,18 @@ function stepOk(s: GameState, u: Unit, from: Loc, to: Loc): boolean {
     return canOperate(s, u, rf === 'surface' ? rt : rf);
   }
   const [x1, y1] = xy(from.c), [x2, y2] = xy(to.c);
-  const dx = Math.abs(x1 - x2), dy = Math.abs(y1 - y2);
+  const dx = Math.abs(x1 - x2);
+  // Codex "As If Connected": a unit that moves as if the top and bottom edges were connected steps from one to the other
+  const dy = has(s, u, 'Wraps top and bottom') && Math.abs(y1 - y2) === ROWS - 1 ? 1 : Math.abs(y1 - y2);
   if (dx > 1 || dy > 1) return false;
+  if (has(s, u, 'Moves only sideways') && dy !== 0) return false; // Sedge Crabs
   // Codex "Forward": away from your starting edge, relative to the controller (Dalcean Phalanx)
   if (has(s, u, 'Moves only forward') && !(x1 === x2 && y2 - y1 === (u.owner === 0 ? -1 : 1))) return false;
   if (dx + dy === 2 && !(rf === 'surface' && rt === 'surface' && has(s, u, 'Airborne'))) return false;
   if (rf === 'void' || rt === 'void') return !u.avatar && has(s, u, 'Voidwalk') && canOperate(s, u, rt);
-  if (rf !== rt) return false;
+  // Codex "Submerge": with Burrowing and Submerge, one step goes straight between underground and underwater next door
+  if (rf !== rt && !((rf === 'underground' && rt === 'underwater') || (rf === 'underwater' && rt === 'underground')) ) return false;
+  if (rf !== rt && !(has(s, u, 'Burrowing') && has(s, u, 'Submerge'))) return false;
   return canOperate(s, u, rt);
 }
 /** Why a step can't be taken now, for the warning. */
@@ -1281,7 +1321,8 @@ export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const queue: { at: Loc; path: Loc[]; cost: number }[] = [{ at: start, path: [], cost: 0 }];
   while (queue.length) {
     const { at: from, path, cost } = queue.shift()!;
-    const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...nearby(from.c).filter((c) => c !== from.c).flatMap((c) => [{ c, r: 'surface' as const }, { c, r: 'under' as const }])];
+    const wrap = has(s, u, 'Wraps top and bottom') ? [cell(xy(from.c)[0], (xy(from.c)[1] + 1) % ROWS), cell(xy(from.c)[0], (xy(from.c)[1] + ROWS - 1) % ROWS)] : [];
+    const cands: Loc[] = [{ c: from.c, r: from.r === 'surface' ? 'under' : 'surface' }, ...[...new Set([...nearby(from.c), ...wrap])].filter((c) => c !== from.c).flatMap((c) => [{ c, r: 'surface' as const }, { c, r: 'under' as const }])];
     for (const to of cands) {
       if (!stepOk(s, u, from, to)) continue;
       const c2 = cost + stepCost(s, u, from, to); const k = locKey(to);
@@ -1873,6 +1914,7 @@ function choiceSets(s: GameState, p: PlayerId, d: CardDef, idx: number[], origin
     if (e.who === 'target' && !e.ref) { const t = targetsFor(s, p, d, i, origins, self); if (!t.length) return []; if (spread < 0) spread = i; base[i] = { target: t[0] }; }
     if (e.x) base[i] = { ...(base[i] ?? {}), n: 1 };
     if (e.op === 'draw' && !e.deck) base[i] = { ...(base[i] ?? {}), deck: 'spellbook' };
+    if (e.op === 'pull' && e.dest !== 'body') { const cl = cellsFor(s, d, i, origins, p).find((x) => Object.values(s.units).some((u) => u.owner !== p && u.r === 'surface' && orthAdjacent(x).includes(u.c))); if (cl === undefined) return []; base[i] = { cell: cl, target: Object.values(s.units).find((u) => u.owner !== p && u.r === 'surface' && orthAdjacent(cl).includes(u.c))!.id }; continue; }
     if (e.op === 'moveSite') { const cl = origins[0] ? siteMoveCells(s, origins[0].c) : []; if (!cl.length) return []; base[i] = { cell: cl[0] }; }
     if (e.op === 'moveAura') base[i] = e.optional ? { skip: true } : { cell: origins[0] ? auraSteps(origins[0].c)[0] : undefined }; // the AI leaves its auras where they are
     if (e.who === 'atTarget' && !e.refCell && !['damage', 'destroy', 'banish', 'strike', 'tap', 'sink', 'choose'].includes(e.op)) { const cl = cellsFor(s, d, i, origins); if (!cl.length) return []; base[i] = { ...(base[i] ?? {}), cell: cl[0] }; }

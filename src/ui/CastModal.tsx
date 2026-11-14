@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, Reorder, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, chainBase, chainNext, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, chainBase, chainNext, orthAdjacent, cell, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, hoverProps, mainElement } from './CardFace';
@@ -197,6 +197,13 @@ function Line({ s, pl, i, e, c, all, set, focus }: { s: GameState; pl: Plan; i: 
             {next.map((id) => <button key={id} className={`chip p${s.units[id].owner}`} onClick={() => set({ chain: [...chosen, id] })} onPointerEnter={() => focus(id)} onPointerLeave={() => focus(null)}>+ {unitCard(s, s.units[id]).name}</button>)}
             {!next.length && <small> — no new unit nearby the last one</small>}</div>;
         })()}
+        {e.op === 'pull' && e.dest !== 'body' && c?.cell !== undefined && (() => { const ok = Object.values(s.units).filter((u) => u.r === 'surface' && orthAdjacent(c.cell!).includes(u.c));
+          return ok.length ? <div className="chips targets"><small>Pull in:</small>{ok.map((u) => <button key={u.id} className={`chip p${u.owner} ${c.target === u.id ? 'on' : ''}`} onClick={() => set({ target: u.id })} onPointerEnter={() => focus(u.id)} onPointerLeave={() => focus(null)}>{unitCard(s, u).name}</button>)}</div> : <small className="none"> — no aboveground unit next to that site</small>; })()}
+        {e.op === 'shoot' && e.falloff && c?.dir && pl.origins[0] && (() => { const [x0, y0] = xy(pl.origins[0].c);
+          return <div className="chips targets col">{e.falloff.map((dmg, k) => { const cc = cell(x0 + c.dir![0] * k, y0 + c.dir![1] * k); if (cc < 0) return null;
+            const there = Object.values(s.units).filter((u) => u.c === cc && u.r === pl.origins[0].r && !(k === 0 && u.owner === pl.p)); if (!there.length) return null;
+            const pick = c.chain?.[k] ?? (there.find((u) => u.owner !== pl.p) ?? there[0]).id; const setK = (v: string) => { const ch = [...(c.chain ?? [])]; for (let j = 0; j < e.falloff!.length; j++) ch[j] ??= undefined as unknown as string; ch[k] = v; set({ chain: ch }); };
+            return <div key={k}><small>{sq(cc)} — {dmg} damage to:</small> {there.map((u) => <button key={u.id} className={`chip p${u.owner} ${pick === u.id ? 'on' : ''}`} onClick={() => setK(u.id)}>{unitCard(s, u).name}</button>)}<button className={`chip ${pick === '' ? 'on' : ''}`} onClick={() => setK('')}>nobody</button></div>; })}</div>; })()}
         {e.op === 'roll' && <span className="xpick">{([[0, -1], [0, 1], [-1, 0], [1, 0]] as [number, number][]).map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
         {e.op === 'moveSite' && pl.origins[0] && (() => { const cl = siteMoveCells(s, pl.origins[0].c); return cl.length ? <div className="chips targets"><small>Fly to:</small>{cl.map((x) => <button key={x} className={`chip ${c?.cell === x ? 'on' : ''}`} onClick={() => set({ cell: x })}>{sq(x)}<small> void</small></button>)}</div> : <small className="none"> — no void nearby</small>; })()}
         {e.op === 'moveAura' && !c?.skip && pl.origins[0] && <div className="chips targets"><small>Move it to cover:</small>{auraSteps(pl.origins[0].c).map((cl) => { const a = auraArea(cl);

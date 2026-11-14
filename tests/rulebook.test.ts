@@ -602,3 +602,52 @@ describe('Beta Fire', () => {
     expect(s.units[foe]).toBeUndefined();          // it left (1,2) behind with the 2/2 there
   });
 });
+
+describe('Beta Water', () => {
+  const read = async (type: CardDef['type'], name: string, txt: string, extra: Partial<CardDef> = {}) => { const { effectsFromText } = await import('../src/engine/cards'); return T(name, type, { rules: txt, ...extra, effects: effectsFromText(type, txt, name) }); };
+  it('Sedge Crabs move only sideways; Polar Bears step across the top and bottom edges (Codex "As If Connected")', async () => {
+    const s = start(0); for (const c of [cell(1, 3), cell(1, 2), cell(2, 3), cell(1, 0)]) site(s, 0, c);
+    const crabs = await read('Minion', 'Test Crabs', 'Can only move themselves sideways.', { attack: 1 });
+    const cr = unit(s, 0, cell(1, 3), crabs);
+    expect(check(s, { t: 'move', unit: cr, path: [{ c: cell(1, 2), r: 'surface' }] }).ok).toBe(false);
+    expect(check(s, { t: 'move', unit: cr, path: [{ c: cell(2, 3), r: 'surface' }] }).ok).toBe(true);
+    const bears = await read('Minion', 'Test Bears', 'Can move as if the top and bottom edges of the realm were connected.', { attack: 3 });
+    const b = unit(s, 0, cell(1, 3), bears);
+    expect(check(s, { t: 'move', unit: b, path: [{ c: cell(1, 0), r: 'surface' }] }).ok).toBe(true);
+  });
+  it('Diluvian Kraken surfaces and strikes each other unit nearby', async () => {
+    let s = start(0); for (const c of [cell(1, 3), cell(1, 2)]) site(s, 0, c, 'Mill Pond');
+    const kr = await read('Minion', 'Test Kraken', 'Submerge\n\nTap → Surface to strike each other unit nearby.', { attack: 6, keywords: ['Submerge'] });
+    const k = unit(s, 0, cell(1, 3), kr, { r: 'under' }); const foe = unit(s, 1, cell(1, 2), id('Kiln Brute'));
+    const fx = s.cards[kr].effects.findIndex((e) => e.op === 'strike');
+    s = apply(s, { t: 'ability', src: { unit: k }, fx });
+    expect(s.units[k].r).toBe('surface'); expect(s.units[foe]).toBeUndefined();
+  });
+  it('Wrath of the Sea: floods land next to water this turn, then submerges minions on water (those without Submerge die)', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(2, 2), 'Mill Pond'); site(s, 0, cell(2, 1), 'Cinder Field');
+    const wrath = await read('Magic', 'Test Wrath', 'Flood all sites adjacent to a body of water this turn. Then submerge all minions and artifacts on water.', { cost: 0 });
+    const fish = unit(s, 1, cell(2, 1), id('Reed Lurker')); const brute = unit(s, 1, cell(2, 1), id('Kiln Brute'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, wrath) });
+    const { isWater } = await import('../src/engine/rules');
+    expect(isWater(s, cell(2, 1))).toBe(true);
+    expect(s.units[fish].r).toBe('under'); expect(s.units[brute]).toBeUndefined();
+  });
+  it('Riptide: a water site pulls in an aboveground unit next to it', async () => {
+    let s = start(0); site(s, 0, cell(2, 3)); site(s, 0, cell(1, 2), 'Mill Pond'); site(s, 0, cell(1, 1));
+    const rip = await read('Magic', 'Test Riptide', "Target water site pulls in an aboveground unit it's adjacent to. Draw a card.", { cost: 0 });
+    const foe = unit(s, 1, cell(1, 1), id('Kiln Brute'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, rip), choices: [{ cell: cell(1, 2), target: foe }, { deck: 'spellbook' }] });
+    expect(s.units[foe].c).toBe(cell(1, 2));
+  });
+});
+describe('Ice Lance', () => {
+  it('3, then 2, then 1 damage to up to one unit at each of the first three locations', async () => {
+    const { effectsFromText } = await import('../src/engine/cards');
+    let s = start(0); for (const c of [cell(1, 3), cell(1, 2), cell(1, 1), cell(1, 0)]) site(s, 0, c);
+    s.units[s.players[0].avatar].c = cell(1, 3);
+    const lance = T('Test Lance', 'Magic', { cost: 0, effects: effectsFromText('Magic', 'Shoot a piercing projectile. Deal 3, then 2, then 1 damage to up to one hit unit at each of the first three locations along its path.', 'Test Lance') });
+    const a = unit(s, 1, cell(1, 2), id('Hill Giant')), b = unit(s, 1, cell(1, 1), id('Hill Giant')), b2 = unit(s, 1, cell(1, 1), id('Hill Giant')), c = unit(s, 1, cell(1, 0), id('Hill Giant'));
+    s = apply(s, { t: 'cast', inst: give(s, 0, lance), choices: [{ dir: [0, -1], chain: ['', a, b2] }] });
+    expect([a, b, b2, c].map((x) => s.units[x].damage)).toEqual([2, 0, 1, 0]); // location 1 is the caster's square
+  });
+});
