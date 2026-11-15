@@ -216,7 +216,15 @@ export const useStore = create<Store>((set, get) => ({
     // the saved cards keep the game playable if the pool changed; current definitions win so rule fixes apply
     const cards: Record<string, CardDef> = {};
     for (const id of Object.keys(st.cards)) cards[id] = pool[id] ?? st.cards[id];
-    const state = { ...st, cards } as GameState;
+    // the Ordinary draft sites a face-down trap counts as (Codex "Trap"): bring them from the pool, and put the real card
+    // (with its art) in place of a stand-in made while one was missing
+    const inst = { ...st.inst };
+    for (const name of ['Spire', 'Stream', 'Valley', 'Wasteland']) {
+      const real = Object.values(pool).find((c) => c.type === 'Site' && c.name === name); if (!real) continue;
+      cards[real.id] = real;
+      for (const k of Object.keys(inst)) if (inst[k] === `draft:${name}`) inst[k] = real.id;
+    }
+    const state = { ...st, cards, inst } as GameState;
     get().aiNext(); undoStack = [];
     restoring = true;
     set({ game: { ...saved.game, state }, savedAt: saved.savedAt, view: 'play', canUndo: false });
