@@ -950,3 +950,19 @@ describe('Quagmire (rule ticket 2026-11-14: it is not optional)', () => {
     expect(check(s, { t: 'move', unit: later, path: [{ c: cell(4, 1), r: 'surface' }] }).ok).toBe(false);
   });
 });
+
+describe('routes that matter: trail of fire and burning squares', () => {
+  it('Blaze burns the squares of the route the player chose, marks them, and the marks go at the end of the turn', async () => {
+    const { pathMatters } = await import('../src/engine/rules');
+    let s = start(0); for (let c = 0; c < 20; c++) site(s, 0, c);
+    const runner = unit(s, 0, cell(1, 3), id('Hill Giant'), { mods: [{ atk: 0, def: 0, kw: 'Trail of fire 2', turn: s.turn, from: 'Blaze' }, { atk: 0, def: 0, move: 2, turn: s.turn, from: 'Blaze' }] });
+    const onWay = unit(s, 1, cell(1, 2), id('Kiln Brute')), offWay = unit(s, 1, cell(2, 2), id('Kiln Brute'));
+    expect(pathMatters(s, s.units[runner])).toBe(true);
+    // up then right: departs (1,3) and (1,2), never touches (2,2)
+    s = apply(s, { t: 'move', unit: runner, path: [{ c: cell(1, 2), r: 'surface' }, { c: cell(1, 1), r: 'surface' }, { c: cell(2, 1), r: 'surface' }] });
+    expect(s.marks?.map((m) => m.c).sort()).toEqual([cell(1, 3), cell(1, 2), cell(1, 1)].sort());
+    expect([s.units[onWay].damage, s.units[offWay].damage]).toEqual([2, 0]);
+    s = apply(s, { t: 'endTurn' });
+    expect(s.marks).toBeUndefined();
+  });
+});

@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   type Action, hasStealth, type GameState, type Loc, type PlayerId, type Unit, CELLS, COLS, ELEMENTS, KEYWORD_HELP,
   actor, attackTargets, cardOf, cell, check, codexUrl, defenseOf, has, isDisabled, power, summonCells, isWater, other, playableSiteCells, reach, responders,
-  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded, followUps, castersFor, cellsFor, siteMoveCells, type Choice,
+  sitesOf, summoningSick, thresholdOf, unitCard, validTargets, xy, autoSplit, strikeOf, shotCandidates, warded, followUps, castersFor, cellsFor, siteMoveCells, pathMatters, moveOf, type Choice,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { type CardDef } from '../engine';
@@ -18,10 +18,11 @@ import { submit as submitFeedback, recentErrors } from '../feedback/feedback';
 import { feedbackRemote, useAuth } from '../cloud/cloud';
 
 /** site: one of your sites whose ability moves it (Cloud City), waiting for the void to go to */
-type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string } | { k: 'site'; c: number; fx: number };
+type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: string; /** the route being plotted step by step, when the way matters */ route?: Loc[] } | { k: 'site'; c: number; fx: number };
 interface Opt { label: string; hint?: string; action: Action }
 
 const PNAME = (g: Game, p: PlayerId) => g.names[p];
+const sqName = (c: number) => `${'ABCDE'[xy(c)[0]]}${4 - xy(c)[1]}`;
 
 export function Table() {
   const g = useStore((s) => s.game)!;
@@ -111,6 +112,16 @@ export function Table() {
 
   const me = s.players[viewer];
   const selUnit = sel?.k === 'unit' ? s.units[sel.id] : undefined;
+  // plotting a route: the squares chosen so far, where it stands at the end, and the squares one more step can reach
+  const route = sel?.k === 'unit' && selUnit?.owner === who ? sel.route : undefined;
+  const routeEnd: Loc | undefined = selUnit && route ? (route.length ? route[route.length - 1] : { c: selUnit.c, r: selUnit.r }) : undefined;
+  const nextSteps = useMemo(() => {
+    if (!selUnit || !route || !routeEnd) return [] as Loc[];
+    const [x, y] = xy(routeEnd.c); const out: Loc[] = [];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { if (!dx && !dy) continue; const c = cell(x + dx, y + dy); if (c < 0) continue;
+      const to: Loc = { c, r: routeEnd.r }; if (check(s, { t: 'move', unit: selUnit.id, path: [...route, to] }).ok) out.push(to); }
+    return out;
+  }, [s, selUnit?.id, route]);
   const selCard = sel?.k === 'hand' ? cardOf(s, sel.inst) : undefined;
 
   // ---- legal-move highlights (teaching aid) ----
@@ -132,7 +143,10 @@ export function Table() {
       else for (const c of summonCells(s, who, selCard)) cells.set(c, 'place');
     }
     if (sel?.k === 'site') for (const c of siteMoveCells(s, sel.c)) cells.set(c, 'go');
-    if (selUnit) {
+    if (selUnit && route && routeEnd) {
+      for (const n of nextSteps) cells.set(n.c, 'go');
+      if (attackTargets(s, selUnit, routeEnd).length) cells.set(routeEnd.c, 'hit');
+    } else if (selUnit) {
       for (const f of followUps(s, selUnit)) { if (f.t === 'step') cells.set(f.to.c, 'go'); if (f.t === 'shoot' && f.hit) cells.set(s.units[f.hit].c, 'hit'); }
       for (const path of reach(s, selUnit).values()) {
         const end: Loc = path.length ? path[path.length - 1] : { c: selUnit.c, r: selUnit.r };
@@ -141,12 +155,19 @@ export function Table() {
       }
     }
     return { cells, units };
-  }, [s, sel, myInput, boardPick]);
+  }, [s, sel, myInput, boardPick, nextSteps]);
 
   const explain = (a: Action) => { const r = check(s, a); if (!r.ok) toast(r.reason, 'error', r.keyword); return r.ok; };
 
   function unitOptions(u: Unit, c: number): Opt[] {
     const opts: Opt[] = [];
+    if (route && routeEnd && u.id === selUnit?.id) { // the route is chosen: move along it, and attack from where it ends
+      if (c !== routeEnd.c) return opts;
+      const via = route.length ? ` via ${route.map((l) => sqName(l.c)).join(' → ')}` : '';
+      for (const t of attackTargets(s, u, routeEnd)) opts.push({ label: `${route.length ? 'Move' + via + ', attack ' : 'Attack '}${t.site ? 'the site' : unitCard(s, s.units[t.unit!]).name}`, action: { t: 'move', unit: u.id, path: route, attack: t } });
+      if (route.length) opts.push({ label: `Move here${via}`, action: { t: 'move', unit: u.id, path: route } });
+      return opts;
+    }
     const sqn = (x: number) => `${'ABCDE'[xy(x)[0]]}${4 - xy(x)[1]}`;
     for (const f of followUps(s, u)) { // a follow-up offered straight after a shot or a move
       if (f.t === 'step' && f.to.c === c) opts.push({ label: `Take a step here${f.to.r === 'under' ? (isWater(s, c) ? ' (underwater)' : ' (underground)') : ''}`, hint: `${unitCard(s, u).name} may step right after its ranged strike`, action: f });
@@ -196,6 +217,16 @@ export function Table() {
       if (d && siteMoveCells(s, sel.c).includes(c)) { const ch: Choice[] = []; ch[sel.fx] = { cell: c }; const a: Action = { t: 'ability', src: { site: sel.c }, fx: sel.fx, choices: ch }; if (explain(a)) act(a); }
       return; }
     if (!sel) { const fx = flyFx(c); if (fx >= 0) { setSel({ k: 'site', c, fx }); toast(`${cardOf(s, s.sites[c]!.inst!).name} may fly: choose a glowing void next to it, or drag the site there.`); return; } }
+    if (selUnit && route && routeEnd) { // plotting: a glowing square adds a step, a square on the route goes back to it
+      const nx = nextSteps.find((l) => l.c === c);
+      if (nx && c !== routeEnd.c) { setSel({ k: 'unit', id: selUnit.id, route: [...route, nx] }); return; }
+      const back = route.findIndex((l) => l.c === c);
+      if (c === selUnit.c && route.length && c !== routeEnd.c) { setSel({ k: 'unit', id: selUnit.id, route: [] }); return; }
+      if (back >= 0 && back < route.length - 1) { setSel({ k: 'unit', id: selUnit.id, route: route.slice(0, back + 1) }); return; }
+      const opts = unitOptions(selUnit, c);
+      if (opts.length) setMenu({ c, opts }); else explain({ t: 'move', unit: selUnit.id, path: [...route, { c, r: routeEnd.r }] });
+      return;
+    }
     if (selUnit) {
       const opts = unitOptions(selUnit, c);
       if (!opts.length) { explain({ t: 'move', unit: selUnit.id, path: [{ c, r: selUnit.r }] }); return; }
@@ -216,7 +247,8 @@ export function Table() {
     if (sel?.k === 'hand') { clickCell(u.c); return; }
     if (u.owner === who && !(selUnit && selUnit.id !== u.id && hiCells.get(u.c) === 'hit')) {
       if (selUnit?.id === u.id) { clickCell(u.c); return; }
-      setMenu(null); setSel({ k: 'unit', id: u.id });
+      setMenu(null); setSel({ k: 'unit', id: u.id, ...(pathMatters(s, u) && !u.tapped && moveOf(s, u) > 0 ? { route: [] } : {}) });
+      if (pathMatters(s, u) && !u.tapped && moveOf(s, u) > 0) toast(`The way ${unitCard(s, u).name} goes matters: choose its route one glowing square at a time, then click the last square again to move or attack.`);
       const why = followUps(s, u).length ? `${unitCard(s, u).name} may ${u.follow?.kind === 'step' ? 'take a step now' : 'shoot from a square on its path now'}: choose a glowing square, or do something else to skip it.` : u.tapped ? `${unitCard(s, u).name} is tapped.` : summoningSick(s, u) ? `${unitCard(s, u).name} entered this turn. It can act next turn (summoning sickness).` : isDisabled(s, u) ? `${unitCard(s, u).name} is disabled.` : '';
       if (why) toast(why);
       return;
@@ -357,6 +389,8 @@ export function Table() {
                   {d && <span className="site-flash" key={site!.inst} />}
                   {d && <div className="site-label"><span>{d.name}</span><Pips t={d.thresholds} /></div>}
                   {site && !site.inst && <div className="site-label"><span>Rubble</span></div>}
+                  {route && route.some((l) => l.c === c) && <span className="route-step" aria-label="On the chosen route">{route.map((l, k) => (l.c === c ? k + 1 : null)).filter(Boolean).join(', ')}</span>}
+                  {s.marks?.some((m) => m.c === c && m.kind === 'fire') && <span className="burn-mark" data-tip={`Burning: ${s.marks.find((m) => m.c === c)!.from} passed through here this turn`} aria-label="Burning">🔥</span>}
                   {site?.trap && site.owner === viewer && <span className="trap-mark" data-tip={`Your face-down trap: ${cardOf(s, site.trap).name}. Your opponent sees ${d?.name ?? 'an Ordinary site'}.`}>⚠ {cardOf(s, site.trap).name}</span>}
                   <span className="coord">{'ABCDE'[x]}{4 - y}</span>
                   {([0, 1] as PlayerId[]).filter((q) => s.players[q].portals?.includes(c)).map((q) => <span key={q} className={`portal p${q}`} data-tip={`${PNAME(g, q)}'s Harbinger square: once on their turn they may cast a minion here for 1 less`}>✧</span>)}
@@ -418,6 +452,11 @@ export function Table() {
             {(abilities.length > 0 || me.cemetery.some((i) => cardOf(s, i).effects.some((e) => e.op === 'castRule' && e.fromCemetery))) && <button className="ability" onClick={() => setAbilOpen(true)} data-tip="Abilities of your units, sites and artifacts that you use when you choose">✦ Abilities ({abilities.filter((x) => x.ok).length})</button>}
             <button disabled={s.units[me.avatar].tapped || !me.atlas.length} onClick={() => act({ t: 'drawSite' })} data-tip="Avatar ability: tap to draw a site instead of playing one">Tap Avatar: draw a site</button>
             {g.mode === 'ai' && <button disabled={!canUndo} onClick={undo} data-tip={canUndo ? 'Take back your last move' : 'Nothing to take back. Moves that draw a card, pass the turn, or that the opponent has answered cannot be undone.'}>Undo</button>}
+            {selUnit && selUnit.owner === who && !selUnit.tapped && moveOf(s, selUnit) > 0 && (route
+              ? <span className="route-bar"><b>Route:</b> {route.length ? route.map((l) => sqName(l.c)).join(' → ') : 'choose the first glowing square'}
+                  <button disabled={!route.length} onClick={() => setSel({ k: 'unit', id: selUnit.id, route: route.slice(0, -1) })}>Undo step</button>
+                  {!pathMatters(s, selUnit) && <button onClick={() => setSel({ k: 'unit', id: selUnit.id })} data-tip="Go back to choosing only where it ends up">Any route</button>}</span>
+              : <button onClick={() => setSel({ k: 'unit', id: selUnit.id, route: [] })} data-tip="Choose the squares it passes through, one step at a time">Choose the route</button>)}
             {(sel || menu) && <button className="cancel-act" onClick={() => escRef.current()} data-tip="Stop what you started: put the selected card or unit back (Esc does the same)">✕ Cancel <kbd>Esc</kbd></button>}
             <button className="end" onClick={() => act({ t: 'endTurn' })} data-tip="Damage on your minions clears and unspent mana is lost">End turn</button>
           </>)}

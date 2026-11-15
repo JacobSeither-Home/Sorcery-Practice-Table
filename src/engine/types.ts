@@ -484,6 +484,8 @@ export interface GameState {
   attacking?: string;
   /** activated abilities used once per game, by source key and line */
   usedGame?: Record<string, true>;
+  /** burning squares left this turn by a trail of fire or a unit that burns where it leaves; shown on the board, cleared at the end of the turn */
+  marks?: { c: number; kind: 'fire'; from: string }[];
   /** controllers of units that left the realm this turn, by unit id ("its controller" after it died) */
   gone?: Record<string, PlayerId>;
   /** where those units were ("summon a Skeleton token where it died") */

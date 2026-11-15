@@ -1528,6 +1528,13 @@ export function stepCost(s: GameState, u: Unit, from: Loc, to: Loc): number {
   return cardOf(s, st.inst).effects.some((e) => e.on === 'static' && e.keyword === 'Moves freely away' && (!e.kw || has(s, u, e.kw))) ? 0 : 1;
 }
 /** Every location the unit can end a move on, with one path to it. Includes staying put (empty path). */
+/** A square the fire passed this turn, for the board to show. */
+function markFire(s: GameState, c: number, from: string) { if (!(s.marks ??= []).some((m) => m.c === c && m.kind === 'fire')) s.marks.push({ c, kind: 'fire', from }); }
+/** Whether the way a unit goes matters, not only where it ends: it leaves a trail of fire (Blaze), burns the sites it
+ *  leaves (Slag Slug), or may shoot from any square on its path. The table then lets the player plot the route step by step. */
+export function pathMatters(s: GameState, u: Unit): boolean {
+  return !!u.mods?.some((m) => m.kw?.startsWith('Trail of fire') && m.turn === s.turn) || unitCard(s, u).effects.some((e) => e.keyword === 'Burns where it leaves') || has(s, u, 'Shoots while moving');
+}
 export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const out = new Map<string, Loc[]>();
   const start: Loc = { c: u.c, r: u.r };
@@ -2040,9 +2047,9 @@ export function apply(state: GameState, a: Action): GameState {
         // "Minions here can traverse the void, gaining Voidwalk until leaving it" (Planar Gate)
         if (!s.sites[to.c] && s.sites[from.c]?.inst && cardOf(s, s.sites[from.c]!.inst!).effects.some((e) => e.keyword === 'Void gate') && !u.mods?.some((m) => m.void)) (u.mods ??= []).push({ atk: 0, def: 0, kw: 'Voidwalk', void: true, from: cardOf(s, s.sites[from.c]!.inst!).name });
         if (s.sites[to.c] && u.mods?.some((m) => m.void)) { u.mods = u.mods.filter((m) => !m.void); if (!u.mods.length) delete u.mods; }
-        if (u.mods?.some((m) => m.kw?.startsWith('Trail of fire') && m.turn === s.turn)) (trail ??= []).push(from);
+        if (u.mods?.some((m) => m.kw?.startsWith('Trail of fire') && m.turn === s.turn) && to.c !== from.c) { (trail ??= []).push(from); markFire(s, from.c, unitCard(s, u).name); }
         // Slag Slug: "Whenever the Slug leaves a site, it deals 2 damage to units there."
-        { const burn = unitCard(s, u).effects.find((e) => e.keyword === 'Burns where it leaves'); if (burn && s.sites[from.c] && to.c !== from.c) for (const v of Object.values(s.units).filter((x) => x.id !== u.id && x.c === from.c)) { log(s, `${unitCard(s, u).name} burns ${unitCard(s, v).name} for ${burn.n ?? 2} as it leaves.`); damageUnit(s, v, burn.n ?? 2, false, { unit: u }); } }
+        { const burn = unitCard(s, u).effects.find((e) => e.keyword === 'Burns where it leaves'); if (burn && s.sites[from.c] && to.c !== from.c) markFire(s, from.c, unitCard(s, u).name); if (burn && s.sites[from.c] && to.c !== from.c) for (const v of Object.values(s.units).filter((x) => x.id !== u.id && x.c === from.c)) { log(s, `${unitCard(s, u).name} burns ${unitCard(s, v).name} for ${burn.n ?? 2} as it leaves.`); damageUnit(s, v, burn.n ?? 2, false, { unit: u }); } }
         u.c = to.c; u.r = to.r; took++; passed.push({ ...to });
         if (to.c !== from.c) react(s, 'enters', u);
       }
@@ -2115,6 +2122,7 @@ export function apply(state: GameState, a: Action): GameState {
         if (m.turns >= n) { s.perms.splice(s.perms.indexOf(m), 1); s.players[Number(m.inst[0]) as PlayerId].cemetery.push(m.inst); log(s, `${cardOf(s, m.inst).name} is dispelled (it lasted ${n} turns).`, p); }
       }
       if (s.ongoing?.length) { s.ongoing = s.ongoing.filter((o) => o.turn === undefined); if (!s.ongoing.length) delete s.ongoing; } // "this turn" effects end (p16 End Phase step 3)
+      delete s.marks; // the burning squares were this turn's
       // Rulebook p16 End Phase step 2: "Players remove all damage from their minions" — both players, not just the active one.
       for (const u of Object.values(s.units)) { if (!u.avatar) u.damage = 0; if (u.mods?.some((m) => m.turn !== undefined)) { u.mods = u.mods.filter((m) => m.turn === undefined); if (!u.mods.length) delete u.mods; } }
       pl.mana = 0;

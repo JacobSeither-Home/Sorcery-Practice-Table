@@ -690,3 +690,11 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 @media (max-width: 760px) { .spell-veil.docked { place-items: end stretch; padding: 8px; } .spell-veil.docked .spell-card { width: 100%; max-height: 55dvh; } .spell-veil.docked .spell-art { display: none; } }
 /* a square lit while its option is pointed at in the pop-up */
 .cell.lit::before { content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 2;  animation: none; background: none; box-shadow: inset 0 0 0 3px #fff4cf, inset 0 0 24px #ffe7a066, 0 0 18px #ffe7a088; }
+
+/* a route being plotted: the step numbers on its squares */
+.route-step { position: absolute; left: 6px; bottom: 6px; z-index: 3; min-width: 20px; padding: 0 5px; border-radius: 99px; background: var(--go, #6fd3ff); color: #08121a; font: 700 11px/18px var(--sans); text-align: center; box-shadow: 0 0 10px var(--go, #6fd3ff); pointer-events: none; }
+.route-bar { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* a square the fire passed this turn (trail of fire, Slag Slug) */
+.burn-mark { position: absolute; right: 8px; top: 26px; z-index: 3; font-size: 22px; filter: drop-shadow(0 0 6px #ff7a2a); animation: burn-flicker calc(1.2s * var(--pace, 1)) ease-in-out infinite; pointer-events: auto; }
+@keyframes burn-flicker { 0%, 100% { transform: scale(1) rotate(-3deg); opacity: .95; } 50% { transform: scale(1.12) rotate(3deg); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .burn-mark { animation: none; } }
