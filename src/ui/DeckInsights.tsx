@@ -116,3 +116,41 @@ function SampleHand({ deck, pool }: { deck: DeckList; pool: Record<string, CardD
     </div>
   );
 }
+
+/** The deck laid out as card pictures, the way a deck page shows it: the Avatar first, the spellbook by card type,
+ *  the atlas apart from the spells, then the collection and the maybeboard. Each card shows how many copies the deck has.
+ *  Clicking a card takes one copy out of that part of the deck. */
+export function DeckVisual({ deck, pool, remove }: { deck: DeckList; pool: Record<string, CardDef>; remove?: (id: string, where: 'spellbook' | 'atlas' | 'collection' | 'maybe') => void }) {
+  const stacks = (ids: string[]) => [...new Set(ids)].map((id) => ({ id, n: ids.filter((x) => x === id).length, c: pool[id] })).filter((x) => x.c)
+    .sort((a, b) => a.c.cost - b.c.cost || a.c.name.localeCompare(b.c.name));
+  const block = (key: string, title: string, ids: string[], where?: 'spellbook' | 'atlas' | 'collection' | 'maybe') => {
+    const st = stacks(ids); if (!st.length) return null;
+    return (
+      <section key={key} className="dv-block">
+        <h3>{title} <span className="dv-n">{ids.length}</span></h3>
+        <div className="grid dv-grid">{st.map((x) => (
+          <button key={x.id} className="gridcard" {...hoverProps(x.c)} onClick={() => where && remove?.(x.id, where)} disabled={!where || !remove}
+            aria-label={`${x.n} ${x.c.name}${where && remove ? ', click to take one out' : ''}`} data-tip={where && remove ? 'Click to take one copy out' : undefined}>
+            <CardFace card={x.c} size="sm" />{x.n > 1 && <span className="n">×{x.n}</span>}
+          </button>))}</div>
+      </section>
+    );
+  };
+  const av = pool[deck.avatar];
+  return (
+    <div className="deck-visual">
+      <section className="dv-block"><h3>Avatar</h3>
+        {av ? <div className="grid dv-grid"><span className="gridcard" {...hoverProps(av)}><CardFace card={av} size="sm" /></span></div> : <p className="note">No Avatar yet: choose one in Add cards.</p>}</section>
+      <h2 className="dv-part">Spellbook <span className="dv-n">{deck.spellbook.length}</span></h2>
+      {TYPES.map((t) => block(t, t, deck.spellbook.filter((id) => pool[id]?.type === t), 'spellbook'))}
+      {block('other', 'Other', deck.spellbook.filter((id) => pool[id] && !(TYPES as readonly string[]).includes(pool[id].type)), 'spellbook')}
+      {!deck.spellbook.length && <p className="note">No spells yet.</p>}
+      <h2 className="dv-part">Atlas <span className="dv-n">{deck.atlas.length}</span></h2>
+      {block('sites', 'Sites', deck.atlas, 'atlas')}
+      {!deck.atlas.length && <p className="note">No sites yet.</p>}
+      {(deck.collection?.length || deck.maybe?.length) ? <h2 className="dv-part">Outside the deck</h2> : null}
+      {block('collection', 'Collection', deck.collection ?? [], 'collection')}
+      {block('maybe', 'Maybeboard', deck.maybe ?? [], 'maybe')}
+    </div>
+  );
+}

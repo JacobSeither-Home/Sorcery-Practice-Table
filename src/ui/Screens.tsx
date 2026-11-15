@@ -13,7 +13,7 @@ import { type FeedbackItem, CLOSED, STATUSES as FB_STATUSES, editItem, exportJso
 import { CardFace, STATUS_CARDS, hoverProps, useInspect } from './CardFace';
 import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, uploadCatalog, useAuth } from '../cloud/cloud';
 import { Preview, TableOptions } from './Table';
-import { DeckInsights } from './DeckInsights';
+import { DeckInsights, DeckVisual } from './DeckInsights';
 
 declare const __APP_VERSION__: string;
 const DIFF: { id: Difficulty; name: string; note: string }[] = [
@@ -125,6 +125,7 @@ export function Decks() {
   const { list, bar, zoom } = useSearch(pool);
   const count = (id: string) => (cur ? copiesOf(cur, id) : 0);
   const [dest, setDest] = useState<'deck' | 'collection' | 'maybe'>('deck');
+  const [mode, setMode] = useState<'add' | 'view'>('add');
   /** Adding respects the copy limit for the card's rarity, counted across spellbook, atlas and collection. */
   const add = (c: CardDef) => {
     if (!cur) return;
@@ -184,12 +185,14 @@ export function Decks() {
         <div className="row head"><input className="title" value={cur.name} onChange={(e) => setCur({ ...cur, name: e.target.value })} aria-label="Deck name" />
           <button onClick={() => setCur(null)}>Cancel</button>
           <button className="primary" disabled={!cur.name.trim() || isBuiltIn(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
-        <div className="row addto">
+        {mode === 'add' && <div className="row addto">
           <span>Clicking a card adds it to</span>
           <div className="seg small" role="tablist"><button role="tab" aria-selected={dest === 'deck'} className={dest === 'deck' ? 'on' : ''} onClick={() => setDest('deck')}>the deck</button><button role="tab" aria-selected={dest === 'collection'} className={dest === 'collection' ? 'on' : ''} onClick={() => setDest('collection')}>the collection ({cur.collection?.length ?? 0}/{COLLECTION_MAX})</button><button role="tab" aria-selected={dest === 'maybe'} className={dest === 'maybe' ? 'on' : ''} onClick={() => setDest('maybe')} data-tip="Cards you are considering: kept with the deck while building, never used in play">the maybeboard ({cur.maybe?.length ?? 0})</button></div>
-        </div>
+        </div>}
         {cur.meta && <p className="deck-meta">{[cur.meta.author && `By ${cur.meta.author}`, cur.meta.format, cur.meta.updated && `${cur.meta.updated} (as of ${cur.meta.importedAt ?? 'import'})`, cur.meta.views, cur.meta.likes].filter(Boolean).join(' · ')}</p>}
+        <div className="seg" role="tablist" aria-label="Deck builder view"><button role="tab" aria-selected={mode === 'add'} className={mode === 'add' ? 'on' : ''} onClick={() => setMode('add')}>Add cards</button><button role="tab" aria-selected={mode === 'view'} className={mode === 'view' ? 'on' : ''} onClick={() => setMode('view')}>Deck view</button></div>
         <DeckInsights deck={cur} pool={pool} />
+        {mode === 'view' ? <DeckVisual deck={cur} pool={pool} remove={drop} /> : <>
         {bar}
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => {
           const n = count(c.id), lim = copyLimit(c), isAvatar = c.type === 'Avatar';
@@ -200,7 +203,7 @@ export function Decks() {
               {!isAvatar && n > 0 && <span className="n">{n}/{lim}</span>}{cur.avatar === c.id && <span className="n">✓</span>}
             </button>
           );
-        })}</div>
+        })}</div></>}
       </div>
       <aside className="builder-side">
         <Preview />
