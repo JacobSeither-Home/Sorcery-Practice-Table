@@ -405,7 +405,7 @@ export function Table() {
                   {site && !site.inst && <div className="site-label"><span>Rubble</span></div>}
                   {route && route.some((l) => l.c === c) && <span className="route-step" aria-label="On the chosen route">{route.map((l, k) => (l.c === c ? k + 1 : null)).filter(Boolean).join(', ')}</span>}
                   {s.marks?.some((m) => m.c === c && m.kind === 'fire') && <span className="burn-mark" data-tip={`Burning: ${s.marks.find((m) => m.c === c)!.from} passed through here this turn`} aria-label="Burning">🔥</span>}
-                  {site?.trap && site.owner === viewer && <span className="trap-mark" data-tip={`Your face-down trap: ${cardOf(s, site.trap).name}. Your opponent sees ${d?.name ?? 'an Ordinary site'}.`}>⚠ {cardOf(s, site.trap).name}</span>}
+                  {site?.trap && site.owner === viewer && <span className="trap-mark" {...hoverProps(cardOf(s, site.trap))} onMouseLeave={clearZoom} aria-label={`Your face-down trap: ${cardOf(s, site.trap).name}. Your opponent sees ${d?.name ?? 'an Ordinary site'}.`}>⚠ {cardOf(s, site.trap).name}</span>}
                   <span className="coord">{'ABCDE'[x]}{4 - y}</span>
                   {([0, 1] as PlayerId[]).filter((q) => s.players[q].portals?.includes(c)).map((q) => <span key={q} className={`portal p${q}`} data-tip={`${PNAME(g, q)}'s Harbinger square: once on their turn they may cast a minion here for 1 less`}>✧</span>)}
                   {([other(bottomPlayer), bottomPlayer] as PlayerId[]).map((p) => (
