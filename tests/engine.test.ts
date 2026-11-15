@@ -1103,6 +1103,11 @@ describe('deck building rules', () => {
     const page = parseDeckText('Avatar\n1\n\n1\nTest Mage\nMinion\n2\n\n2\nOld Wyrm\n\n5\nArtifact\n3\n\n3\nFine Blade\n2\nSite\n4\n\n4\nPlain Field\n\n\nCollection\n1\n\n1\nThe Crown\n\n3\n\nMaybeboard\n2\n\n2\nOld Wyrm\n5\n\nDeck History\nFine Blade', pool, 'page');
     expect(page.deck.avatar).toBe(av); expect(page.deck.spellbook.length).toBe(5); expect(page.deck.atlas.length).toBe(4);
     expect(page.deck.collection).toEqual([uni]); expect(page.unknown).toEqual([]);
+    expect(page.deck.maybe?.length).toBe(2); // the maybeboard is kept with the deck, not in it
+    // the whole page copied: its header gives the deck name and details; a count, name and cost may share a line
+    const whole = parseDeckText('Sign in   Menu\nInferno\nGabriele C\nUpdated 6 hours ago\nConstructed\n352 views\n3 likes\nDecklist\nAvatar   1\n1   Test Mage\nMinion   2\n2   Old Wyrm   5\nSite   4\n4   Plain Field', pool, 'x');
+    expect(whole.deck.name).toBe('Inferno'); expect(whole.deck.meta).toMatchObject({ author: 'Gabriele C', format: 'Constructed', updated: 'Updated 6 hours ago', views: '352 views' });
+    expect(whole.deck.spellbook.length).toBe(2); expect(whole.deck.atlas.length).toBe(4); expect(whole.unknown).toEqual([]);
     const r = parseDeckText('Avatar (1)\n1 Test Mage\nSpellbook\n2 Old Wyrm\n3x Fine Blade\nAtlas:\n4 Plain Field\nCollection (2)\n1 The Crown\n1 Plain Field\nNot A Card', pool, 'x');
     expect(r.deck.avatar).toBe(av); expect(r.deck.spellbook.length).toBe(5); expect(r.deck.atlas.length).toBe(4);
     expect(r.deck.collection).toEqual([uni, site]); expect(r.unknown).toEqual(['Not A Card']);

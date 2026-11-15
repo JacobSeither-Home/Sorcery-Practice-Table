@@ -1,4 +1,4 @@
-import type { CardDef, DeckList } from '../engine';
+import type { DeckMeta, CardDef, DeckList } from '../engine';
 
 /** Copies of one card allowed in a constructed deck, by the rarity the card API reports. */
 export const RARITY_LIMIT: Record<string, number> = { Ordinary: 4, Exceptional: 3, Elite: 2, Unique: 1 };
@@ -61,28 +61,47 @@ export const playable = (d: DeckList, cards: Record<string, CardDef>) =>
  */
 export function parseDeckText(text: string, cards: Record<string, CardDef>, name: string): { deck: DeckList; unknown: string[] } {
   const byName = new Map(Object.values(cards).map((c) => [c.name.toLowerCase(), c]));
-  const deck: DeckList = { name, avatar: '', spellbook: [], atlas: [], collection: [] }; const unknown: string[] = [];
-  // Two shapes are read: one card per line ("4 Card Name", "4x Card Name"), and the text a deck page gives when its list
-  // is selected and copied, where the count, the name and the cost each sit on their own line under section headings
-  // with their totals ("Minion" / "27" / "1" / "Grigori Rasputin" / "2" …). There, a card's count is the last number
-  // standing on its own line before its name.
-  let section: 'deck' | 'collection' | 'skip' = 'deck'; let pending: number | null = null;
-  for (const raw of text.split('\n')) {
-    const line = raw.trim(); if (!line) continue;
+  const deck: DeckList = { name, avatar: '', spellbook: [], atlas: [], collection: [], maybe: [] }; const unknown: string[] = [];
+  // Two shapes are read: one card per line ("4 Card Name", "4x Card Name"), and the text a deck page gives when it is
+  // selected and copied, where the count, the name and the cost may each sit on their own line under section headings
+  // with their totals ("Minion" / "27" / "1" / "Grigori Rasputin" / "2" …) or share one ("4  Wall of Brambles  2").
+  // There, a card's count is the last number standing on its own line before its name.
+  const lines = text.split('\n').map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const HEAD = /^(avatar|spellbook|atlas|collection|sideboard|side ?deck|maybeboard|sites?|spells?|minions?|magics?|auras?|artifacts?)\b\s*[:(]?\s*\d*\s*\)?:?$/i;
+  // the page's header, before the list: deck name, author, "Updated 6 hours ago", "Constructed", "352 views", "3 likes"
+  const first = lines.findIndex((l) => HEAD.test(l) && !byName.has(l.toLowerCase()));
+  const top = (first < 0 ? [] : lines.slice(0, first)).filter((l) => !/^(sign in|menu|sign in menu|decklist|deck list)$/i.test(l));
+  if (top.some((l) => /^(updated|created|published)\b|^\d[\d,]* (views?|likes?)$/i.test(l))) {
+    const meta: DeckMeta = { importedAt: new Date().toISOString().slice(0, 10) }; const rest: string[] = [];
+    for (const l of top) {
+      if (/^(updated|created|published)\b/i.test(l)) meta.updated = l;
+      else if (/^(constructed|draft|sealed|limited|casual|precon(structed)?)$/i.test(l)) meta.format = l;
+      else if (/^\d[\d,]* views?$/i.test(l)) meta.views = l;
+      else if (/^\d[\d,]* likes?$/i.test(l)) meta.likes = l;
+      else rest.push(l);
+    }
+    if (rest[0]) deck.name = rest[0];
+    if (rest.length > 1) meta.author = rest.slice(1).join(' · ');
+    deck.meta = meta;
+  }
+  let section: 'deck' | 'collection' | 'maybe' = 'deck'; let pending: number | null = null;
+  for (const line of first < 0 ? lines : lines.slice(first)) {
     if (/^deck history$/i.test(line)) break; // the page's change log follows: not part of the list
     if (/^\d+$/.test(line)) { pending = parseInt(line, 10); continue; }
-    const head = line.match(/^(avatar|spellbook|atlas|collection|sideboard|side ?deck|maybeboard|sites?|spells?|minions?|magics?|auras?|artifacts?)\b\s*[:(]?\s*\d*\s*\)?:?$/i);
-    if (head && !byName.has(line.toLowerCase())) { section = /^maybeboard/i.test(head[1]) ? 'skip' : /^(collection|sideboard|side ?deck)/i.test(head[1]) ? 'collection' : 'deck'; pending = null; continue; }
+    const head = line.match(HEAD);
+    if (head && !byName.has(line.toLowerCase())) { section = /^maybeboard/i.test(head[1]) ? 'maybe' : /^(collection|sideboard|side ?deck)/i.test(head[1]) ? 'collection' : 'deck'; pending = null; continue; }
     const m = line.match(/^(?:(\d+)\s*x?\s+)?(.+?)$/i);
     if (!m || !m[2]) continue;
     const k = m[1] ? parseInt(m[1], 10) : pending ?? 1; pending = null;
-    if (section === 'skip') continue;
-    const c = byName.get(m[2].toLowerCase());
+    // "Wall of Brambles 2": the cost printed after the name on the same line
+    const c = byName.get(m[2].toLowerCase()) ?? byName.get(m[2].replace(/\s+\d+$/, '').toLowerCase());
     if (!c) { unknown.push(m[2]); continue; }
-    if (section === 'collection') { if (c.type !== 'Avatar') for (let i = 0; i < k; i++) deck.collection!.push(c.id); }
+    const into = section === 'maybe' ? deck.maybe! : section === 'collection' ? deck.collection! : null;
+    if (into) { if (c.type !== 'Avatar') for (let i = 0; i < k; i++) into.push(c.id); }
     else if (c.type === 'Avatar') deck.avatar = c.id;
     else for (let i = 0; i < k; i++) (c.type === 'Site' ? deck.atlas : deck.spellbook).push(c.id);
   }
+  if (!deck.maybe!.length) delete deck.maybe;
   if (!deck.collection!.length) delete deck.collection;
   return { deck, unknown };
 }

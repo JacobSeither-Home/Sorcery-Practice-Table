@@ -13,6 +13,7 @@ import { type FeedbackItem, CLOSED, STATUSES as FB_STATUSES, editItem, exportJso
 import { CardFace, STATUS_CARDS, hoverProps, useInspect } from './CardFace';
 import { type AccessRow, LOCAL_ONLY, addAccess, feedbackRemote, listAccess, removeAccess, uploadCatalog, useAuth } from '../cloud/cloud';
 import { Preview, TableOptions } from './Table';
+import { DeckInsights } from './DeckInsights';
 
 declare const __APP_VERSION__: string;
 const DIFF: { id: Difficulty; name: string; note: string }[] = [
@@ -123,10 +124,11 @@ export function Decks() {
   const [paste, setPaste] = useState('');
   const { list, bar, zoom } = useSearch(pool);
   const count = (id: string) => (cur ? copiesOf(cur, id) : 0);
-  const [dest, setDest] = useState<'deck' | 'collection'>('deck');
+  const [dest, setDest] = useState<'deck' | 'collection' | 'maybe'>('deck');
   /** Adding respects the copy limit for the card's rarity, counted across spellbook, atlas and collection. */
   const add = (c: CardDef) => {
     if (!cur) return;
+    if (dest === 'maybe') { if (c.type === 'Avatar') toast('The maybeboard holds spells and sites.', 'error'); else setCur({ ...cur, maybe: [...(cur.maybe ?? []), c.id] }); return; } // only considered: no copy limit
     if (c.type === 'Avatar') { if (dest === 'collection') toast('An Avatar cannot go in the collection.', 'error'); else setCur({ ...cur, avatar: c.id }); return; }
     const lim = copyLimit(c);
     if (count(c.id) >= lim) { toast(`${c.name} is ${c.rarity ?? 'unrated'}: a deck may hold ${lim} cop${lim === 1 ? 'y' : 'ies'}, counting the collection.`, 'error'); return; }
@@ -135,9 +137,13 @@ export function Decks() {
       setCur({ ...cur, collection: [...(cur.collection ?? []), c.id] });
     } else setCur(c.type === 'Site' ? { ...cur, atlas: [...cur.atlas, c.id] } : { ...cur, spellbook: [...cur.spellbook, c.id] });
   };
-  const drop = (id: string, where: 'spellbook' | 'atlas' | 'collection') => { if (!cur) return; const a = (cur[where] ?? []).slice(); a.splice(a.lastIndexOf(id), 1); setCur({ ...cur, [where]: a }); };
-  const move = (id: string, from: 'spellbook' | 'atlas' | 'collection') => {
+  const drop = (id: string, where: 'spellbook' | 'atlas' | 'collection' | 'maybe') => { if (!cur) return; const a = (cur[where] ?? []).slice(); a.splice(a.lastIndexOf(id), 1); setCur({ ...cur, [where]: a }); };
+  const move = (id: string, from: 'spellbook' | 'atlas' | 'collection' | 'maybe') => {
     if (!cur) return; const c = pool[id]; const a = (cur[from] ?? []).slice(); a.splice(a.lastIndexOf(id), 1);
+    if (from === 'maybe') { // into the deck, if the copy limit allows
+      if (c && count(id) >= copyLimit(c)) { toast(`${c.name} is ${c.rarity ?? 'unrated'}: the deck already has as many copies as it may.`, 'error'); return; }
+      setCur({ ...cur, maybe: a, ...(c?.type === 'Site' ? { atlas: [...cur.atlas, id] } : { spellbook: [...cur.spellbook, id] }) }); return;
+    }
     if (from === 'collection') setCur({ ...cur, collection: a, ...(c?.type === 'Site' ? { atlas: [...cur.atlas, id] } : { spellbook: [...cur.spellbook, id] }) });
     else if ((cur.collection?.length ?? 0) >= COLLECTION_MAX) toast(`The collection holds at most ${COLLECTION_MAX} cards.`, 'error');
     else setCur({ ...cur, [from]: a, collection: [...(cur.collection ?? []), id] });
@@ -180,8 +186,10 @@ export function Decks() {
           <button className="primary" disabled={!cur.name.trim() || isBuiltIn(cur.name)} onClick={() => { saveDeck(cur, orig); setCur(null); toast('Deck saved.'); }}>Save deck</button></div>
         <div className="row addto">
           <span>Clicking a card adds it to</span>
-          <div className="seg small" role="tablist"><button role="tab" aria-selected={dest === 'deck'} className={dest === 'deck' ? 'on' : ''} onClick={() => setDest('deck')}>the deck</button><button role="tab" aria-selected={dest === 'collection'} className={dest === 'collection' ? 'on' : ''} onClick={() => setDest('collection')}>the collection ({cur.collection?.length ?? 0}/{COLLECTION_MAX})</button></div>
+          <div className="seg small" role="tablist"><button role="tab" aria-selected={dest === 'deck'} className={dest === 'deck' ? 'on' : ''} onClick={() => setDest('deck')}>the deck</button><button role="tab" aria-selected={dest === 'collection'} className={dest === 'collection' ? 'on' : ''} onClick={() => setDest('collection')}>the collection ({cur.collection?.length ?? 0}/{COLLECTION_MAX})</button><button role="tab" aria-selected={dest === 'maybe'} className={dest === 'maybe' ? 'on' : ''} onClick={() => setDest('maybe')} data-tip="Cards you are considering: kept with the deck while building, never used in play">the maybeboard ({cur.maybe?.length ?? 0})</button></div>
         </div>
+        {cur.meta && <p className="deck-meta">{[cur.meta.author && `By ${cur.meta.author}`, cur.meta.format, cur.meta.updated && `${cur.meta.updated} (as of ${cur.meta.importedAt ?? 'import'})`, cur.meta.views, cur.meta.likes].filter(Boolean).join(' · ')}</p>}
+        <DeckInsights deck={cur} pool={pool} />
         {bar}
         <div className="grid" style={{ '--zoom': zoom } as React.CSSProperties}>{list.map((c) => {
           const n = count(c.id), lim = copyLimit(c), isAvatar = c.type === 'Avatar';
@@ -197,17 +205,18 @@ export function Decks() {
       <aside className="builder-side">
         <Preview />
         <h3>Avatar</h3><p>{pool[cur.avatar]?.name ?? <em>Click an Avatar card to choose it</em>}</p>
-        {([['spellbook', 'Spellbook'], ['atlas', 'Atlas'], ['collection', 'Collection']] as const).map(([w, title]) => {
+        {([['spellbook', 'Spellbook'], ['atlas', 'Atlas'], ['collection', 'Collection'], ['maybe', 'Maybeboard']] as const).map(([w, title]) => {
           const ids = cur[w] ?? [];
           return (<div key={w}>
-            <h3>{title} ({ids.length}{w === 'spellbook' ? ' of 60 or more' : w === 'atlas' ? ' of 30 or more' : ` of up to ${COLLECTION_MAX}`})</h3>
+            <h3>{title} ({ids.length}{w === 'spellbook' ? ' of 60 or more' : w === 'atlas' ? ' of 30 or more' : w === 'maybe' ? '' : ` of up to ${COLLECTION_MAX}`})</h3>
+            {w === 'maybe' && <p className="note">Cards you are considering. They stay with the deck while you build it but are not played, drawn, or counted by the checks below. ↑ moves one into the deck.</p>}
             {w === 'collection' && <p className="note">Cards outside your decks that some cards fetch ("… from your collection"). They count toward each card's copy limit here. <a href={codexUrl('Collection')} target="_blank" rel="noreferrer">Collection in the Codex ↗</a></p>}
             <ul className="decklines">{group(ids).map((x) => { const all = count(x.id), lim = copyLimit(x.c); return (
               <li key={x.id} {...hoverProps(x.c)} className={all > lim ? 'over' : ''}>
                 <span><i className={`rar rar-${x.c?.rarity ?? 'none'}`} data-tip={lim === Infinity ? 'Its text allows any number of copies' : `${x.c?.rarity ?? 'No rarity'}: up to ${lim}`}>{(x.c?.rarity ?? '?')[0]}</i> {x.n}× {x.c?.name ?? x.id}{all > lim ? ` (${all}/${lim})` : ''}</span>
-                <span className="row tight"><button onClick={() => move(x.id, w)} data-tip={w === 'collection' ? 'Move one into the deck' : 'Move one to the collection'} aria-label={w === 'collection' ? 'Move one into the deck' : 'Move one to the collection'}>{w === 'collection' ? '↑' : '↓'}</button><button onClick={() => drop(x.id, w)} aria-label="Remove one">−</button></span>
+                <span className="row tight"><button onClick={() => move(x.id, w)} data-tip={w === 'collection' || w === 'maybe' ? 'Move one into the deck' : 'Move one to the collection'} aria-label={w === 'collection' || w === 'maybe' ? 'Move one into the deck' : 'Move one to the collection'}>{w === 'collection' || w === 'maybe' ? '↑' : '↓'}</button><button onClick={() => drop(x.id, w)} aria-label="Remove one">−</button></span>
               </li>); })}</ul>
-            {!ids.length && <p className="note">{w === 'collection' ? 'Empty. Switch "adds it to" above to the collection, or use ↓ on a card in the deck.' : 'Empty.'}</p>}
+            {!ids.length && <p className="note">{w === 'collection' ? 'Empty. Switch "adds it to" above to the collection, or use ↓ on a card in the deck.' : w === 'maybe' ? 'Empty. Switch "adds it to" above to the maybeboard.' : 'Empty.'}</p>}
           </div>);
         })}
         <div className="checks"><h3>Constructed format</h3>

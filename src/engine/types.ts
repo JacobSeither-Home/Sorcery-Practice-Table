@@ -550,7 +550,10 @@ export type Action =
 
 export type Check = { ok: true } | { ok: false; reason: string; keyword?: string };
 
-export interface DeckList { name: string; avatar: string; spellbook: string[]; atlas: string[]; /** Codex "Collection": extra cards outside the decks (card ids) */ collection?: string[] }
+export interface DeckList { name: string; avatar: string; spellbook: string[]; atlas: string[]; /** Codex "Collection": extra cards outside the decks (card ids) */ collection?: string[];
+  /** cards being considered for the deck: kept with it while building, never used in play or in the deck checks */ maybe?: string[];
+  /** what a pasted deck page said about the deck (author, format, when it was updated), with the day it was imported */ meta?: DeckMeta }
+export interface DeckMeta { author?: string; format?: string; updated?: string; views?: string; likes?: string; importedAt?: string }
 
 /** A condition on an ability ("while …", "if …", "unless …", "during …"), measured from the card that has it. */
 export interface Cond {

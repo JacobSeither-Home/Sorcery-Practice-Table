@@ -698,3 +698,31 @@ button.ability { border-color: color-mix(in srgb, var(--brass) 60%, transparent)
 .burn-mark { position: absolute; right: 8px; top: 26px; z-index: 3; font-size: 22px; filter: drop-shadow(0 0 6px #ff7a2a); animation: burn-flicker calc(1.2s * var(--pace, 1)) ease-in-out infinite; pointer-events: auto; }
 @keyframes burn-flicker { 0%, 100% { transform: scale(1) rotate(-3deg); opacity: .95; } 50% { transform: scale(1.12) rotate(3deg); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .burn-mark { animation: none; } }
+
+/* deck builder: imported page details, stats, mana curve, sample hand */
+.deck-meta { margin: -4px 0 10px; color: var(--muted); font-size: 13px; }
+.insights { margin: 0 0 12px; padding: 10px 14px; }
+.insights > summary { cursor: pointer; }
+.el-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 12px 0; }
+.el-stat { padding: 8px 10px; border-radius: 10px; background: #ffffff08; border: 1px solid var(--line-soft); font-size: 13px; }
+.el-stat p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.el-stat.none { opacity: .45; }
+.curve { margin: 8px 0 14px; }
+.curve-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-bottom: 6px; }
+.curve-head .legend { display: inline-flex; flex-wrap: wrap; gap: 4px 12px; color: var(--muted); font-size: 12px; }
+.curve-head .legend i, .curve-tip i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.curve-head .link { margin-left: auto; }
+.curve-wrap { position: relative; max-width: 620px; }
+.curve-wrap svg { width: 100%; height: auto; display: block; }
+.curve-wrap .grid { stroke: #ffffff14; stroke-width: 1; }
+.curve-wrap .tick { fill: var(--muted); font: 10px var(--sans); }
+.curve-tip { position: absolute; top: 0; translate: -50% 0; pointer-events: none; display: grid; gap: 2px; padding: 6px 9px; border-radius: 8px; background: #0b0918f2; border: 1px solid var(--line-soft); font-size: 12px; white-space: nowrap; color: var(--parch, #f2e8d5); }
+.curve-table { border-collapse: collapse; font-size: 13px; } .curve-table th, .curve-table td { padding: 3px 10px; text-align: right; border-bottom: 1px solid var(--line-soft); }
+.sample .row { margin: 6px 0 10px; }
+.sample-cards { display: flex; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 760px) { .el-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* hover buffer: a pointed-at card lifts, which could move its edge off the pointer and drop it again (a bounce). An
+   invisible strip under it keeps the pointer "on" the card while it is raised. */
+.handcard::before { content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 28px; }
+.unit::before { content: ''; position: absolute; left: -2px; right: -2px; top: 100%; height: 8px; }
