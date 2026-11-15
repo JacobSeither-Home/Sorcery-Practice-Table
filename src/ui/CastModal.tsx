@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, Reorder, motion } from 'motion/react';
 import {
   type Action, type CardDef, type Choice, type Effect, type GameState, type Loc, type PlayerId, type Source, type Trigger,
-  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, chainBase, chainNext, orthAdjacent, cell, teleportCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
+  type ManualOp, KEYWORDS, KEYWORD_HELP, RULE_TERMS, actor, codexUrl, auraArea, auraSteps, cardOf, casterOrigins, castersFor, cellsFor, pickOptions, projectileCandidates, shotDirs, siteMoveCells, chainBase, chainNext, orthAdjacent, cell, teleportCells, forwardCells, check, effectsOn, needsChoice, other, sourceOf, targetsFor, unitCard, xy,
 } from '../engine';
 import { type Game, useStore } from '../store';
 import { CardFace, clearZoom, hoverProps, mainElement } from './CardFace';
@@ -132,6 +132,12 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
   const skip = () => { if (act({ t: 'trigger', skip: true })) close(); };
   const mine = req.k === 'hand' || g.mode === 'hotseat' || actor(s) === g.local;
   // with something to choose, the pop-up sits at the side so the board stays in view (and lights up what is pointed at)
+  // Codex "May and Can": an effect is optional only when it says "may" or "can". A triggered ability that doesn't can still pass when it has nothing to act on
+  const allMay = pl.idx.every((i) => d.effects[i].optional || d.effects[i].op === 'manual');
+  const stuck = pl.idx.some((i) => { const e = d.effects[i]; if (e.optional) return false;
+    if (e.who === 'target' && !e.ref) return !targetsFor(s, pl.p, d, i, pl.origins, pl.self).length;
+    if (e.who === 'atTarget' && !e.refCell) return !cellsFor(s, d, i, pl.origins).length; return false; });
+  const canPass = allMay || stuck;
   const docked = req.k !== 'hand' && (casters.length > 1 || pl.idx.some((i) => needsChoice(d.effects[i])));
 
   return (
@@ -166,7 +172,7 @@ export function CastModal({ g, req, close, focus }: { g: Game; req: CastReq; clo
 
           <div className="spell-actions">
             {req.k === 'hand' ? <button className="primary cast-btn" onClick={() => close()}>Done</button> : mine ? <>
-              {req.k === 'trigger' ? <button onClick={skip}>Let it pass</button> : <button onClick={() => close()}>Cancel</button>}
+              {req.k === 'trigger' ? (canPass ? <button onClick={skip} data-tip={allMay ? 'The card says you may' : 'It has nothing it can do right now'}>Let it pass</button> : null) : <button onClick={() => close()}>Cancel</button>}
               <button className="primary cast-btn" disabled={phase !== 'choose'} onClick={go}><span aria-hidden>✦</span> {pl.verb}</button>
             </> : <p className="spell-sub">Waiting for the other player…</p>}
           </div>
@@ -255,6 +261,11 @@ function Line({ s, pl, i, e, c, all, set, focus, pickOnBoard }: { s: GameState; 
             const there = Object.values(s.units).filter((u) => u.c === cc && u.r === pl.origins[0].r && !(k === 0 && u.owner === pl.p)); if (!there.length) return null;
             const pick = c.chain?.[k] ?? (there.find((u) => u.owner !== pl.p) ?? there[0]).id; const setK = (v: string) => { const ch = [...(c.chain ?? [])]; for (let j = 0; j < e.falloff!.length; j++) ch[j] ??= undefined as unknown as string; ch[k] = v; set({ chain: ch }); };
             return <div key={k}><small>{sq(cc)} — {dmg} damage to:</small> {there.map((u) => <button key={u.id} className={`chip p${u.owner} ${pick === u.id ? 'on' : ''}`} onClick={() => setK(u.id)}>{unitCard(s, u).name}</button>)}<button className={`chip ${pick === '' ? 'on' : ''}`} onClick={() => setK('')}>nobody</button></div>; })}</div>; })()}
+        {e.op === 'rollForward' && pl.origins[0] && (() => { const cs = forwardCells({ c: pl.origins[0].c, owner: pl.p }, e.steps ?? 1);
+          return <div className="chips targets col">{cs.map((cc, k) => { const there = Object.values(s.units).filter((u) => u.c === cc && u.r === pl.origins[0].r && u.id !== pl.self);
+            const pick = c?.chain?.[k] ?? (there.find((u) => u.owner !== pl.p) ?? there[0])?.id; const setK = (v: string) => { const ch = [...(c?.chain ?? [])]; for (let j = 0; j < cs.length; j++) ch[j] ??= undefined as unknown as string; ch[k] = v; set({ chain: ch }); };
+            return <div key={k} onPointerEnter={() => focusCells([cc])} onPointerLeave={() => focusCells([])}><small>Step {k + 1}, {sq(cc)} — strikes:</small> {there.length ? <>{there.map((u) => <button key={u.id} className={`chip p${u.owner} ${pick === u.id ? 'on' : ''}`} onClick={() => setK(u.id)} onPointerEnter={() => focus(u.id)} onPointerLeave={() => focus(null)}>{unitCard(s, u).name}</button>)}<button className={`chip ${pick === '' ? 'on' : ''}`} onClick={() => setK('')}>nobody</button></> : <small className="none">nobody there now</small>}</div>; })}
+            {!cs.length && <small className="none"> — it is at the far edge: it can't roll forward</small>}</div>; })()}
         {e.op === 'slide' && <span className="xpick">{([[-1, 0], [1, 0]] as [number, number][]).map((dv) => <button key={dv.join()} className={c?.dir?.join() === dv.join() ? 'on' : ''} onClick={() => set({ dir: dv })}>{DIR[dv.join()]}</button>)}</span>}
         {e.op === 'wardBoost' && (() => { const ws = Object.values(s.units).filter((u) => u.owner === pl.p && u.ward); const on = c?.chain ?? [];
           return ws.length ? <div className="chips targets"><small>Break these Wards (+1 damage each):</small>{ws.map((u) => <button key={u.id} className={`chip p${u.owner} ${on.includes(u.id) ? 'on' : ''}`} onClick={() => set({ chain: on.includes(u.id) ? on.filter((x) => x !== u.id) : [...on, u.id] })}>{unitCard(s, u).name}</button>)}</div> : <small className="none"> — you have no warded units</small>; })()}

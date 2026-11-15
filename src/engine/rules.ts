@@ -594,7 +594,7 @@ function squareInRange(from: number, to: number, range: Effect['range']): boolea
   return nearby(f.c).includes(t.c);
 }
 /** The effect asks the player for something when it resolves: a target, a number (X), or which deck to draw from. */
-export const needsChoice = (e: Effect) => (e.op === 'grid' && !!GRIDS[e.gridOf ?? '']?.turn && GRIDS[e.gridOf ?? '']!.turn !== 'fixed') || !!e.alt || e.op === 'swapSites' || e.op === 'groundSlam' || e.op === 'slide' || e.op === 'wardBoost' || (e.op === 'pull' && e.dest !== 'body') || e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
+export const needsChoice = (e: Effect) => e.op === 'rollForward' || (e.op === 'grid' && !!GRIDS[e.gridOf ?? '']?.turn && GRIDS[e.gridOf ?? '']!.turn !== 'fixed') || !!e.alt || e.op === 'swapSites' || e.op === 'groundSlam' || e.op === 'slide' || e.op === 'wardBoost' || (e.op === 'pull' && e.dest !== 'body') || e.op === 'roll' || e.op === 'moveAura' || e.op === 'moveSite' || e.op === 'chain' || (e.op === 'summon' && (e.places === 'allySite' || e.places === 'allyMinion')) || e.op === 'pick' || (e.op === 'teleport' && chosenDest(e)) || (e.op === 'discard' && !e.random && e.who === 'controller') || (e.who === 'target' && !e.ref) || e.op === 'scry' || (e.who === 'atTarget' && !e.refCell) || e.op === 'shoot' || !!e.x || (e.op === 'draw' && !e.deck);
 /** Filters shared by targets and groups: subtype, keyword, wounded. */
 function fits(s: GameState, e: Effect, u: Unit, self?: string, selfPower?: number, viewer?: PlayerId): boolean {
   if (e.sub?.length && !subMatch(s, u, e.sub, viewer)) return false;
@@ -775,7 +775,8 @@ const bearerOf = (s: GameState, src?: Source) => (src && 'perm' in src ? s.perms
 /** A triggered ability: resolve it now when it needs no decision, otherwise queue it for its controller. */
 const TRIG_NAME: Partial<Record<Trigger, string>> = { deathrite: 'Deathrite', genesis: 'Genesis', startTurn: 'start of turn', endTurn: 'end of turn', dies: 'reaction', damaged: 'reaction', attacks: 'reaction', enters: 'reaction', kills: 'reaction', casts: 'reaction' };
 function fire(s: GameState, inst: string, on: Trigger, p: PlayerId, loc: Loc | null, src?: Source, subject?: string, only?: number[]) {
-  const d = cardOf(s, inst); const idx = (only ?? effectsOn(d, on)).filter((i) => needMet(s, p, d.effects[i])); // "(E)(E) — Genesis → …" needs that threshold (p18)
+  const d = cardOf(s, inst); const all = only ?? effectsOn(d, on); const idx = all.filter((i) => needMet(s, p, d.effects[i])); // "(E)(E) — Genesis → …" needs that threshold (p18)
+  if (all.length && !idx.length && s.phase !== 'over') { const e = d.effects[all[0]]; log(s, `${d.name}: its ${TRIG_NAME[on] ?? on} ability needs ${ELEMENTS.filter((el) => e.need?.[el]).map((el) => `${e.need![el]} ${el}`).join(' and ')} threshold, which ${pname(p)} doesn't have, so it does nothing.`, p); return; }
   if (!idx.length || s.phase === 'over') return;
   if (idx.some((i) => needsChoice(d.effects[i]) || d.effects[i].op === 'manual' || d.effects[i].optional)) {
     (s.queue ??= []).push({ id: `q${s.nextId++}`, by: p, inst, fx: idx, loc, ...(src ? { src } : {}), ...(subject ? { subject } : {}) });
@@ -809,7 +810,7 @@ function react(s: GameState, on: 'dies' | 'damaged' | 'attacks' | 'enters' | 'ki
   if (on === 'enters' && CORNERS.includes(u.c) && s.units[u.id] && !u.corners?.includes(u.c)) (u.corners ??= []).push(u.c);
 }
 function evMatches(s: GameState, f: NonNullable<Effect['ev']>, p: PlayerId, at: Loc, self: string | undefined, src: Source, u: Unit): boolean {
-  if (f.self) return u.id === self || ('perm' in src && s.perms.find((m) => m.id === src.perm)?.carrier === u.id);
+  if (f.self && !(u.id === self || ('perm' in src && s.perms.find((m) => m.id === src.perm)?.carrier === u.id))) return false; // the other conditions still apply (Wayfaring Pilgrim: "enters each corner … for the first time")
   if (f.other && u.id === self) return false;
   if (f.notKw && has(s, u, f.notKw)) return false;
   if (f.avatar && !u.avatar) return false;
@@ -1042,6 +1043,20 @@ function resolve(s: GameState, d: CardDef, idx: number[], p: PlayerId, loc0: Loc
       case 'fight': { // "This may fight it when it arrives"
         const me = self ? s.units[self] : undefined; const them = lastHit ? s.units[lastHit] : undefined;
         if (me && them && them.owner !== me.owner && them.c === me.c && them.r === me.r) { log(s, `${nm(me)} fights ${nm(them)}.`, p); fight(s, me.id, [them.id], null); }
+        break;
+      }
+      case 'rollForward': { // Hotwheel: rolls forward step by step on its own; at each location it enters it strikes one other unit there
+        const me = self ? s.units[self] : undefined; if (!me) break;
+        let k = 0;
+        for (const to of forwardCells(me, e.steps ?? 1)) {
+          if (!s.units[me.id] || !stepOk(s, me, { c: me.c, r: me.r }, { c: to, r: me.r })) { log(s, `${nm(me)} can't roll any further.`, p); break; }
+          me.c = to; k++; react(s, 'enters', me); if (!s.units[me.id]) break;
+          const there = Object.values(s.units).filter((v) => v.id !== me.id && v.c === to && sameRegion(s, v, me) && !hasStealth(s, v));
+          const want = c?.chain?.[k - 1]; const v = want === '' ? undefined : there.find((x) => x.id === want) ?? there.find((x) => x.owner !== p) ?? there[0];
+          if (v) { const dmg = power(s, me); log(s, `${nm(me)} rolls into ${sqName(to)} and strikes ${nm(v)} for ${dmg}.`, p); damageUnit(s, v, dmg, false, { unit: me }); }
+          else log(s, `${nm(me)} rolls into ${sqName(to)}.`, p);
+        }
+        if (k && s.units[me.id]) react(s, 'stops', me);
         break;
       }
       case 'roll': {
@@ -1534,6 +1549,13 @@ function markFire(s: GameState, c: number, from: string) { if (!(s.marks ??= [])
  *  leaves (Slag Slug), or may shoot from any square on its path. The table then lets the player plot the route step by step. */
 export function pathMatters(s: GameState, u: Unit): boolean {
   return !!u.mods?.some((m) => m.kw?.startsWith('Trail of fire') && m.turn === s.turn) || unitCard(s, u).effects.some((e) => e.keyword === 'Burns where it leaves') || has(s, u, 'Shoots while moving');
+}
+const sqName = (c: number) => `${'ABCDE'[xy(c)[0]]}${4 - xy(c)[1]}`;
+/** Codex "Forward": away from the controller's starting edge. The squares `n` steps ahead, stopping at the edge of the realm. */
+export function forwardCells(u: { c: number; owner: PlayerId }, n: number): number[] {
+  const [x, y] = xy(u.c); const dy = u.owner === 0 ? -1 : 1; const out: number[] = [];
+  for (let k = 1; k <= n; k++) { const c = cell(x, y + dy * k); if (c < 0) break; out.push(c); }
+  return out;
 }
 export function reach(s: GameState, u: Unit): Map<string, Loc[]> {
   const out = new Map<string, Loc[]>();

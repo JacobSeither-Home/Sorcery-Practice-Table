@@ -22,6 +22,8 @@ type Sel = null | { k: 'hand'; inst: string; c?: number } | { k: 'unit'; id: str
 interface Opt { label: string; hint?: string; action: Action }
 
 const PNAME = (g: Game, p: PlayerId) => g.names[p];
+/** Each player's own hand order, kept across re-renders of the table while the page is open. */
+const HAND_ORDER = new Map<PlayerId, string[]>();
 const sqName = (c: number) => `${'ABCDE'[xy(c)[0]]}${4 - xy(c)[1]}`;
 
 export function Table() {
@@ -276,6 +278,10 @@ export function Table() {
     return { c, unit };
   };
   const canDrag = myInput && !s.pending && s.phase === 'main';
+  // the player's own order for the hand (dragging a card within the hand), kept while the game is open
+  const [handOrder, setHandOrderState] = useState<string[]>(() => HAND_ORDER.get(viewer) ?? []);
+  const setHandOrder = (o: string[]) => { HAND_ORDER.set(viewer, o); setHandOrderState(o); };
+  const shownHand = useMemo(() => { const pos = new Map(handOrder.map((k, i) => [k, i])); return [...me.hand].sort((a, b) => (pos.get(a) ?? 1e6 + me.hand.indexOf(a)) - (pos.get(b) ?? 1e6 + me.hand.indexOf(b))); }, [me.hand, handOrder]);
   /** A site of yours that may fly now (Cloud City): the index of its moveSite ability, else -1. */
   function flyFx(c: number): number {
     if (!myInput || s.pending || s.phase !== 'main' || s.sites[c]?.owner !== who || !s.sites[c]?.inst) return -1;
@@ -313,6 +319,14 @@ export function Table() {
   function dropHand(inst: string, x: number, y: number) {
     const { c, unit } = under(x, y);
     setDrag(null); setTimeout(() => { dragged.current = false; }, 0);
+    // let go over the hand: the card moves to that place in the hand (the order is yours alone; the game does not use it)
+    { const hand = document.querySelector<HTMLElement>('.hand'); const r = hand?.getBoundingClientRect();
+      if (r && c === null && y >= r.top - 30 && y <= r.bottom + 30 && x >= r.left - 60 && x <= r.right + 60) {
+        const others = [...hand!.querySelectorAll<HTMLElement>('.handcard')].filter((el) => el.dataset.inst !== inst);
+        const at = others.filter((el) => { const b = el.getBoundingClientRect(); return b.left + b.width / 2 < x; }).length;
+        const now = shownHand.filter((k) => k !== inst); now.splice(at, 0, inst); setHandOrder(now); setSel(null); return;
+      } }
+    if (!canDrag) { setSel(null); return; }
     if (cardOf(s, inst).type === 'Aura') { const j = jointAt(x, y); if (j === null) setSel(null); else play(inst, j); return; }
     if (c === null) { setSel(null); return; } // let go outside the realm: back to hand
     const d = cardOf(s, inst);
@@ -473,14 +487,14 @@ export function Table() {
         <PlayerStrip g={g} p={viewer} manual={manual} onLog={() => setLogOpen(true)} near />
         <div className="hand" style={{ '--n': Math.max(1, me.hand.length) } as React.CSSProperties}>
           <AnimatePresence>
-            {(curtainFor === null ? me.hand : []).map((inst, i) => {
+            {(curtainFor === null ? shownHand : []).map((inst, i) => {
               const d = cardOf(s, inst); const on = sel?.k === 'hand' && sel.inst === inst;
               const mid = (me.hand.length - 1) / 2; const hp = hoverProps(d);
               return (
                 <motion.button key={inst} layout layoutId={inst} className={`handcard ${on ? 'on' : ''}`} initial={{ y: 60, opacity: 0 }} animate={{ y: on ? -22 : Math.abs(i - mid) * 3, opacity: 1, rotate: on ? 0 : (i - mid) * 1.6 }} exit={{ y: -40, opacity: 0 }}
                   whileHover={{ y: -18, rotate: 0, zIndex: 5 }} transition={spring(pace, 420, 30)} onClick={() => clickHand(inst)} {...hp}
                   onPointerMove={(e) => { hp.onPointerMove(e); if (e.pointerType === 'mouse') sheen(e); }}
-                  drag={canDrag} dragSnapToOrigin dragMomentum={false} dragElastic={0} whileDrag={{ scale: 0.9, rotate: 0, zIndex: 60, opacity: 0.95, filter: 'drop-shadow(0 28px 22px rgba(0,0,0,.75))' }}
+                  data-inst={inst} drag dragSnapToOrigin dragMomentum={false} dragElastic={0} whileDrag={{ scale: 0.9, rotate: 0, zIndex: 60, opacity: 0.95, filter: 'drop-shadow(0 28px 22px rgba(0,0,0,.75))' }}
                   style={drag?.inst === inst ? { pointerEvents: 'none', zIndex: 60 } : undefined}
                   onDragStart={() => startDrag(inst)} onDrag={(_e, info) => moveDrag(inst, info.point.x - window.scrollX, info.point.y - window.scrollY)} onDragEnd={(_e, info) => dropHand(inst, info.point.x - window.scrollX, info.point.y - window.scrollY)}
                   onContextMenu={(e) => { if (manual) { e.preventDefault(); act({ t: 'manual', op: 'discard', p: viewer, inst }); } else hp.onContextMenu(e); }}>

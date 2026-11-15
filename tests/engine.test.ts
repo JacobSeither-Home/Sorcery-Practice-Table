@@ -1104,3 +1104,40 @@ describe('deck building rules', () => {
     expect(r.deck.collection).toEqual([uni, site]); expect(r.unknown).toEqual(['Not A Card']);
   });
 });
+
+describe('rule tickets 2026-11-15', () => {
+  const read = (type: CardDef['type'], name: string, rules: string, extra: Partial<CardDef> = {}) => {
+    const c = makeCard({ name, type, rules, ...extra });
+    c.effects = normalizeApiCards([{ id: c.id, name, engine: { type, rules, cost: c.cost, attack: c.attack, defense: c.defense, keywords: c.keywords } }]).cards[0].effects;
+    cards[c.id] = c; forgetStatics(cards); return c.id;
+  };
+  const board = () => { const s = start(0); for (let c = 0; c < 20; c++) site(s, c < 10 ? 1 : 0, c); s.players[0].mana = 20; return s; };
+  it('Wayfaring Pilgrim: only a corner it has not entered before triggers it (Codex "Corner")', () => {
+    let s = board();
+    const pil = read('Minion', 'Test Pilgrim', 'Whenever Test Pilgrim enters each corner of the realm for the first time, you may draw a card.', { attack: 2, movement: 1 });
+    const u = unit(s, 0, cell(2, 3), pil); s.units[u].mods = [{ atk: 0, def: 0, move: 3, from: 'test' }];
+    s = apply(s, { t: 'move', unit: u, path: [{ c: cell(1, 3), r: 'surface' }] }); // not a corner
+    expect(s.queue?.length ?? 0).toBe(0);
+    s.units[u].tapped = false;
+    s = apply(s, { t: 'move', unit: u, path: [{ c: cell(0, 3), r: 'surface' }] }); // a corner
+    expect(s.queue?.length).toBe(1);
+  });
+  it('Hotwheel: rolls two steps forward on its own and strikes one other unit at each location it enters (Codex "Forward")', () => {
+    let s = board();
+    const hot = read('Minion', 'Test Hotwheel', 'Genesis → Rolls forward two steps, striking another unit at each location it enters.', { attack: 3, cost: 0 });
+    const a = unit(s, 1, cell(2, 1), id('Hill Giant')), b = unit(s, 1, cell(2, 2), id('Hill Giant')), b2 = unit(s, 1, cell(2, 2), id('Kiln Brute'));
+    const fx = cards[hot].effects.findIndex((e) => e.op === 'rollForward'); expect(fx).toBeGreaterThanOrEqual(0);
+    const ch: { chain?: string[] }[] = []; ch[fx] = { chain: [b2, a] };
+    s = apply(s, { t: 'cast', inst: give(s, 0, hot), c: cell(2, 3), choices: ch });
+    const me = Object.values(s.units).find((u) => cards[s.inst[u.inst]].name === 'Test Hotwheel')!;
+    expect(me.c).toBe(cell(2, 1));
+    expect([s.units[b2].damage, s.units[b].damage, s.units[a].damage]).toEqual([3, 0, 3]); // the chosen unit at each step, not the other one there
+  });
+  it('an ability whose threshold is not met says so in the log', () => {
+    let s = board(); s.units[s.players[0].avatar].tapped = false; s.sites[cell(1, 3)] = null; s.players[0].income! -= 1;
+    const port = read('Site', 'Test Port', '(W)(W)(W)(W)(W) — Genesis → You may cast a Kiln Brute from your collection to this site.');
+    s = apply(s, { t: 'playSite', inst: give(s, 0, port), c: cell(1, 3) });
+    expect(s.queue?.length ?? 0).toBe(0);
+    expect(s.log.some((l) => /needs 5 water threshold/.test(l.text))).toBe(true);
+  });
+});

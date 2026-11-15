@@ -33,7 +33,7 @@ export type Category =
   | 'Combat rules' | 'Reactions (whenever …)' | 'Conditions (if …)' | 'Protection & restrictions' | 'Other';
 
 export const OP_CATEGORY: Record<Effect['op'], Category> = {
-  grid: 'Damage',
+  rollForward: 'Damage', grid: 'Damage',
   swapSites: 'Movement & position', groundSlam: 'Damage', thinIce: 'Movement & position',
   destroyPerms: 'Removal',
   swap: 'Movement & position', gather: 'Movement & position', transform: 'Other', discountHere: 'Mana',
@@ -622,6 +622,9 @@ export const RULES: Rule[] = [
     build: (m) => [{ op: 'grant', who: 'nearHit', keyword: 'Disabled', until: 'next', ...(m[1].toLowerCase() === 'minions' ? { only: 'minion' as const } : {}) }] },
   { id: 'dispel-location', label: 'Destroy all auras and artifacts at target location', re: /^destroy all auras and artifacts at target location(?: up to (two|three) steps away)?\.$/i,
     build: (m) => [{ op: 'destroyPerms', who: 'atTarget', range: (m[1]?.toLowerCase() ?? 'any') as Effect['range'], targets: true }] },
+  // Hotwheel: "Rolls forward two steps, striking another unit at each location it enters." (Codex "Forward", "Strike")
+  { id: 'roll-forward', label: 'Rolls forward N steps, striking another unit at each location it enters', re: /^rolls forward (\w+) steps?, striking another unit at each location it enters\.$/i,
+    build: (m, on) => (on !== 'static' ? [{ op: 'rollForward', who: 'self', steps: WORDNUM[m[1].toLowerCase()] ?? +m[1] }] : null) },
   // Codex "Protected from X"
   { id: 'protected', label: '… are Protected from sites / magic / all but units', re: /^(.+?) (?:are|is) protected from (sites|magic|all but units)\.$/i,
     build: (m, on) => { const v = nounPhrase(m[1]); return v && v.who !== 'target' ? [{ op: 'grant', ...v, keyword: `Protected from ${m[2].toLowerCase()}`, until: on === 'static' ? 'permanent' : 'turn' }] : null; } },

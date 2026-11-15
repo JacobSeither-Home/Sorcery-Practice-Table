@@ -69,6 +69,8 @@ export type Op =
   | 'fight'
   /** this artifact rolls in a chosen direction as far as it can, dealing `n` damage to each other unit along its path (Rolling Boulder) */
   | 'roll'
+  /** Hotwheel: the unit moves `steps` squares forward on its own (Codex "Forward"), striking one other unit at each location it enters */
+  | 'rollForward'
   /** leave an ongoing effect (`fx`, read like static text) at the ability's location until the controller's next turn */
   | 'ongoing'
   /** "Any number of times, you may spend ② to additionally target a new unit nearby the previous one": the earlier
