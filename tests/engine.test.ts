@@ -374,19 +374,19 @@ describe('art matching', () => {
 });
 
 describe('official precon lists', () => {
-  it('every bundled deck has 36 spells and 16 sites and resolves against a pool that has its cards', async () => {
+  it('every bundled deck has its product deck size (precons 36 + 16, Frost Mage vs Lavamancer 60 + 30) and resolves against a pool that has its cards', async () => {
     const { OFFICIAL_DECKS, resolveOfficial } = await import('../src/data/officialDecks');
-    expect(OFFICIAL_DECKS.length).toBe(8);
+    expect(OFFICIAL_DECKS.length).toBe(10);
+    const size = (product: string) => (product === 'Frost Mage vs Lavamancer' ? [60, 30] : [36, 16]);
     const pool: Record<string, CardDef> = {};
     for (const d of OFFICIAL_DECKS) {
-      expect(d.spellbook.reduce((n, [k]) => n + k, 0)).toBe(36);
-      expect(d.atlas.reduce((n, [k]) => n + k, 0)).toBe(16);
+      expect([d.spellbook.reduce((n, [k]) => n + k, 0), d.atlas.reduce((n, [k]) => n + k, 0)]).toEqual(size(d.product));
       const av = makeCard({ name: d.avatar, type: 'Avatar', life: 20, source: 'api' }); pool[av.id] = av;
       for (const [, n] of d.spellbook) { const c = makeCard({ name: n, type: 'Minion', source: 'api' }); pool[c.id] = c; }
       for (const [, n] of d.atlas) { const c = makeCard({ name: n, type: 'Site', source: 'api' }); pool[c.id] = c; }
       for (const [, n] of d.collection ?? []) { const c = makeCard({ name: n, type: 'Minion', source: 'api' }); pool[c.id] ??= c; }
     }
-    for (const r of resolveOfficial(pool)) { expect(r.missing).toEqual([]); expect(r.deck.spellbook.length).toBe(36); expect(r.deck.atlas.length).toBe(16); expect(pool[r.deck.avatar].type).toBe('Avatar'); }
+    for (const r of resolveOfficial(pool)) { expect(r.missing).toEqual([]); expect([r.deck.spellbook.length, r.deck.atlas.length]).toEqual(size(r.product)); expect(pool[r.deck.avatar].type).toBe('Avatar'); }
     expect(resolveOfficial({})[0].missing.length).toBeGreaterThan(20); // nothing synced: listed, not playable
   });
 });
