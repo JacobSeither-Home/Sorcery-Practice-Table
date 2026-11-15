@@ -71,7 +71,8 @@ export function Table() {
   const boardSize = settings.boardSize ?? 'fit';
   const narrow = useMedia('(max-width: 820px)');
   const scroller = useRef<HTMLDivElement>(null);
-  useEffect(() => { const el = scroller.current; if (el) { el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; el.scrollTop = (el.scrollHeight - el.clientHeight) / 2; } }, [boardSize]);
+  // roomy views start centred; the fit view never scrolls (a scroll left over from roomy would push the board under the turn bar)
+  useEffect(() => { const el = scroller.current; if (!el) return; if (boardSize === 'fit') { el.scrollLeft = 0; el.scrollTop = 0; return; } el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; el.scrollTop = (el.scrollHeight - el.clientHeight) / 2; }, [boardSize]);
   // Fit view: centre the board on the screen rather than on the column between the side panels, as far as the spare room allows.
   useEffect(() => {
     const el = scroller.current; const wrap = el?.parentElement; if (!el || !wrap) return;

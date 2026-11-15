@@ -179,6 +179,7 @@ fieldset { border: 1px solid var(--line-soft); border-radius: var(--r); margin: 
 .site-label { position: absolute; left: 0; right: 0; top: 0; display: flex; justify-content: space-between; align-items: center; gap: 4px; padding: 3px 7px 8px; font: 700 clamp(9px, calc(var(--cellw) * .07), 13px)/1.1 var(--display); letter-spacing: .03em; color: var(--parch); background: linear-gradient(#000b, #0000); border-radius: 8px 8px 0 0; pointer-events: none; text-shadow: 0 1px 2px #000; }
 .site-label span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .coord { position: absolute; right: 5px; bottom: 4px; font: 600 10px var(--sans); color: #fff4; pointer-events: none; }
+.board-fit .board-scroll { overflow: clip; } /* the rune ring behind the board may reach past it: clip, never scroll */
 .board-fit .coord { display: none; }
 @media (min-width: 1000px) { .board-fit .coord { display: block; } }
 
