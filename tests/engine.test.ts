@@ -1099,6 +1099,10 @@ describe('deck building rules', () => {
     expect(by('Copies').detail).toMatch(/Foot Troop 57\/4/); expect(by('Copies').detail).toMatch(/The Crown 2\/1 \(Unique\)/); // one in the spellbook + one in the collection
     expect(by('Copies').detail).not.toMatch(/Fine Blade|Old Wyrm/);
     expect(constructedLegal(deck, pool)).toBe(false);
+    // a deck page's list, selected and copied: count, name and cost on their own lines, section totals, a maybeboard and history
+    const page = parseDeckText('Avatar\n1\n\n1\nTest Mage\nMinion\n2\n\n2\nOld Wyrm\n\n5\nArtifact\n3\n\n3\nFine Blade\n2\nSite\n4\n\n4\nPlain Field\n\n\nCollection\n1\n\n1\nThe Crown\n\n3\n\nMaybeboard\n2\n\n2\nOld Wyrm\n5\n\nDeck History\nFine Blade', pool, 'page');
+    expect(page.deck.avatar).toBe(av); expect(page.deck.spellbook.length).toBe(5); expect(page.deck.atlas.length).toBe(4);
+    expect(page.deck.collection).toEqual([uni]); expect(page.unknown).toEqual([]);
     const r = parseDeckText('Avatar (1)\n1 Test Mage\nSpellbook\n2 Old Wyrm\n3x Fine Blade\nAtlas:\n4 Plain Field\nCollection (2)\n1 The Crown\n1 Plain Field\nNot A Card', pool, 'x');
     expect(r.deck.avatar).toBe(av); expect(r.deck.spellbook.length).toBe(5); expect(r.deck.atlas.length).toBe(4);
     expect(r.deck.collection).toEqual([uni, site]); expect(r.unknown).toEqual(['Not A Card']);

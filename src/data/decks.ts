@@ -62,17 +62,24 @@ export const playable = (d: DeckList, cards: Record<string, CardDef>) =>
 export function parseDeckText(text: string, cards: Record<string, CardDef>, name: string): { deck: DeckList; unknown: string[] } {
   const byName = new Map(Object.values(cards).map((c) => [c.name.toLowerCase(), c]));
   const deck: DeckList = { name, avatar: '', spellbook: [], atlas: [], collection: [] }; const unknown: string[] = [];
-  let inCollection = false;
+  // Two shapes are read: one card per line ("4 Card Name", "4x Card Name"), and the text a deck page gives when its list
+  // is selected and copied, where the count, the name and the cost each sit on their own line under section headings
+  // with their totals ("Minion" / "27" / "1" / "Grigori Rasputin" / "2" …). There, a card's count is the last number
+  // standing on its own line before its name.
+  let section: 'deck' | 'collection' | 'skip' = 'deck'; let pending: number | null = null;
   for (const raw of text.split('\n')) {
     const line = raw.trim(); if (!line) continue;
+    if (/^deck history$/i.test(line)) break; // the page's change log follows: not part of the list
+    if (/^\d+$/.test(line)) { pending = parseInt(line, 10); continue; }
     const head = line.match(/^(avatar|spellbook|atlas|collection|sideboard|side ?deck|maybeboard|sites?|spells?|minions?|magics?|auras?|artifacts?)\b\s*[:(]?\s*\d*\s*\)?:?$/i);
-    if (head && !byName.has(line.toLowerCase())) { inCollection = /^(collection|sideboard|side ?deck|maybeboard)/i.test(head[1]); continue; }
+    if (head && !byName.has(line.toLowerCase())) { section = /^maybeboard/i.test(head[1]) ? 'skip' : /^(collection|sideboard|side ?deck)/i.test(head[1]) ? 'collection' : 'deck'; pending = null; continue; }
     const m = line.match(/^(?:(\d+)\s*x?\s+)?(.+?)$/i);
     if (!m || !m[2]) continue;
+    const k = m[1] ? parseInt(m[1], 10) : pending ?? 1; pending = null;
+    if (section === 'skip') continue;
     const c = byName.get(m[2].toLowerCase());
     if (!c) { unknown.push(m[2]); continue; }
-    const k = parseInt(m[1] ?? '1', 10);
-    if (inCollection) { if (c.type !== 'Avatar') for (let i = 0; i < k; i++) deck.collection!.push(c.id); }
+    if (section === 'collection') { if (c.type !== 'Avatar') for (let i = 0; i < k; i++) deck.collection!.push(c.id); }
     else if (c.type === 'Avatar') deck.avatar = c.id;
     else for (let i = 0; i < k; i++) (c.type === 'Site' ? deck.atlas : deck.spellbook).push(c.id);
   }
